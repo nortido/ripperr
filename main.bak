@@ -1,0 +1,127 @@
+package main
+
+import (
+	"encoding/xml"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+)
+
+// our struct which contains the complete
+// array of all Users in the file
+type Users struct {
+	XMLName xml.Name `xml:"rss"`
+	Channel struct {
+		XMLName xml.Name `xml:"channel"`
+		Items   []User   `xml:"item"`
+	} `xml:"channel"`
+}
+
+// the user struct, this contains our
+// Type attribute, our user's name and
+// a social struct which will contain all
+// our social links
+type User struct {
+	XMLName xml.Name `xml:"item"`
+	Title   string   `xml:"title"`
+	Size    string   `xml:"size"`
+	Torznab []struct {
+		Name  string  `xml:"name,attr"`
+		Value float64 `xml:"value,attr"`
+	} `xml:"attr"`
+	Rate float64
+}
+
+func main() {
+
+	// Open our xmlFile
+	xmlFile, err := os.Open("rss.xml")
+	// if we os.Open returns an error then handle it
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	fmt.Println("Successfully Opened users.xml")
+	// defer the closing of our xmlFile so that we can parse it later on
+	defer xmlFile.Close()
+
+	// read our opened xmlFile as a byte array.
+	byteValue, _ := ioutil.ReadAll(xmlFile)
+
+	// we initialize our Users array
+	var users Users
+	// we unmarshal our byteArray which contains our
+	// xmlFiles content into 'users' which we defined above
+	xml.Unmarshal(byteValue, &users)
+
+	// we iterate through every user within our users array and
+	// print out the user Type, their name, and their facebook url
+	// as just an example
+	getRates(&users)
+
+	sort.SliceStable(users.Channel.Items, func(i, j int) bool {
+		return users.Channel.Items[i].Rate > users.Channel.Items[j].Rate
+	})
+	fmt.Println()
+	fmt.Println()
+	fmt.Println(users.Channel.Items[0].Rate)
+	fmt.Println(users.Channel.Items[0].Title)
+}
+
+func getRates(list *Users) {
+	var (
+		uhd   = regexp.MustCompile(`(?i)2160p`)
+		hd    = regexp.MustCompile(`(?i)1080p`)
+		remux = regexp.MustCompile(`(?i)Remux`)
+		hdrip = regexp.MustCompile(`(?i)(BDRip|HDRip)`)
+		sdrip = regexp.MustCompile(`(?i)DVD`)
+	)
+
+	for i, t := range list.Channel.Items {
+		var rate, seeders float64
+
+		fmt.Println("Title: " + t.Title)
+		size, err := strconv.ParseFloat(t.Size, 64)
+		if err != nil {
+			fmt.Println(err)
+		}
+		size /= 1024 * 1024 * 1024
+		fmt.Printf("Size: %.2f", size)
+		for _, v := range t.Torznab {
+			if v.Name == "seeders" {
+				seeders = v.Value
+			}
+		}
+		if seeders < 2 {
+			fmt.Println()
+			fmt.Printf("Rate: %.0f", rate)
+			fmt.Println()
+			continue
+		}
+		if uhd.MatchString(t.Title) {
+			rate += 20
+		}
+		if remux.MatchString(t.Title) {
+			rate += 8
+		}
+		if hd.MatchString(t.Title) {
+			rate += 5
+		}
+		if hdrip.MatchString(t.Title) {
+			rate += 3
+		}
+		if sdrip.MatchString(t.Title) {
+			rate += 1
+		}
+		rate += size / 10
+		rate += seeders / 5
+		list.Channel.Items[i].Rate = rate
+
+		fmt.Println()
+		fmt.Printf("Rate: %.0f", rate)
+		fmt.Println()
+	}
+}

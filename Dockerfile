@@ -1,11 +1,16 @@
 FROM golang:1.20 as builder
-COPY . /app
+RUN go install github.com/go-delve/delve/cmd/dlv@latest
 ENV GOOS=linux CGO_ENABLED=0
+COPY . /app
 WORKDIR /app
-RUN go build && ls -la
+RUN go build ./cmd/*.go && ls -la
 
 FROM alpine:3.16
-COPY --from=builder /app/torr /app/
+RUN apk add gcompat
 WORKDIR /app
-CMD /app/torr
-EXPOSE 6410
+COPY --from=builder /go/bin/dlv /dlv
+COPY --from=builder /app/main /app/
+EXPOSE 6410 2345
+
+#CMD ["/dlv", "--listen=:2345", "--headless=true", "--api-version=2", "--accept-multiclient", "exec", "/app/main"]
+CMD /app/main
