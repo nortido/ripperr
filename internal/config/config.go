@@ -7,3 +7,8 @@ type Manager struct {
 		Password string `env:"QBIT_PASS, default=adminadmin"`
 	}
 }
+
+type Flaresolverr struct {
+	Host       string `env:"FLARE_URL, default=http://192.168.1.200:8181"`
+	MaxTimeout int    `env:"FLARE_TIMEOUT, default=60000"`
+}

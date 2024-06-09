@@ -3,26 +3,30 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/sethvargo/go-envconfig"
 
 	"torr/internal/config"
 	"torr/internal/handler"
+	"torr/internal/httpproxy/flaresolverr"
 	"torr/internal/manager"
 	"torr/internal/manager/client/qbittorrent"
 	"torr/internal/model"
 	"torr/internal/storage"
 	"torr/internal/tracker"
-	"torr/internal/tracker/router"
 )
 
 type configuration struct {
-	Manager *config.Manager
+	Manager      *config.Manager
+	Flaresolverr *config.Flaresolverr
 }
 
 func main() {
 	var (
 		tc  qbittorrent.Client
+		fs  flaresolverr.Client
+		ht  *http.Client
 		err error
 		cfg configuration
 	)
@@ -42,10 +46,15 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	rtr := router.New()
-	if err = rtr.CacheTrackers(ctx); err != nil {
+	ht = &http.Client{}
+	fs = flaresolverr.New(ht, &flaresolverr.ServiceParams{
+		Host:       cfg.Flaresolverr.Host,
+		MaxTimeout: cfg.Flaresolverr.MaxTimeout,
+	})
+	s := tracker.New(ht, fs)
+	if err = s.CacheAll(ctx); err != nil {
 		fmt.Println(err)
 	}
-	h := handler.NewHandler(tracker.New(rtr), manager.NewManager(tc), storage.NewStorage())
+	h := handler.NewHandler(s, manager.NewManager(tc), storage.NewStorage())
 	h.Handle(ctx)
 }

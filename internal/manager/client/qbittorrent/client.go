@@ -3,10 +3,15 @@ package qbittorrent
 import (
 	"context"
 	"fmt"
-	"strings"
+	"regexp"
 	"sync"
+
 	"torr/internal/manager/pkg/go-qbittorrent"
 	"torr/internal/model"
+)
+
+var (
+	idRegexp = regexp.MustCompile(`(\d+)`)
 )
 
 type Client interface {
@@ -28,7 +33,10 @@ func (c *client) GetEntries(ctx context.Context, opts model.TorrentFilterOptions
 		i     int
 	)
 
-	if qts, err = c.client.GetTorrents(qbittorrent.TorrentFilterOptions{Tag: opts.Tag, Filter: qbittorrent.TorrentFilterCompleted}); err != nil {
+	if qts, err = c.client.GetTorrents(qbittorrent.TorrentFilterOptions{
+		Tag:    opts.Tag,
+		Filter: qbittorrent.TorrentFilterCompleted,
+	}); err != nil {
 		return
 	}
 	ch = make(chan *model.Entry, len(qts))
@@ -94,7 +102,7 @@ func (c *client) getProperties(t *qbittorrent.Torrent) (p *qbittorrent.TorrentPr
 
 func (c *client) mapEntry(t *qbittorrent.Torrent, p *qbittorrent.TorrentProperties) (res *model.Entry) {
 	res = &model.Entry{
-		ID:        strings.Split(p.Comment, "=")[1],
+		ID:        idRegexp.FindString(p.Comment),
 		Category:  t.Category,
 		Timestamp: p.CreationDate,
 		Hash:      t.Hash,

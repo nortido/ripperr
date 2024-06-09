@@ -18,7 +18,7 @@ func Substr(s string, pos, length int) string {
 
 func GetTimestamp(buf *bytes.Buffer) (ts int, err error) {
 	regex := regexp.MustCompile(`creation datei(\d{8,10})e`)
-	matches := regex.FindStringSubmatch(Substr(buf.String(), 120, 130))
+	matches := regex.FindStringSubmatch(Substr(buf.String(), 100, 1000))
 
 	if len(matches) != 2 {
 		err = fmt.Errorf("timestamp not found")

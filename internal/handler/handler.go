@@ -44,37 +44,45 @@ func (h *handler) Handle(ctx context.Context) {
 		ch    = make(chan *model.Entry)
 		cherr = make(chan error)
 		ge    = make(chan struct{})
+		err   error
 	)
 	defer close(ch)
 	defer close(cherr)
 	defer close(ge)
 	go func() {
-		cherr <- h.getEntries(ctx)
+		if err = h.getEntries(ctx); err != nil {
+			cherr <- err
+		}
 	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case err := <-cherr:
+		case err = <-cherr:
 			fmt.Println(err)
 		case <-ge:
 			go func() {
-				cherr <- h.getEntries(ctx)
+				if err = h.getEntries(ctx); err != nil {
+					cherr <- err
+				}
 			}()
-		case <-time.After(time.Second * 30):
+		// TODO: set time frea env
+		case <-time.After(time.Second * 15):
 			go func() {
-				if reset, err := h.pushEntries(ctx, ch); err != nil {
+				var reset bool
+				if reset, err = h.pushEntries(ctx, ch); err != nil {
 					cherr <- err
 				} else if reset {
 					ge <- struct{}{}
 				}
 			}()
 		case e = <-ch:
-			e := e
-			go func() {
-				cherr <- h.processEntry(ctx, e)
-			}()
+			go func(e *model.Entry) {
+				if err = h.processEntry(ctx, e); err != nil {
+					cherr <- err
+				}
+			}(e)
 		}
 	}
 }
@@ -89,6 +97,7 @@ func (h *handler) getEntries(ctx context.Context) (err error) {
 	defer h.m.Unlock()
 
 	h.entries = entries
+	// TODO: set max const
 	h.limit = len(h.entries) / 2
 	if h.limit == 0 {
 		h.limit = 1
@@ -130,12 +139,11 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 	b, err = h.tracker.GetData(ctx, e)
 	if err != nil {
 		return
-	} else if b == nil {
+	} else if b == nil || b.Len() < 50 {
 		err = fmt.Errorf("no data")
 		return
 	}
 	if ts, err = helper.GetTimestamp(b); err != nil {
-		err = fmt.Errorf("get timestamp error: %s", err)
 		return
 	}
 	if ts == e.Timestamp {

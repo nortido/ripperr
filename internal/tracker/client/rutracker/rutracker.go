@@ -1,75 +1,93 @@
 package rutracker
 
 import (
-	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
-	"net/url"
-	"time"
-	"torr/internal/helper"
-
-	"torr/internal/model"
+	"regexp"
 )
 
 const (
-	Host        = "https://rutracker.org"
+	Domain      = "rutracker.org"
+	Host        = "https://" + Domain
 	DownloadURL = Host + "/forum/dl.php?t="
-	TopicURL    = Host + "/forum/viewtopic.php"
+	TopicURL    = Host + "/forum/viewtopic.php?t="
 )
 
-type TrackerHttp interface {
-	Login(ctx context.Context) (err error)
-	Request(ctx context.Context, e *model.Entry) (res *http.Response, err error)
+type Tracker struct {
+	version int
 }
 
-type tracker struct {
-	hc     *http.Client
-	cookie string
-	cb     *helper.CircuitBreaker
+func (t Tracker) Host() (host string) {
+	return Host
 }
 
-func (t *tracker) Login(ctx context.Context) (err error) {
-	if t.cookie == "" {
-		var (
-			host *url.URL
-			res  *http.Response
-		)
-		host, _ = url.Parse(Host)
-		res, err = t.hc.Do(&http.Request{Method: http.MethodGet, URL: host})
-		if err != nil || res.StatusCode != http.StatusOK {
-			err = fmt.Errorf("rutracker login error: %w", err)
-			return
-		}
-		//TODO: add full cookie fetching
-		t.cookie = "bb_session=PLACEHOLDER"
+func (t Tracker) DownloadURL(topicID string) (url string) {
+	return fmt.Sprint(DownloadURL, topicID)
+}
+
+func (t Tracker) TopicURL(topicID string) (url string) {
+	return fmt.Sprint(TopicURL, topicID)
+}
+
+func (t Tracker) Header() (header *http.Header) {
+	header = &http.Header{}
+
+	header.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+	header.Add("Accept-Encoding", "gzip, deflate, br, zstd")
+	header.Add("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	header.Add("Cache-Control", "no-cache")
+	header.Add("Pragma", "no-cache")
+	header.Add("Priority", "u=0, i")
+	header.Add("Host", Host)
+	header.Add("Referer", TopicURL+fmt.Sprint(rand.Intn(2000)+50))
+	header.Add("Sec-Fetch-Dest", "document")
+	header.Add("Sec-Fetch-Mode", "navigate")
+	header.Add("Sec-Fetch-Site", "same-origin")
+	header.Add("Sec-Fetch-User", "?1")
+	header.Add("Upgrade-Insecure-Requests", "1")
+
+	getDynHeader(t.version, header)
+
+	if t.version > 2 {
+		t.version = 0
+	} else {
+		t.version = t.version + 1
 	}
 	return
 }
 
-func (t *tracker) Request(ctx context.Context, e *model.Entry) (res *http.Response, err error) {
-	var req *http.Request
-	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, DownloadURL+e.ID, nil); err != nil {
-		return
-	}
-	if t.cookie == "" {
-		err = fmt.Errorf("no login cookie")
-		return
-	}
-	req.Header.Set("Cookie", t.cookie)
+func (t Tracker) Detect(url string) bool {
+	rx := regexp.MustCompile("(" + Domain + ")")
 
-	err = t.cb.Call(func() (err error) {
-		res, err = t.hc.Do(req)
-		if res.StatusCode != http.StatusOK {
-			err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
-		}
-		return
-	})
+	return rx.MatchString(url)
+}
+
+func (t Tracker) Name() (name string) {
+	return "rutracker"
+}
+
+func getDynHeader(version int, header *http.Header) {
+	switch version {
+	case 0:
+		header.Add("Cookie", "bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; bb_ssl=1; bb_guid=PLACEHOLDER; cf_clearance=PLACEHOLDER")
+		header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15")
+	case 1:
+		header.Add("Cookie", "bb_guid=PLACEHOLDER; bb_ssl=1; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
+		header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 YaBrowser/23.7.0.2562 Yowser/2.5 Safari/537.36")
+		header.Add("Sec-Ch-Ua", `"Not.A/Brand";v="8", "Chromium";v="114", "YaBrowser";v="23"`)
+		header.Add("Sec-Ch-Ua-Mobile", "?0")
+		header.Add("Sec-Ch-Ua-Platform", `"macOS"`)
+	default:
+		header.Add("Cookie", "bb_ssl=1; bb_guid=PLACEHOLDER; bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
+		header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+		header.Add("sec-ch-ua", `"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"`)
+		header.Add("sec-ch-ua-mobile", "?0")
+		header.Add("sec-ch-ua-platform", `"macOS"`)
+	}
 	return
 }
 
-func New(hc *http.Client) TrackerHttp {
-	return &tracker{
-		hc: hc,
-		cb: helper.NewCircuitBreaker(2, 10*time.Minute),
-	}
+func New() *Tracker {
+	return &Tracker{}
 }
