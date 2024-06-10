@@ -36,6 +36,7 @@ func (c *client) GetEntries(ctx context.Context, opts model.TorrentFilterOptions
 	if qts, err = c.client.GetTorrents(qbittorrent.TorrentFilterOptions{
 		Tag:    opts.Tag,
 		Filter: qbittorrent.TorrentFilterCompleted,
+		Sort:   "added_on",
 	}); err != nil {
 		return
 	}

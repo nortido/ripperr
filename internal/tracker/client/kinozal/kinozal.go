@@ -51,7 +51,7 @@ func (t Tracker) Header() (header *http.Header) {
 	header.Add("sec-ch-ua", `"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"`)
 	header.Add("sec-ch-ua-mobile", "?0")
 	header.Add("sec-ch-ua-platform", `"macOS"`)
-	header.Add("Cookie", "uid=PLACEHOLDER; pass=PLACEHOLDER")
+	//header.Add("Cookie", "uid=PLACEHOLDER; pass=PLACEHOLDER")
 
 	getDynHeader(t.version, header)
 

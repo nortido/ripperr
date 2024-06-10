@@ -70,16 +70,16 @@ func (t Tracker) Name() (name string) {
 func getDynHeader(version int, header *http.Header) {
 	switch version {
 	case 0:
-		header.Add("Cookie", "bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; bb_ssl=1; bb_guid=PLACEHOLDER; cf_clearance=PLACEHOLDER")
+		//header.Add("Cookie", "bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; bb_ssl=1; bb_guid=PLACEHOLDER; cf_clearance=PLACEHOLDER")
 		header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15")
 	case 1:
-		header.Add("Cookie", "bb_guid=PLACEHOLDER; bb_ssl=1; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
+		//header.Add("Cookie", "bb_guid=PLACEHOLDER; bb_ssl=1; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
 		header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 YaBrowser/23.7.0.2562 Yowser/2.5 Safari/537.36")
 		header.Add("Sec-Ch-Ua", `"Not.A/Brand";v="8", "Chromium";v="114", "YaBrowser";v="23"`)
 		header.Add("Sec-Ch-Ua-Mobile", "?0")
 		header.Add("Sec-Ch-Ua-Platform", `"macOS"`)
 	default:
-		header.Add("Cookie", "bb_ssl=1; bb_guid=PLACEHOLDER; bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
+		//header.Add("Cookie", "bb_ssl=1; bb_guid=PLACEHOLDER; bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
 		header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
 		header.Add("sec-ch-ua", `"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"`)
 		header.Add("sec-ch-ua-mobile", "?0")

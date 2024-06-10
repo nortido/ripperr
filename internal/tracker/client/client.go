@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
+	"strings"
 	"time"
 
 	"torr/internal/helper"
@@ -14,6 +14,7 @@ import (
 type tracker interface {
 	Header() (header *http.Header)
 	Host() (host string)
+	LoginData() (link string, data *strings.Reader)
 	DownloadURL(topicID string) (url string)
 	TopicURL(topicID string) (url string)
 	Detect(url string) bool
@@ -21,11 +22,11 @@ type tracker interface {
 }
 
 type proxy interface {
-	Get(r *http.Request) (resp *http.Response, err error)
+	Get(r *http.Request, onlyCookies bool) (resp *http.Response, err error)
 }
 
 type Client interface {
-	Prepare(ctx context.Context) (err error)
+	Login(ctx context.Context) (err error)
 	GetResponse(ctx context.Context, e *model.Entry) (res *http.Response, err error)
 }
 
@@ -38,25 +39,27 @@ type client struct {
 	cb     *helper.CircuitBreaker
 }
 
-func (c *client) Prepare(ctx context.Context) (err error) {
-	if c.cookie == "" {
-		var (
-			host *url.URL
-			res  *http.Response
-			req  *http.Request
-		)
-		//TODO: add flaresolverr login and grab cookies
-		host, _ = url.Parse(c.t.Host())
-		req = &http.Request{Method: http.MethodGet, URL: host}
+func (c *client) Login(ctx context.Context) (err error) {
+	var (
+		link string
+		cv   string
+		req  *http.Request
+		body *strings.Reader
+		res  *http.Response
+	)
+	link, body = c.t.LoginData()
+	if req, err = http.NewRequestWithContext(ctx, http.MethodPost, link, body); err != nil {
+		return
+	}
+	res, err = c.response(ctx, req, true)
 
-		req.Header = *c.t.Header()
-		res, err = c.response(ctx, req)
-		if err != nil || res.StatusCode != http.StatusOK {
-			err = fmt.Errorf("%s login error: %w", c.t.Name(), err)
-			return
-		}
-		//c.header = &res.Header
-		c.header = c.t.Header()
+	if err != nil || res.StatusCode != http.StatusOK {
+		err = fmt.Errorf("%s login error: %w", c.t.Name(), err)
+		return
+	}
+	c.header = c.t.Header()
+	for _, cv = range res.Header.Values("Set-Cookie") {
+		c.header.Add("Cookie", cv)
 	}
 	return
 }
@@ -72,9 +75,10 @@ func (c *client) GetResponse(ctx context.Context, e *model.Entry) (res *http.Res
 	}
 	req.Header = *c.header
 
-	//TODO: add flaresolverr
+	// TODO: add flaresolverr
 	err = c.cb.Call(func() (err error) {
-		res, err = c.response(ctx, req)
+		//res, err = c.response(ctx, req, false)
+		res, err = c.hc.Do(req)
 		if err != nil {
 			return
 		}
@@ -86,9 +90,9 @@ func (c *client) GetResponse(ctx context.Context, e *model.Entry) (res *http.Res
 	return
 }
 
-func (c *client) response(ctx context.Context, req *http.Request) (res *http.Response, err error) {
+func (c *client) response(ctx context.Context, req *http.Request, onlyCookies bool) (res *http.Response, err error) {
 	if _, ok := c.px.(proxy); ok {
-		return c.px.Get(req)
+		return c.px.Get(req, onlyCookies)
 	}
 	res, err = c.hc.Do(req)
 	return

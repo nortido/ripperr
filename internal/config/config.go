@@ -9,6 +9,6 @@ type Manager struct {
 }
 
 type Flaresolverr struct {
-	Host       string `env:"FLARE_URL, default=http://192.168.1.200:8181"`
+	Host       string `env:"FLARE_URL, default=http://192.168.1.200:8191/v1"`
 	MaxTimeout int    `env:"FLARE_TIMEOUT, default=60000"`
 }

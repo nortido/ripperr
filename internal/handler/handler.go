@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
 	"torr/internal/helper"
 	"torr/internal/model"
 )
@@ -98,7 +99,7 @@ func (h *handler) getEntries(ctx context.Context) (err error) {
 
 	h.entries = entries
 	// TODO: set max const
-	h.limit = len(h.entries) / 2
+	h.limit = len(h.entries) / 24
 	if h.limit == 0 {
 		h.limit = 1
 	}
@@ -136,6 +137,7 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 	)
 	fmt.Println("processing entry: ", e.Name)
 
+	//TODO: parse webpage date instead of downloading file
 	b, err = h.tracker.GetData(ctx, e)
 	if err != nil {
 		return

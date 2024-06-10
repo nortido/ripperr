@@ -5,19 +5,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"torr/internal/helper"
 	"torr/internal/model"
 	"torr/internal/tracker/client"
-	"torr/internal/tracker/client/kinozal"
-	"torr/internal/tracker/client/rutor"
-	"torr/internal/tracker/client/rutracker"
 )
 
 type Tracker interface {
 	Header() (header *http.Header)
+	LoginData() (link string, data *strings.Reader)
 	Host() (host string)
 	DownloadURL(topicID string) (url string)
 	TopicURL(topicID string) (url string)
@@ -26,7 +25,7 @@ type Tracker interface {
 }
 
 type HttpClient interface {
-	Prepare(ctx context.Context) (err error)
+	Login(ctx context.Context) (err error)
 	GetResponse(ctx context.Context, e *model.Entry) (res *http.Response, err error)
 }
 
@@ -40,14 +39,14 @@ const (
 
 var (
 	index = map[int]Tracker{
-		RutrackerID: rutracker.New(),
-		KinozalID:   kinozal.New(),
-		RutorID:     rutor.New(),
+		//RutrackerID: rutracker.New(),
+		//KinozalID:   kinozal.New(),
+		//RutorID:     rutor.New(),
 	}
 )
 
 type Proxy interface {
-	Get(r *http.Request) (resp *http.Response, err error)
+	Get(r *http.Request, onlyCookies bool) (resp *http.Response, err error)
 }
 
 type Service interface {
@@ -160,7 +159,7 @@ func (r *service) store(ctx context.Context, tid int) (err error) {
 	}
 	tc = client.New(r.hc, tr, r.px)
 	fmt.Println("trying to cache ", tr.Name())
-	if err = tc.Prepare(ctx); err != nil {
+	if err = tc.Login(ctx); err != nil {
 		tc = nil
 	}
 	r.mx.RLock()

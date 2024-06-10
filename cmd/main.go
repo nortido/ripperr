@@ -9,12 +9,12 @@ import (
 
 	"torr/internal/config"
 	"torr/internal/handler"
-	"torr/internal/httpproxy/flaresolverr"
 	"torr/internal/manager"
 	"torr/internal/manager/client/qbittorrent"
 	"torr/internal/model"
 	"torr/internal/storage"
 	"torr/internal/tracker"
+	"torr/internal/tracker/client/proxy/flaresolverr"
 )
 
 type configuration struct {
