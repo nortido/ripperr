@@ -14,14 +14,9 @@ type tracker interface {
 	Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error)
 }
 
-type storage interface {
-	SaveLocalFile(ctx context.Context, buf []byte) (path string, err error)
-	DeleteLocalFile(ctx context.Context, pathname string) (err error)
-}
-
 type manager interface {
 	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
-	Submit(ctx context.Context, e *model.Entry, path string, opts model.ManagerAddFileOptions) (err error)
+	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
 type Handler interface {
@@ -31,7 +26,6 @@ type Handler interface {
 type handler struct {
 	tracker tracker
 	manager manager
-	storage storage
 	entries []*model.Entry
 	m       sync.RWMutex
 	offset  int
@@ -130,8 +124,7 @@ func (h *handler) pushEntries(ctx context.Context, ch chan *model.Entry) (reset 
 
 func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) {
 	var (
-		b    *bytes.Buffer
-		path string
+		b *bytes.Buffer
 	)
 	fmt.Println("processing entry: ", e.Name)
 
@@ -142,29 +135,21 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 		err = fmt.Errorf("no data")
 		return
 	}
-	//TODO: magnet instead of files
-	if path, err = h.storage.SaveLocalFile(ctx, b.Bytes()); err != nil {
-		return
-	}
 	//TODO: add global options
-	if err = h.manager.Submit(ctx, e, path, model.ManagerAddFileOptions{
+	if err = h.manager.Submit(ctx, e, b, model.ManagerAddFileOptions{
 		Category: e.Category,
 		Tag:      "watch",
 	}); err != nil {
-		return
-	}
-	if err = h.storage.DeleteLocalFile(ctx, path); err != nil {
 		return
 	}
 
 	return
 }
 
-func NewHandler(tracker tracker, manager manager, storage storage) Handler {
+func NewHandler(tracker tracker, manager manager) Handler {
 	return &handler{
 		tracker: tracker,
 		manager: manager,
-		storage: storage,
 		limit:   2,
 	}
 }

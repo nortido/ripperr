@@ -12,7 +12,6 @@ import (
 	"torr/internal/manager"
 	"torr/internal/manager/client/qbittorrent"
 	"torr/internal/model"
-	"torr/internal/storage"
 	"torr/internal/tracker"
 	"torr/internal/tracker/proxy/flaresolverr"
 )
@@ -59,6 +58,6 @@ func main() {
 	if err = s.CacheAll(ctx); err != nil {
 		fmt.Println(err)
 	}
-	h := handler.NewHandler(s, manager.NewManager(tc), storage.NewStorage())
+	h := handler.NewHandler(s, manager.NewManager(tc))
 	h.Handle(ctx)
 }

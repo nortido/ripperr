@@ -1,12 +1,14 @@
 package qbittorrent
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"regexp"
 	"sync"
 
-	"torr/internal/manager/pkg/go-qbittorrent"
+	qbt "github.com/autobrr/go-qbittorrent"
+
 	"torr/internal/model"
 )
 
@@ -15,27 +17,27 @@ var (
 )
 
 type Client interface {
-	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
-	AddTorrentFromFile(ctx context.Context, path string, opts model.ManagerAddFileOptions) (err error)
-	DeleteTorrent(ctx context.Context, hash string) (err error)
+	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
+	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
+	Delete(ctx context.Context, hash string) (err error)
 }
 
 type client struct {
-	client *qbittorrent.Client
+	client *qbt.Client
 }
 
-func (c *client) GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error) {
+func (c *client) List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error) {
 	var (
 		ch    chan *model.Entry
 		cherr = make(chan error)
-		qts   []qbittorrent.Torrent
+		qts   []qbt.Torrent
 		wg    sync.WaitGroup
 		i     int
 	)
 
-	if qts, err = c.client.GetTorrents(qbittorrent.TorrentFilterOptions{
+	if qts, err = c.client.GetTorrents(qbt.TorrentFilterOptions{
 		Tag:    opts.Tag,
-		Filter: qbittorrent.TorrentFilterCompleted,
+		Filter: qbt.TorrentFilterCompleted,
 		Sort:   "added_on",
 		//Category: "switch",
 	}); err != nil {
@@ -52,9 +54,9 @@ func (c *client) GetEntries(ctx context.Context, opts model.TorrentFilterOptions
 			return
 		default:
 			wg.Add(1)
-			go func(t qbittorrent.Torrent) {
+			go func(t qbt.Torrent) {
 				var (
-					p *qbittorrent.TorrentProperties
+					p *qbt.TorrentProperties
 				)
 				defer wg.Done()
 				if p, err = c.getProperties(&t); err != nil {
@@ -84,25 +86,27 @@ func (c *client) GetEntries(ctx context.Context, opts model.TorrentFilterOptions
 	return
 }
 
-func (c *client) AddTorrentFromFile(ctx context.Context, path string, opts model.ManagerAddFileOptions) (err error) {
-	op := qbittorrent.TorrentAddOptions{Tags: opts.Tag, Category: opts.Category}
-	err = c.client.AddTorrentFromFileCtx(ctx, path, op.Prepare())
+func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
+	op := qbt.TorrentAddOptions{Tags: opts.Tag, Category: opts.Category}
+	err = c.client.AddTorrentFromMemoryCtx(ctx, buf.Bytes(), op.Prepare())
 
 	return
 }
 
-func (c *client) DeleteTorrent(ctx context.Context, hash string) (err error) {
+func (c *client) Delete(ctx context.Context, hash string) (err error) {
 	return c.client.DeleteTorrentsCtx(ctx, []string{hash}, true)
 }
 
-func (c *client) getProperties(t *qbittorrent.Torrent) (p *qbittorrent.TorrentProperties, err error) {
-	if p, err = c.client.GetTorrentProperties(t.Hash); err != nil {
+func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
+	var tp qbt.TorrentProperties
+	if tp, err = c.client.GetTorrentProperties(t.Hash); err != nil {
 		return
 	}
+	p = &tp
 	return
 }
 
-func (c *client) mapEntry(t *qbittorrent.Torrent, p *qbittorrent.TorrentProperties) (res *model.Entry) {
+func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.Entry) {
 	res = &model.Entry{
 		ID:        idRegexp.FindString(p.Comment),
 		Category:  t.Category,
@@ -115,7 +119,7 @@ func (c *client) mapEntry(t *qbittorrent.Torrent, p *qbittorrent.TorrentProperti
 }
 
 func (c *client) getClient(config model.ManagerConfig) (err error) {
-	c.client = qbittorrent.NewClient(qbittorrent.Config{
+	c.client = qbt.NewClient(qbt.Config{
 		Host:     config.Host,
 		Username: config.Username,
 		Password: config.Password,

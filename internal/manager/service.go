@@ -1,21 +1,21 @@
 package manager
 
 import (
+	"bytes"
 	"context"
-	"os"
 
 	"torr/internal/model"
 )
 
 type torrentClient interface {
-	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
-	AddTorrentFromFile(ctx context.Context, path string, opts model.ManagerAddFileOptions) (err error)
-	DeleteTorrent(ctx context.Context, hash string) (err error)
+	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
+	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
+	Delete(ctx context.Context, hash string) (err error)
 }
 
 type TorrentManager interface {
 	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
-	Submit(ctx context.Context, e *model.Entry, path string, opts model.ManagerAddFileOptions) (err error)
+	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
 type manager struct {
@@ -25,20 +25,20 @@ type manager struct {
 }
 
 func (m *manager) GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error) {
-	if entries, err = m.client.GetEntries(ctx, opts); err != nil {
+	if entries, err = m.client.List(ctx, opts); err != nil {
 		return
 	}
 	return
 }
 
-func (m *manager) Submit(ctx context.Context, e *model.Entry, path string, opts model.ManagerAddFileOptions) (err error) {
-	if _, err = os.Stat(path); err != nil {
+func (m *manager) Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
+	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	//if err = m.client.DeleteTorrent(ctx, e.Hash); err != nil {
+	//if err = m.client.Delete(ctx, e.Hash); err != nil {
 	//	return
 	//}
-	err = m.client.AddTorrentFromFile(ctx, path, opts)
+	err = m.client.AddFromBuffer(ctx, buf, opts)
 	return
 }
 

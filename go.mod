@@ -3,7 +3,7 @@ module torr
 go 1.20
 
 require (
-	github.com/autobrr/go-qbittorrent v1.3.3
+	github.com/autobrr/go-qbittorrent v1.9.0
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1

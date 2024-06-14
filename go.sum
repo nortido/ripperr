@@ -1,5 +1,5 @@
-github.com/autobrr/go-qbittorrent v1.3.3 h1:kc48/hsmDgbrTVtlsNc7qXIQrDCkZ6CdBYQVtprU5l0=
-github.com/autobrr/go-qbittorrent v1.3.3/go.mod h1:z88B3+O/1/3doQABErvIOOxE4hjpmIpulu6XzDG/q78=
+github.com/autobrr/go-qbittorrent v1.9.0 h1:HaLueJ99D3G1cQ2r5ADVbtfwyEhekt2eQoEZ7yhAwYs=
+github.com/autobrr/go-qbittorrent v1.9.0/go.mod h1:z88B3+O/1/3doQABErvIOOxE4hjpmIpulu6XzDG/q78=
 github.com/avast/retry-go v3.0.0+incompatible h1:4SOWQ7Qs+oroOTQOYnAHqelpCO0biHSxpiH9JdtuBj0=
 github.com/avast/retry-go v3.0.0+incompatible/go.mod h1:XtSnn+n/sHqQIpZ10K1qAevBhOOCWBLXXy3hyiqqBrY=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
