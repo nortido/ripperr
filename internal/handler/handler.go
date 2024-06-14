@@ -7,12 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"torr/internal/helper"
 	"torr/internal/model"
 )
 
 type tracker interface {
-	GetData(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error)
+	Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error)
 }
 
 type storage interface {
@@ -69,7 +68,7 @@ func (h *handler) Handle(ctx context.Context) {
 				}
 			}()
 		// TODO: set time frea env
-		case <-time.After(time.Second * 15):
+		case <-time.After(time.Second * 30):
 			go func() {
 				var reset bool
 				if reset, err = h.pushEntries(ctx, ch); err != nil {
@@ -133,35 +132,31 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 	var (
 		b    *bytes.Buffer
 		path string
-		ts   int
 	)
 	fmt.Println("processing entry: ", e.Name)
 
-	//TODO: parse webpage date instead of downloading file
-	b, err = h.tracker.GetData(ctx, e)
+	b, err = h.tracker.Get(ctx, e)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
 		err = fmt.Errorf("no data")
 		return
 	}
-	if ts, err = helper.GetTimestamp(b); err != nil {
+	//TODO: magnet instead of files
+	if path, err = h.storage.SaveLocalFile(ctx, b.Bytes()); err != nil {
 		return
 	}
-	if ts == e.Timestamp {
-		//TODO: use buffer instead of files
-		if path, err = h.storage.SaveLocalFile(ctx, b.Bytes()); err != nil {
-			return
-		}
-		//TODO: add global options
-		if err = h.manager.Submit(ctx, e, path, model.ManagerAddFileOptions{Category: e.Category, Tag: "watch"}); err != nil {
-			return
-		}
-		if err = h.storage.DeleteLocalFile(ctx, path); err != nil {
-			return
-		}
-		fmt.Println(e.Name, e.Timestamp, ts)
+	//TODO: add global options
+	if err = h.manager.Submit(ctx, e, path, model.ManagerAddFileOptions{
+		Category: e.Category,
+		Tag:      "watch",
+	}); err != nil {
+		return
 	}
+	if err = h.storage.DeleteLocalFile(ctx, path); err != nil {
+		return
+	}
+
 	return
 }
 

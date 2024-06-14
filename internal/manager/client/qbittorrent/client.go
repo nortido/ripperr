@@ -37,6 +37,7 @@ func (c *client) GetEntries(ctx context.Context, opts model.TorrentFilterOptions
 		Tag:    opts.Tag,
 		Filter: qbittorrent.TorrentFilterCompleted,
 		Sort:   "added_on",
+		//Category: "switch",
 	}); err != nil {
 		return
 	}
@@ -66,11 +67,11 @@ func (c *client) GetEntries(ctx context.Context, opts model.TorrentFilterOptions
 			}(t)
 		}
 	}
-	//go func() {
-	wg.Wait()
-	close(ch)
-	close(cherr)
-	//}()
+	go func() {
+		wg.Wait()
+		close(ch)
+		close(cherr)
+	}()
 	if err = <-cherr; err != nil {
 		return
 	}
@@ -105,7 +106,7 @@ func (c *client) mapEntry(t *qbittorrent.Torrent, p *qbittorrent.TorrentProperti
 	res = &model.Entry{
 		ID:        idRegexp.FindString(p.Comment),
 		Category:  t.Category,
-		Timestamp: p.CreationDate,
+		Timestamp: int64(p.AdditionDate),
 		Hash:      t.Hash,
 		Name:      t.Name,
 		URL:       p.Comment,

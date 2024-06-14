@@ -35,9 +35,9 @@ func (m *manager) Submit(ctx context.Context, e *model.Entry, path string, opts 
 	if _, err = os.Stat(path); err != nil {
 		return
 	}
-	if err = m.client.DeleteTorrent(ctx, e.Hash); err != nil {
-		return
-	}
+	//if err = m.client.DeleteTorrent(ctx, e.Hash); err != nil {
+	//	return
+	//}
 	err = m.client.AddTorrentFromFile(ctx, path, opts)
 	return
 }

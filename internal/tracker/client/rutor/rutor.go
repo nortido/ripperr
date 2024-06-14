@@ -1,12 +1,16 @@
 package rutor
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
+	"time"
 )
 
 const (
+	Name        = "rutor"
 	Domain      = "rutor.is"
 	Host        = "https://" + Domain
 	DownloadURL = "https://d.rutor.info/download/"
@@ -14,17 +18,24 @@ const (
 )
 
 type Tracker struct {
+	// TODO: public type without credentials
 }
 
 func (t Tracker) Host() (host string) {
 	return Host
 }
+func (t Tracker) LoginData() (link string, data *strings.Reader) {
+	link = Host
+	data = strings.NewReader("")
 
-func (t Tracker) DownloadURL(topicID string) (url string) {
+	return
+}
+
+func (t Tracker) DownloadLink(topicID string) (url string) {
 	return fmt.Sprint(DownloadURL, topicID)
 }
 
-func (t Tracker) TopicURL(topicID string) (url string) {
+func (t Tracker) TopicLink(topicID string) (url string) {
 	return fmt.Sprint(TopicURL, topicID)
 }
 
@@ -52,6 +63,10 @@ func (t Tracker) Header() (header *http.Header) {
 	return
 }
 
+func (t Tracker) Datetime(b *bytes.Buffer, encoded bool) (result *time.Time) {
+	return
+}
+
 func (t Tracker) Detect(url string) bool {
 	rx := regexp.MustCompile("(" + Domain + ")")
 
@@ -59,7 +74,7 @@ func (t Tracker) Detect(url string) bool {
 }
 
 func (t Tracker) Name() (name string) {
-	return "rutor"
+	return Name
 }
 
 func New() *Tracker {

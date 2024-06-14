@@ -5,29 +5,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"torr/internal/helper"
 	"torr/internal/model"
 	"torr/internal/tracker/client"
+	"torr/internal/tracker/client/kinozal"
+	"torr/internal/tracker/client/rutor"
+	"torr/internal/tracker/client/rutracker"
+	"torr/internal/tracker/client/teamhd"
 )
-
-type Tracker interface {
-	Header() (header *http.Header)
-	LoginData() (link string, data *strings.Reader)
-	Host() (host string)
-	DownloadURL(topicID string) (url string)
-	TopicURL(topicID string) (url string)
-	Detect(url string) bool
-	Name() (name string)
-}
-
-type HttpClient interface {
-	Login(ctx context.Context) (err error)
-	GetResponse(ctx context.Context, e *model.Entry) (res *http.Response, err error)
-}
 
 const (
 	TTL = 10 * time.Minute
@@ -35,54 +23,91 @@ const (
 	RutrackerID = iota
 	KinozalID
 	RutorID
+	TeamhdID
 )
 
 var (
-	index = map[int]Tracker{
-		//RutrackerID: rutracker.New(),
-		//KinozalID:   kinozal.New(),
-		//RutorID:     rutor.New(),
+	index = map[int]client.Tracker{
+		RutrackerID: rutracker.New(),
+		KinozalID:   kinozal.New(),
+		RutorID:     rutor.New(),
+		TeamhdID:    teamhd.New(),
 	}
 )
 
+type HttpClient interface {
+	Tracker() (tc client.Tracker)
+	InitSession(ctx context.Context) (err error)
+	GetResponse(ctx context.Context, link string, tryProxy bool) (res *http.Response, err error)
+}
+
 type Proxy interface {
-	Get(r *http.Request, onlyCookies bool) (resp *http.Response, err error)
+	Send(r *http.Request, opts *model.ProxyRequestOptions) (resp *http.Response, err error)
 }
 
 type Service interface {
 	CacheAll(ctx context.Context) (err error)
-	GetData(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error)
+	Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error)
+	File(ctx context.Context, tc HttpClient, downloadLink string) (buf *bytes.Buffer, err error)
 }
 
 type CachedItem struct {
 	HttpClient
-	Tracker
 	Created time.Time
 }
 
 type service struct {
-	hc       *http.Client
-	px       Proxy
-	mx       sync.RWMutex
-	trackers map[int]*CachedItem
-	cb       *helper.CircuitBreaker
+	hc      *http.Client
+	px      Proxy
+	mx      sync.RWMutex
+	clients map[int]*CachedItem
+	cb      *helper.CircuitBreaker
 }
 
-func (r *service) GetData(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error) {
+func (s *service) Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error) {
 	var (
-		id  int
-		b   = bytes.Buffer{}
-		res *http.Response
-		tc  HttpClient
+		id      int
+		res     *http.Response
+		tc      HttpClient
+		current *time.Time
 	)
 
-	if id, err = r.getClientID(ctx, e.URL); err != nil {
+	if id, err = s.getClientID(ctx, e.URL); err != nil {
 		return
 	}
-	if tc, err = r.getCachedClient(ctx, id); err != nil {
+	if tc, err = s.getCachedClient(ctx, id); err != nil {
 		return
 	}
-	if res, err = tc.GetResponse(ctx, e); err != nil {
+	if res, err = tc.GetResponse(ctx, tc.Tracker().TopicLink(e.ID), false); err != nil {
+		return
+	}
+	defer res.Body.Close()
+	buf = &bytes.Buffer{}
+
+	if _, err = buf.ReadFrom(res.Body); err != nil {
+		return
+	}
+	if current = tc.Tracker().Datetime(buf, false); current == nil {
+		err = fmt.Errorf("current time not found")
+		return
+	}
+	// TODO: add check count of updates in DB
+	if current.Unix()-e.Timestamp > 43200 {
+		err = fmt.Errorf("file is not updated")
+		return
+	}
+	buf, err = s.File(ctx, tc, tc.Tracker().DownloadLink(e.ID))
+
+	return
+}
+
+func (s *service) File(ctx context.Context, tc HttpClient, downloadLink string) (buf *bytes.Buffer, err error) {
+	var (
+		b   = bytes.Buffer{}
+		res *http.Response
+	)
+
+	if res, err = tc.GetResponse(ctx, downloadLink, false); err != nil {
 		return
 	}
 	if _, err = b.ReadFrom(res.Body); err != nil {
@@ -96,13 +121,13 @@ func (r *service) GetData(ctx context.Context, e *model.Entry) (buf *bytes.Buffe
 	return
 }
 
-func (r *service) CacheAll(ctx context.Context) (err error) {
+func (s *service) CacheAll(ctx context.Context) (err error) {
 	var wg sync.WaitGroup
 	wg.Add(len(index))
 	for i := range index {
 		go func(i int) {
 			defer wg.Done()
-			if err = r.store(ctx, i); err != nil {
+			if err = s.store(ctx, i); err != nil {
 				return
 			}
 		}(i)
@@ -111,9 +136,16 @@ func (r *service) CacheAll(ctx context.Context) (err error) {
 	return
 }
 
-func (r *service) getClientID(ctx context.Context, url string) (id int, err error) {
-	for i, tr := range r.trackers {
-		if tr.Detect(url) {
+func (s *service) getClientID(ctx context.Context, url string) (id int, err error) {
+	var (
+		i  int
+		ct *CachedItem
+	)
+	for i, ct = range s.clients {
+		if ct.HttpClient == nil {
+			continue
+		}
+		if ct.HttpClient.Tracker().Detect(url) {
 			id = i
 			return
 		}
@@ -123,12 +155,12 @@ func (r *service) getClientID(ctx context.Context, url string) (id int, err erro
 	return
 }
 
-func (r *service) getCachedClient(ctx context.Context, id int) (t HttpClient, err error) {
+func (s *service) getCachedClient(ctx context.Context, id int) (t HttpClient, err error) {
 	var (
 		ok bool
 		ct *CachedItem
 	)
-	if ct, ok = r.trackers[id]; ok && time.Since(ct.Created) < TTL {
+	if ct, ok = s.clients[id]; ok && time.Since(ct.Created) < TTL {
 		if ct.HttpClient == nil {
 			err = fmt.Errorf("tracker http error")
 			return
@@ -136,35 +168,35 @@ func (r *service) getCachedClient(ctx context.Context, id int) (t HttpClient, er
 		t = ct
 		return
 	}
-	if err = r.store(ctx, id); err != nil {
+	if err = s.store(ctx, id); err != nil {
 		return
 	}
-	t = r.trackers[id]
+	t = s.clients[id]
 	return
 }
 
-func (r *service) store(ctx context.Context, tid int) (err error) {
+func (s *service) store(ctx context.Context, tid int) (err error) {
 	var (
 		ok bool
-		tr Tracker
+		tr client.Tracker
 		tc HttpClient
 	)
 
 	if tr, ok = index[tid]; !ok {
-		r.mx.RLock()
-		r.trackers[tid] = &CachedItem{Created: time.Now()}
-		r.mx.RUnlock()
+		s.mx.RLock()
+		s.clients[tid] = &CachedItem{Created: time.Now()}
+		s.mx.RUnlock()
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
-	tc = client.New(r.hc, tr, r.px)
+	tc = client.New(s.hc, tr, s.px)
 	fmt.Println("trying to cache ", tr.Name())
-	if err = tc.Login(ctx); err != nil {
+	if err = tc.InitSession(ctx); err != nil {
 		tc = nil
 	}
-	r.mx.RLock()
-	r.trackers[tid] = &CachedItem{HttpClient: tc, Tracker: tr, Created: time.Now()}
-	r.mx.RUnlock()
+	s.mx.RLock()
+	s.clients[tid] = &CachedItem{HttpClient: tc, Created: time.Now()}
+	s.mx.RUnlock()
 	if tc != nil {
 		fmt.Println("tracker cached: ", tr.Name())
 	}
@@ -174,9 +206,9 @@ func (r *service) store(ctx context.Context, tid int) (err error) {
 
 func New(hc *http.Client, px Proxy) Service {
 	return &service{
-		hc:       hc,
-		px:       px,
-		trackers: make(map[int]*CachedItem),
-		cb:       helper.NewCircuitBreaker(2, 1*time.Minute),
+		hc:      hc,
+		px:      px,
+		clients: make(map[int]*CachedItem),
+		cb:      helper.NewCircuitBreaker(2, 1*time.Minute),
 	}
 }

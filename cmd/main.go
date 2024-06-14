@@ -14,7 +14,7 @@ import (
 	"torr/internal/model"
 	"torr/internal/storage"
 	"torr/internal/tracker"
-	"torr/internal/tracker/client/proxy/flaresolverr"
+	"torr/internal/tracker/proxy/flaresolverr"
 )
 
 type configuration struct {
@@ -46,8 +46,12 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	ht = &http.Client{}
-	fs = flaresolverr.New(ht, &flaresolverr.ServiceParams{
+	ht = &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	fs = flaresolverr.New(ht, &flaresolverr.Config{
 		Host:       cfg.Flaresolverr.Host,
 		MaxTimeout: cfg.Flaresolverr.MaxTimeout,
 	})
