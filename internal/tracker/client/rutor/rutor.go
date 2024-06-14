@@ -14,11 +14,10 @@ const (
 	Domain      = "rutor.is"
 	Host        = "https://" + Domain
 	DownloadURL = "https://d.rutor.info/download/"
-	TopicURL    = "http://rutor.is/torrent/"
+	TopicURL    = "http://" + Domain + "/torrent/"
 )
 
 type Tracker struct {
-	// TODO: public type without credentials
 }
 
 func (t Tracker) Host() (host string) {
@@ -26,7 +25,6 @@ func (t Tracker) Host() (host string) {
 }
 func (t Tracker) LoginData() (link string, data *strings.Reader) {
 	link = Host
-	data = strings.NewReader("")
 
 	return
 }
@@ -43,7 +41,7 @@ func (t Tracker) Header() (header *http.Header) {
 	header = &http.Header{}
 
 	header.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-	header.Add("Accept-Encoding", "gzip, deflate, br, zstd")
+	//header.Add("Accept-Encoding", "gzip, deflate, br, zstd")
 	header.Add("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
 	header.Add("Cache-Control", "no-cache")
 	header.Add("Connection", "keep-alive")
@@ -64,7 +62,10 @@ func (t Tracker) Header() (header *http.Header) {
 }
 
 func (t Tracker) Datetime(b *bytes.Buffer, encoded bool) (result *time.Time) {
-	return
+	var futureTime time.Time
+	futureTime = time.Now().AddDate(0, 0, 1)
+
+	return &futureTime
 }
 
 func (t Tracker) Detect(url string) bool {

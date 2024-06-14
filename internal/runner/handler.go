@@ -1,4 +1,4 @@
-package handler
+package runner
 
 import (
 	"bytes"
@@ -20,19 +20,20 @@ type manager interface {
 }
 
 type Handler interface {
-	Handle(ctx context.Context)
+	Run(ctx context.Context)
 }
 
 type handler struct {
-	tracker tracker
-	manager manager
-	entries []*model.Entry
 	m       sync.RWMutex
 	offset  int
 	limit   int
+	config  model.HandlerConfig
+	entries []*model.Entry
+	tracker tracker
+	manager manager
 }
 
-func (h *handler) Handle(ctx context.Context) {
+func (h *handler) Run(ctx context.Context) {
 	var (
 		e     *model.Entry
 		ch    = make(chan *model.Entry)
@@ -61,8 +62,7 @@ func (h *handler) Handle(ctx context.Context) {
 					cherr <- err
 				}
 			}()
-		// TODO: set time frea env
-		case <-time.After(time.Second * 30):
+		case <-time.After(h.config.ProcessTimeout):
 			go func() {
 				var reset bool
 				if reset, err = h.pushEntries(ctx, ch); err != nil {
@@ -91,8 +91,7 @@ func (h *handler) getEntries(ctx context.Context) (err error) {
 	defer h.m.Unlock()
 
 	h.entries = entries
-	// TODO: set max const
-	h.limit = len(h.entries) / 24
+	h.limit = len(h.entries) / h.config.RunsPerDay
 	if h.limit == 0 {
 		h.limit = 1
 	}
@@ -135,10 +134,12 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 		err = fmt.Errorf("no data")
 		return
 	}
-	//TODO: add global options
 	if err = h.manager.Submit(ctx, e, b, model.ManagerAddFileOptions{
-		Category: e.Category,
-		Tag:      "watch",
+		Category:       e.Category,
+		Tag:            e.Tag,
+		AutoManaged:    e.AutoManaged,
+		MaxRatio:       e.MaxRatio,
+		MaxSeedingTime: e.MaxSeedingTime,
 	}); err != nil {
 		return
 	}
@@ -146,10 +147,10 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 	return
 }
 
-func NewHandler(tracker tracker, manager manager) Handler {
+func NewRunner(tracker tracker, manager manager, config model.HandlerConfig) Handler {
 	return &handler{
 		tracker: tracker,
 		manager: manager,
-		limit:   2,
+		config:  config,
 	}
 }

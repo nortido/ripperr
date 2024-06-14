@@ -92,7 +92,8 @@ func (s *service) Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, e
 		return
 	}
 	// TODO: add check count of updates in DB
-	if current.Unix()-e.Timestamp > 43200 {
+	// TODO: add max diff to env
+	if current.Unix()-e.Timestamp < 43200 {
 		err = fmt.Errorf("file is not updated")
 		return
 	}

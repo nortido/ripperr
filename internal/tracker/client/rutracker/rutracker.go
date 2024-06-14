@@ -25,6 +25,7 @@ const (
 )
 
 type Tracker struct {
+	// TODO: public type without credentials
 }
 
 func (t Tracker) Host() (host string) {
@@ -32,6 +33,7 @@ func (t Tracker) Host() (host string) {
 }
 
 func (t Tracker) LoginData() (link string, data *strings.Reader) {
+	// TODO: Put credentials into envs
 	form := url.Values{
 		"login_username": {"johan01"},
 		"login_password": {"dbhnejp"},

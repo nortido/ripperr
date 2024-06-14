@@ -28,18 +28,17 @@ type client struct {
 
 func (c *client) List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error) {
 	var (
-		ch    chan *model.Entry
-		cherr = make(chan error)
+		i     int
 		qts   []qbt.Torrent
 		wg    sync.WaitGroup
-		i     int
+		ch    chan *model.Entry
+		cherr = make(chan error)
 	)
 
 	if qts, err = c.client.GetTorrents(qbt.TorrentFilterOptions{
 		Tag:    opts.Tag,
 		Filter: qbt.TorrentFilterCompleted,
 		Sort:   "added_on",
-		//Category: "switch",
 	}); err != nil {
 		return
 	}
@@ -108,12 +107,16 @@ func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err er
 
 func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.Entry) {
 	res = &model.Entry{
-		ID:        idRegexp.FindString(p.Comment),
-		Category:  t.Category,
-		Timestamp: int64(p.AdditionDate),
-		Hash:      t.Hash,
-		Name:      t.Name,
-		URL:       p.Comment,
+		ID:             idRegexp.FindString(p.Comment),
+		Category:       t.Category,
+		Timestamp:      int64(p.AdditionDate),
+		Hash:           t.Hash,
+		Name:           t.Name,
+		URL:            p.Comment,
+		Tag:            t.Tags,
+		AutoManaged:    t.AutoManaged,
+		MaxRatio:       t.MaxRatio,
+		MaxSeedingTime: t.MaxSeedingTime,
 	}
 	return
 }

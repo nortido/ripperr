@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"torr/internal/helper"
 	"torr/internal/model"
 )
@@ -53,36 +51,32 @@ func (c *client) Tracker() (tr Tracker) {
 
 func (c *client) InitSession(ctx context.Context) (err error) {
 	var (
-		link   string
-		method string
-		suid   string
-		req    *http.Request
-		body   *strings.Reader
-		res    *http.Response
+		link string
+		req  *http.Request
+		body *strings.Reader
+		res  *http.Response
 	)
 	link, body = c.t.LoginData()
 
 	if body != nil {
-		method = http.MethodPost
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, link, body)
 	} else {
-		method = http.MethodGet
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	}
-	if req, err = http.NewRequestWithContext(ctx, method, link, body); err != nil {
+	if err != nil {
 		return
 	}
-	if method == http.MethodPost {
+	if req.Method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", body.Len()))
 		req.Header.Set("Host", c.t.Host())
 	}
-	suid = uuid.NewString()
 	res, err = c.tryProxy(ctx, req, &model.ProxyRequestOptions{Session: "", WithBody: body != nil})
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
 		err = fmt.Errorf("%s login error: %w", c.t.Name(), err)
 		return
 	}
-	c.session = suid
 	// TODO: add extra headers if no flaresolverr
 	c.header = c.t.Header()
 	c.grabResponseHeaders(res)
@@ -102,7 +96,6 @@ func (c *client) GetResponse(ctx context.Context, link string, tryProxy bool) (r
 		return
 	}
 
-	// TODO: add flaresolverr
 	err = c.cb.Call(func() (err error) {
 		if tryProxy {
 			res, err = c.tryProxy(ctx, req, &model.ProxyRequestOptions{Cookies: c.cookies, WithBody: true})
@@ -120,7 +113,6 @@ func (c *client) GetResponse(ctx context.Context, link string, tryProxy bool) (r
 			err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
 		}
 		c.grabResponseHeaders(res)
-
 		return
 	})
 	return

@@ -5,8 +5,11 @@ type TorrentFilterOptions struct {
 }
 
 type ManagerAddFileOptions struct {
-	Tag      string
-	Category string
+	Category       string
+	Tag            string
+	AutoManaged    bool
+	MaxRatio       float64
+	MaxSeedingTime int64
 }
 
 type ManagerConfig struct {
