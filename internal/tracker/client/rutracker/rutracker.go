@@ -13,6 +13,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 
 	"torr/internal/helper"
+	"torr/internal/model/proxy"
 )
 
 const (
@@ -103,6 +104,10 @@ func (t Tracker) Datetime(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	result = helper.TimeFromRusDate(matches[1], "02-01-06 15:04")
 
 	return
+}
+
+func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
+	return proxy.ProxyFlaresolverr
 }
 
 func (t Tracker) Detect(url string) bool {

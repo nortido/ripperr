@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"torr/internal/helper"
-	"torr/internal/model"
+	"torr/internal/model/proxy"
 	"torr/internal/tracker/client"
 	"torr/internal/tracker/client/kinozal"
 	"torr/internal/tracker/client/rutor"
@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	TTL = 10 * time.Minute
+	TTL = 30 * 24 * time.Hour
 
 	RutrackerID = iota
 	KinozalID
@@ -42,7 +42,7 @@ type IHttpClient interface {
 }
 
 type IProxy interface {
-	Send(r *http.Request, opts *model.ProxyRequestOptions) (resp *http.Response, err error)
+	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
 }
 
 type IService interface {

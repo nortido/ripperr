@@ -1,0 +1,55 @@
+package flaresolverr
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"net/http"
+
+	"github.com/nortido/go-flaresolverr"
+
+	"torr/internal/model/proxy"
+)
+
+const (
+	responseOK    = "ok"
+	responseError = "error"
+)
+
+func PrepareParams(r *http.Request, opts *proxy.Options) (params *flaresolverr.Payload) {
+	params = &flaresolverr.Payload{
+		URL:         r.URL.String(),
+		Session:     opts.Session,
+		OnlyCookies: opts.OnlyCookies,
+		Cookies:     opts.Cookies,
+	}
+
+	return
+}
+
+func MakeResponse(resp *flaresolverr.Response, req *http.Request) (result *http.Response, err error) {
+	var (
+		cv *http.Cookie
+	)
+
+	if resp.Status == responseError {
+		err = fmt.Errorf("flaresolverr error: %s", resp.Message)
+		return
+	}
+	result = &http.Response{
+		StatusCode: resp.Solution.Status,
+		Body:       io.NopCloser(bytes.NewBufferString(resp.Solution.Response)),
+		Request:    req,
+		Header: http.Header{
+			//"Content-Type":   []string{"text/html; charset=Windows-1251"}, // TODO: add parser for content type
+			//"Location":       []string{flresp.Solution.URL},
+			"Content-Length": []string{fmt.Sprint(len(resp.Solution.Response))},
+			"User-Agent":     []string{resp.Solution.UserAgent},
+		},
+	}
+	for _, cv = range resp.Solution.Cookies {
+		result.Header.Add("Set-Cookie", cv.String())
+	}
+
+	return
+}

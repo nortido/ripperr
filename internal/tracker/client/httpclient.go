@@ -9,22 +9,23 @@ import (
 	"time"
 
 	"torr/internal/helper"
-	"torr/internal/model"
+	"torr/internal/model/proxy"
 )
 
 type ITracker interface {
+	Name() (name string)
+	Detect(url string) bool
 	Header() (header *http.Header)
 	Host() (host string)
-	LoginData() (link string, data *strings.Reader)
 	DownloadLink(topicID string) (url string)
 	TopicLink(topicID string) (url string)
+	LoginData() (link string, data *strings.Reader)
 	Datetime(b *bytes.Buffer, encoded bool) (result *time.Time)
-	Detect(url string) bool
-	Name() (name string)
+	ProxyType() (proxyType proxy.ProxyType)
 }
 
-type proxy interface {
-	Send(r *http.Request, opts *model.ProxyRequestOptions) (resp *http.Response, err error)
+type proxyService interface {
+	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
 }
 
 type IClient interface {
@@ -39,7 +40,7 @@ type client struct {
 	hc       *http.Client
 	header   *http.Header
 	cookies  []*http.Cookie
-	px       proxy
+	px       proxyService
 	cb       *helper.CircuitBreaker
 }
 
@@ -65,7 +66,7 @@ func (c *client) InitSession(ctx context.Context) (err error) {
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", body.Len()))
 		req.Header.Set("Host", c.ITracker.Host())
 	}
-	res, err = c.tryProxy(ctx, req, &model.ProxyRequestOptions{Session: "", WithBody: body != nil})
+	res, err = c.tryProxy(ctx, req, &proxy.Options{Session: "", OnlyCookies: body != nil}, c.ITracker.ProxyType())
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
 		err = fmt.Errorf("%s login error: %w", c.ITracker.Name(), err)
@@ -108,9 +109,9 @@ func (c *client) GetResponse(ctx context.Context, link string) (res *http.Respon
 	return
 }
 
-func (c *client) tryProxy(ctx context.Context, req *http.Request, opts *model.ProxyRequestOptions) (res *http.Response, err error) {
-	if _, ok := c.px.(proxy); ok {
-		res, err = c.px.Send(req, opts)
+func (c *client) tryProxy(ctx context.Context, req *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (res *http.Response, err error) {
+	if _, ok := c.px.(proxyService); ok {
+		res, err = c.px.Send(req, opts, proxyType)
 		return
 	}
 	res, err = c.hc.Do(req)
@@ -127,7 +128,7 @@ func (c *client) grabResponseHeaders(res *http.Response) (header *http.Header) {
 	return
 }
 
-func New(hc *http.Client, t ITracker, px proxy) IClient {
+func New(hc *http.Client, t ITracker, px proxyService) IClient {
 	return &client{
 		hc:       hc,
 		ITracker: t,

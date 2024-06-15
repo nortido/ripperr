@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"torr/internal/model/proxy"
 )
 
 const (
@@ -66,6 +68,10 @@ func (t Tracker) Datetime(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	futureTime = time.Now().AddDate(0, 0, 1)
 
 	return &futureTime
+}
+
+func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
+	return proxy.ProxyFlaresolverr
 }
 
 func (t Tracker) Detect(url string) bool {

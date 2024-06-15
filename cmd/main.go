@@ -12,9 +12,10 @@ import (
 	"torr/internal/manager"
 	"torr/internal/manager/client/qbittorrent"
 	"torr/internal/model"
+	mproxy "torr/internal/model/proxy"
+	"torr/internal/proxy"
 	"torr/internal/runner"
 	"torr/internal/tracker"
-	"torr/internal/tracker/proxy/flaresolverr"
 )
 
 type configuration struct {
@@ -26,7 +27,7 @@ type configuration struct {
 func main() {
 	var (
 		tc  qbittorrent.IClient
-		fs  flaresolverr.IClient
+		px  proxy.IClient
 		ht  *http.Client
 		err error
 		cfg configuration
@@ -53,13 +54,15 @@ func main() {
 			return http.ErrUseLastResponse
 		},
 	}
-	fs = flaresolverr.New(ht, &flaresolverr.Config{
-		Host:       cfg.Flaresolverr.Host,
-		MaxTimeout: cfg.Flaresolverr.MaxTimeout,
+	px = proxy.New(ht, &mproxy.Config{
+		None: mproxy.ItemConfig{},
+		Flaresolverr: mproxy.ItemConfig{
+			URL:        cfg.Flaresolverr.Host,
+			MaxTimeout: cfg.Flaresolverr.MaxTimeout,
+		},
+		Http: mproxy.ItemConfig{},
 	})
-	// TODO: Add global proxy switcher
-	s := tracker.New(ht, fs)
-	// TODO: Add repeatable re-cache
+	s := tracker.New(ht, px)
 	if err = s.CacheAll(ctx); err != nil {
 		fmt.Println(err)
 	}
@@ -68,9 +71,9 @@ func main() {
 		RunsPerDay: cfg.Runner.RunsPerDay,
 		WatchTag:   cfg.Runner.WatchTag,
 		ProcessTimeout: func() time.Duration {
-			return time.Duration(cfg.Runner.MaxTimeout) * time.Second
+			return time.Duration(cfg.Runner.ProcessTimeout) * time.Second
 		}(),
-		MinDateDiff: cfg.Runner.MinTimeDiff,
+		MinDateDiff: cfg.Runner.UpdateThreshold,
 	})
 	h.Run(ctx)
 }
