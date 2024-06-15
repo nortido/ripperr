@@ -24,7 +24,7 @@ type Config struct {
 	MaxTimeout int
 }
 
-type Client interface {
+type IClient interface {
 	Send(r *http.Request, opts *model.ProxyRequestOptions) (resp *http.Response, err error)
 }
 
@@ -115,7 +115,7 @@ func makeResponse(flresp *flareModel.Response, req *http.Request) (result *http.
 	return
 }
 
-func New(hc *http.Client, conf *Config) Client {
+func New(hc *http.Client, conf *Config) IClient {
 	return &client{
 		hc:   hc,
 		conf: conf,

@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"torr/internal/model"
+	"torr/internal/tracker"
 )
 
-type tracker interface {
-	Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error)
+type trackerClient interface {
+	CacheAll(ctx context.Context) (err error)
+	ClientByLink(ctx context.Context, link string) (tc tracker.IHttpClient, err error)
+	Response(ctx context.Context, link string, tc tracker.IHttpClient) (buf *bytes.Buffer, err error)
 }
 
 type manager interface {
@@ -19,7 +22,7 @@ type manager interface {
 	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
-type Handler interface {
+type IHandler interface {
 	Run(ctx context.Context)
 }
 
@@ -29,7 +32,7 @@ type handler struct {
 	limit   int
 	config  model.HandlerConfig
 	entries []*model.Entry
-	tracker tracker
+	tracker trackerClient
 	manager manager
 }
 
@@ -111,7 +114,6 @@ func (h *handler) pushEntries(ctx context.Context, ch chan *model.Entry) (reset 
 		limit = len(h.entries)
 	}
 	for _, e := range h.entries[h.offset:limit] {
-		fmt.Println("pushed entry: ", e.Name)
 		ch <- e
 	}
 	h.m.RLock()
@@ -122,32 +124,73 @@ func (h *handler) pushEntries(ctx context.Context, ch chan *model.Entry) (reset 
 }
 
 func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) {
-	var (
-		b *bytes.Buffer
-	)
+	var tc tracker.IHttpClient
+
+	if h.config.MinDateDiff == 0 {
+		err = fmt.Errorf("min threshold not set")
+		return
+	}
 	fmt.Println("processing entry: ", e.Name)
 
-	b, err = h.tracker.Get(ctx, e)
+	if tc, err = h.tracker.ClientByLink(ctx, e.URL); err != nil {
+		return
+	}
+	if err = h.forUpdate(ctx, tc, e); err != nil {
+		return
+	}
+	err = h.save(ctx, tc, e)
+	fmt.Println("saved entry: ", e.Name)
+
+	return
+}
+
+func (h *handler) forUpdate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
+	var (
+		b    *bytes.Buffer
+		cur  *time.Time
+		diff int64
+	)
+	b, err = h.tracker.Response(ctx, tc.TopicLink(e.ID), tc)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
-		err = fmt.Errorf("no data")
+		err = fmt.Errorf("no page data")
 		return
 	}
-	if err = h.manager.Submit(ctx, e, b, model.ManagerAddFileOptions{
+	if cur = tc.Datetime(b, false); cur == nil {
+		err = fmt.Errorf("current time not found")
+		return
+	}
+	diff = cur.Unix() - e.Timestamp
+	// TODO: add check count of updates in DB
+	if diff < h.config.MinDateDiff {
+		err = fmt.Errorf("file is not updated")
+		return
+	}
+	return
+}
+
+func (h *handler) save(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
+	var b *bytes.Buffer
+
+	b, err = h.tracker.Response(ctx, tc.DownloadLink(e.ID), tc)
+	if err != nil {
+		return
+	} else if b == nil || b.Len() < 50 {
+		err = fmt.Errorf("no file data")
+		return
+	}
+	err = h.manager.Submit(ctx, e, b, model.ManagerAddFileOptions{
 		Category:       e.Category,
 		Tag:            e.Tag,
 		AutoManaged:    e.AutoManaged,
 		MaxRatio:       e.MaxRatio,
 		MaxSeedingTime: e.MaxSeedingTime,
-	}); err != nil {
-		return
-	}
-
+	})
 	return
 }
 
-func NewRunner(tracker tracker, manager manager, config model.HandlerConfig) Handler {
+func NewRunner(tracker trackerClient, manager manager, config model.HandlerConfig) IHandler {
 	return &handler{
 		tracker: tracker,
 		manager: manager,

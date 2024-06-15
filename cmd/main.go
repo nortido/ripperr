@@ -25,8 +25,8 @@ type configuration struct {
 
 func main() {
 	var (
-		tc  qbittorrent.Client
-		fs  flaresolverr.Client
+		tc  qbittorrent.IClient
+		fs  flaresolverr.IClient
 		ht  *http.Client
 		err error
 		cfg configuration
@@ -39,9 +39,10 @@ func main() {
 	}
 	tc, err = qbittorrent.New(
 		model.ManagerConfig{
-			Host:     cfg.Manager.QbitTorrent.Host,
-			Username: cfg.Manager.QbitTorrent.Username,
-			Password: cfg.Manager.QbitTorrent.Password,
+			Host:        cfg.Manager.QbitTorrent.Host,
+			Username:    cfg.Manager.QbitTorrent.Username,
+			Password:    cfg.Manager.QbitTorrent.Password,
+			DeleteFiles: cfg.Manager.AllowDeleteFiles,
 		})
 	if err != nil {
 		fmt.Println(err)
@@ -69,6 +70,7 @@ func main() {
 		ProcessTimeout: func() time.Duration {
 			return time.Duration(cfg.Runner.MaxTimeout) * time.Second
 		}(),
+		MinDateDiff: cfg.Runner.MinTimeDiff,
 	})
 	h.Run(ctx)
 }

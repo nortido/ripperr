@@ -12,7 +12,7 @@ import (
 	"torr/internal/model"
 )
 
-type Tracker interface {
+type ITracker interface {
 	Header() (header *http.Header)
 	Host() (host string)
 	LoginData() (link string, data *strings.Reader)
@@ -27,36 +27,30 @@ type proxy interface {
 	Send(r *http.Request, opts *model.ProxyRequestOptions) (resp *http.Response, err error)
 }
 
-type Client interface {
-	Tracker() (tc Tracker)
+type IClient interface {
+	ITracker
 	InitSession(ctx context.Context) (err error)
-	GetResponse(ctx context.Context, link string, withProxy bool) (res *http.Response, err error)
+	GetResponse(ctx context.Context, link string) (res *http.Response, err error)
 }
 
 type client struct {
-	session string
-	t       Tracker
-	hc      *http.Client
-	header  *http.Header
-	cookies []*http.Cookie
-	px      proxy
-	cb      *helper.CircuitBreaker
-}
-
-func (c *client) Tracker() (tr Tracker) {
-	tr = c.t
-
-	return
+	ITracker //TODO: make tracker implemented
+	session  string
+	hc       *http.Client
+	header   *http.Header
+	cookies  []*http.Cookie
+	px       proxy
+	cb       *helper.CircuitBreaker
 }
 
 func (c *client) InitSession(ctx context.Context) (err error) {
 	var (
 		link string
-		req  *http.Request
 		body *strings.Reader
+		req  *http.Request
 		res  *http.Response
 	)
-	link, body = c.t.LoginData()
+	link, body = c.ITracker.LoginData()
 
 	if body != nil {
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, link, body)
@@ -69,22 +63,22 @@ func (c *client) InitSession(ctx context.Context) (err error) {
 	if req.Method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", body.Len()))
-		req.Header.Set("Host", c.t.Host())
+		req.Header.Set("Host", c.ITracker.Host())
 	}
 	res, err = c.tryProxy(ctx, req, &model.ProxyRequestOptions{Session: "", WithBody: body != nil})
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
-		err = fmt.Errorf("%s login error: %w", c.t.Name(), err)
+		err = fmt.Errorf("%s login error: %w", c.ITracker.Name(), err)
 		return
 	}
 	// TODO: add extra headers if no flaresolverr
-	c.header = c.t.Header()
+	c.header = c.ITracker.Header()
 	c.grabResponseHeaders(res)
 
 	return
 }
 
-func (c *client) GetResponse(ctx context.Context, link string, tryProxy bool) (res *http.Response, err error) {
+func (c *client) GetResponse(ctx context.Context, link string) (res *http.Response, err error) {
 	var req *http.Request
 	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil); err != nil {
 		return
@@ -97,11 +91,7 @@ func (c *client) GetResponse(ctx context.Context, link string, tryProxy bool) (r
 	}
 
 	err = c.cb.Call(func() (err error) {
-		if tryProxy {
-			res, err = c.tryProxy(ctx, req, &model.ProxyRequestOptions{Cookies: c.cookies, WithBody: true})
-		} else {
-			res, err = c.hc.Do(req)
-		}
+		res, err = c.hc.Do(req)
 		if err != nil {
 			return
 		}
@@ -137,11 +127,11 @@ func (c *client) grabResponseHeaders(res *http.Response) (header *http.Header) {
 	return
 }
 
-func New(hc *http.Client, t Tracker, px proxy) Client {
+func New(hc *http.Client, t ITracker, px proxy) IClient {
 	return &client{
-		hc: hc,
-		t:  t,
-		px: px,
-		cb: helper.NewCircuitBreaker(2, 10*time.Minute),
+		hc:       hc,
+		ITracker: t,
+		px:       px,
+		cb:       helper.NewCircuitBreaker(2, 10*time.Minute),
 	}
 }

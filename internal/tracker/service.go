@@ -27,7 +27,7 @@ const (
 )
 
 var (
-	index = map[int]client.Tracker{
+	index = map[int]client.ITracker{
 		RutrackerID: rutracker.New(),
 		KinozalID:   kinozal.New(),
 		RutorID:     rutor.New(),
@@ -35,86 +35,61 @@ var (
 	}
 )
 
-type HttpClient interface {
-	Tracker() (tc client.Tracker)
+type IHttpClient interface {
+	client.ITracker
 	InitSession(ctx context.Context) (err error)
-	GetResponse(ctx context.Context, link string, tryProxy bool) (res *http.Response, err error)
+	GetResponse(ctx context.Context, link string) (res *http.Response, err error)
 }
 
-type Proxy interface {
+type IProxy interface {
 	Send(r *http.Request, opts *model.ProxyRequestOptions) (resp *http.Response, err error)
 }
 
-type Service interface {
+type IService interface {
 	CacheAll(ctx context.Context) (err error)
-	Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error)
-	File(ctx context.Context, tc HttpClient, downloadLink string) (buf *bytes.Buffer, err error)
+	ClientByLink(ctx context.Context, link string) (tc IHttpClient, err error)
+	Response(ctx context.Context, link string, tc IHttpClient) (buf *bytes.Buffer, err error)
 }
 
 type CachedItem struct {
-	HttpClient
+	IHttpClient
 	Created time.Time
 }
 
 type service struct {
 	hc      *http.Client
-	px      Proxy
+	px      IProxy
 	mx      sync.RWMutex
 	clients map[int]*CachedItem
 	cb      *helper.CircuitBreaker
 }
 
-func (s *service) Get(ctx context.Context, e *model.Entry) (buf *bytes.Buffer, err error) {
+func (s *service) ClientByLink(ctx context.Context, link string) (tc IHttpClient, err error) {
 	var (
-		id      int
-		res     *http.Response
-		tc      HttpClient
-		current *time.Time
+		id int
 	)
-
-	if id, err = s.getClientID(ctx, e.URL); err != nil {
+	if id, err = s.getClientID(ctx, link); err != nil {
 		return
 	}
-	if tc, err = s.getCachedClient(ctx, id); err != nil {
-		return
-	}
-	if res, err = tc.GetResponse(ctx, tc.Tracker().TopicLink(e.ID), false); err != nil {
-		return
-	}
-	defer res.Body.Close()
-	buf = &bytes.Buffer{}
-
-	if _, err = buf.ReadFrom(res.Body); err != nil {
-		return
-	}
-	if current = tc.Tracker().Datetime(buf, false); current == nil {
-		err = fmt.Errorf("current time not found")
-		return
-	}
-	// TODO: add check count of updates in DB
-	// TODO: add max diff to env
-	if current.Unix()-e.Timestamp < 43200 {
-		err = fmt.Errorf("file is not updated")
-		return
-	}
-	buf, err = s.File(ctx, tc, tc.Tracker().DownloadLink(e.ID))
+	tc, err = s.getCachedClient(ctx, id)
 
 	return
 }
 
-func (s *service) File(ctx context.Context, tc HttpClient, downloadLink string) (buf *bytes.Buffer, err error) {
+func (s *service) Response(ctx context.Context, link string, tc IHttpClient) (buf *bytes.Buffer, err error) {
 	var (
 		b   = bytes.Buffer{}
 		res *http.Response
 	)
+	if tc == nil {
+		tc, err = s.ClientByLink(ctx, link)
+	}
+	if res, err = tc.GetResponse(ctx, link); err != nil {
+		return
+	}
+	defer res.Body.Close()
 
-	if res, err = tc.GetResponse(ctx, downloadLink, false); err != nil {
-		return
-	}
 	if _, err = b.ReadFrom(res.Body); err != nil {
-		return
-	}
-	if err = res.Body.Close(); err != nil {
 		return
 	}
 	buf = &b
@@ -143,10 +118,10 @@ func (s *service) getClientID(ctx context.Context, url string) (id int, err erro
 		ct *CachedItem
 	)
 	for i, ct = range s.clients {
-		if ct.HttpClient == nil {
+		if ct.IHttpClient == nil {
 			continue
 		}
-		if ct.HttpClient.Tracker().Detect(url) {
+		if ct.IHttpClient.Detect(url) {
 			id = i
 			return
 		}
@@ -156,13 +131,13 @@ func (s *service) getClientID(ctx context.Context, url string) (id int, err erro
 	return
 }
 
-func (s *service) getCachedClient(ctx context.Context, id int) (t HttpClient, err error) {
+func (s *service) getCachedClient(ctx context.Context, id int) (t IHttpClient, err error) {
 	var (
 		ok bool
 		ct *CachedItem
 	)
 	if ct, ok = s.clients[id]; ok && time.Since(ct.Created) < TTL {
-		if ct.HttpClient == nil {
+		if ct.IHttpClient == nil {
 			err = fmt.Errorf("tracker http error")
 			return
 		}
@@ -179,8 +154,8 @@ func (s *service) getCachedClient(ctx context.Context, id int) (t HttpClient, er
 func (s *service) store(ctx context.Context, tid int) (err error) {
 	var (
 		ok bool
-		tr client.Tracker
-		tc HttpClient
+		tr client.ITracker
+		tc IHttpClient
 	)
 
 	if tr, ok = index[tid]; !ok {
@@ -196,7 +171,7 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 		tc = nil
 	}
 	s.mx.RLock()
-	s.clients[tid] = &CachedItem{HttpClient: tc, Created: time.Now()}
+	s.clients[tid] = &CachedItem{IHttpClient: tc, Created: time.Now()}
 	s.mx.RUnlock()
 	if tc != nil {
 		fmt.Println("tracker cached: ", tr.Name())
@@ -205,7 +180,7 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 	return
 }
 
-func New(hc *http.Client, px Proxy) Service {
+func New(hc *http.Client, px IProxy) IService {
 	return &service{
 		hc:      hc,
 		px:      px,

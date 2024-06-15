@@ -6,15 +6,17 @@ type Manager struct {
 		Username string `env:"QBIT_USER, default=admin"`
 		Password string `env:"QBIT_PASS, default=adminadmin"`
 	}
+	AllowDeleteFiles bool `env:"MANAGER_ALLOW_DELETE_FILES, default=false"`
 }
 
 type Runner struct {
-	MaxTimeout int    `env:"RUNNER_TIMEOUT, default=60"`
-	RunsPerDay int    `env:"RUNNER_PER_DAY, default=6"`
-	WatchTag   string `env:"RUNNER_TAG, default=watch"`
+	MaxTimeout  int    `env:"RUNNER_TIMEOUT, default=60"`
+	RunsPerDay  int    `env:"RUNNER_PER_DAY, default=6"`
+	WatchTag    string `env:"RUNNER_TAG, default=watch"`
+	MinTimeDiff int64  `env:"RUNNER_MIN_TIME_DIFF, default=43200"`
 }
 
 type Flaresolverr struct {
 	Host       string `env:"FLARE_URL, default=http://192.168.1.200:8191/v1"`
-	MaxTimeout int    `env:"FLARE_TIMEOUT, default=60000"`
+	MaxTimeout int    `env:"FLARE_TIMEOUT, default=30000"`
 }

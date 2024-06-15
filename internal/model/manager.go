@@ -13,7 +13,8 @@ type ManagerAddFileOptions struct {
 }
 
 type ManagerConfig struct {
-	Host     string
-	Username string
-	Password string
+	Host        string
+	Username    string
+	Password    string
+	DeleteFiles bool
 }

@@ -16,7 +16,7 @@ var (
 	idRegexp = regexp.MustCompile(`(\d+)`)
 )
 
-type Client interface {
+type IClient interface {
 	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, hash string) (err error)
@@ -24,6 +24,7 @@ type Client interface {
 
 type client struct {
 	client *qbt.Client
+	config model.ManagerConfig
 }
 
 func (c *client) List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error) {
@@ -93,6 +94,9 @@ func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 }
 
 func (c *client) Delete(ctx context.Context, hash string) (err error) {
+	if !c.config.DeleteFiles {
+		return
+	}
 	return c.client.DeleteTorrentsCtx(ctx, []string{hash}, true)
 }
 
@@ -121,22 +125,25 @@ func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.
 	return
 }
 
-func (c *client) getClient(config model.ManagerConfig) (err error) {
+func (c *client) getClient() (err error) {
 	c.client = qbt.NewClient(qbt.Config{
-		Host:     config.Host,
-		Username: config.Username,
-		Password: config.Password,
+		Host:     c.config.Host,
+		Username: c.config.Username,
+		Password: c.config.Password,
 	})
 	err = c.client.Login()
 
 	return
 }
 
-func New(config model.ManagerConfig) (c Client, err error) {
-	cl := &client{}
-	if err = cl.getClient(config); err != nil {
+func New(config model.ManagerConfig) (c IClient, err error) {
+	cl := &client{
+		config: config,
+	}
+	if err = cl.getClient(); err != nil {
 		return
 	}
 	c = cl
+
 	return
 }

@@ -13,7 +13,7 @@ type torrentClient interface {
 	Delete(ctx context.Context, hash string) (err error)
 }
 
-type TorrentManager interface {
+type ITorrentManager interface {
 	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
@@ -35,14 +35,15 @@ func (m *manager) Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer,
 	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	//if err = m.client.Delete(ctx, e.Hash); err != nil {
-	//	return
-	//}
+	// TODO: delete torrent setting for tracker
+	if err = m.client.Delete(ctx, e.Hash); err != nil {
+		return
+	}
 	err = m.client.AddFromBuffer(ctx, buf, opts)
 	return
 }
 
-func NewManager(client torrentClient) TorrentManager {
+func NewManager(client torrentClient) ITorrentManager {
 	return &manager{
 		client: client,
 	}
