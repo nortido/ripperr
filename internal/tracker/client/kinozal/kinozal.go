@@ -31,7 +31,7 @@ func (t Tracker) Host() (host string) {
 	return Host
 }
 
-func (t Tracker) LoginData() (link string, data *strings.Reader) {
+func (t Tracker) LoginData() (link string, data *strings.Reader, cookies []*http.Cookie) {
 	form := url.Values{
 		"username": {"nortido"},
 		"password": {"dbhnejp1"},

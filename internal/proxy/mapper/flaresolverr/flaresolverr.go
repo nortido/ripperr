@@ -32,7 +32,7 @@ func MakeResponse(resp *flaresolverr.Response, req *http.Request) (result *http.
 		cv *http.Cookie
 	)
 
-	if resp.Status == responseError {
+	if resp.Status != responseOK {
 		err = fmt.Errorf("flaresolverr error: %s", resp.Message)
 		return
 	}

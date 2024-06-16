@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -29,16 +28,18 @@ func (t Tracker) Host() (host string) {
 	return Host
 }
 
-func (t Tracker) LoginData() (link string, data *strings.Reader) {
-	form := url.Values{
-		"username":             {"nortido"},
-		"password":             {"dbhnejp1"},
-		"g-recaptcha-response": {"03AFcWeA6i5c7mgZ6ghDihHyrQe1rkRgyjar9FifN_QWST0DYvsMrx0ipyXkptFTe7XNcg4x2-n1sBcD_ohce6cF0R3XW5gG6SVcLEgf5_0psjnsgZQPDExgTNgBwKcJZm23H3kMzsG8EygztFMvh4QL8AMw-7xZkiHBGclSJyA9b-FLqSawYM0T7CsEnk6lBZtwaHxFj19r9HKf0HIndR1jAjJOolI3ESj_52Rzg4jYzhcQNjDFJstwGyMczJX7zWK-FYIqBiOnUrBnPNVUdjZg60XfiwsrD2PoTA1qXYeUifd9oncVPbVaD7AbEXgrSdKTqTM5THcCJKuEqeoqndMN6nP0V-WrUW_6oYWHYrH6yc-q7yBW6g7oZXLNrXa3jEXh3pAuAXBuNSkGEobrhTocUy4Nad10w2gGMprfL6S-tElzcEmSuNnk7gTH1kQDPNO2xzqHhPpZwKJAuqJeyhY_xZTCdoosxf3gOJEy3OhiDhqA8rurcbbxjtPG7lA-jbVHQMj90cjFbJQdmDLde2PTZPXj6JKtnpszR6TAnSq1V9nMGuwFThvJh0A3Nlqa857lpExpAgmBA6nWpIxS_ysrg27CX6F766gIZa4mylH7CVS7c4mE4X5pVeHjR7XjjZpTWfeNsobZUfa9mMWKEBriyqivn7JmT8Ndx_Hgn6pNCCz6B7i1yqP2Q"},
-		"returnto":             {""},
+func (t Tracker) LoginData() (link string, data *strings.Reader, cookies []*http.Cookie) {
+	link = DownloadURL
+	// TODO: parse cookies from single string
+	cookies = make([]*http.Cookie, 6)
+	cookies = []*http.Cookie{
+		{Name: "cross-site-cookie", Value: "https://teamhd.org"},
+		{Name: "PHPSESSID", Value: "PLACEHOLDER"},
+		{Name: "uid", Value: "6347"},
+		{Name: "lang", Value: "russian"},
+		{Name: "pass", Value: "PLACEHOLDER"},
+		{Name: "token", Value: "PLACEHOLDER"},
 	}
-	link = LoginURL
-	data = strings.NewReader(form.Encode())
-
 	return
 }
 
@@ -77,19 +78,16 @@ func (t Tracker) Header() (header *http.Header) {
 
 func (t Tracker) Datetime(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	var (
-		bb      []byte
 		matches []string
 		rx      *regexp.Regexp
 		r       time.Time
 	)
-	bb = b.Bytes()
-	rx = regexp.MustCompile(`<b>Добавлен</b> - (.+)<br>`)
-	matches = rx.FindStringSubmatch(string(bb))
+	rx = regexp.MustCompile(`<b>Добавлен</b> - (\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})<br />`)
+	matches = rx.FindStringSubmatch(b.String())
 
 	if len(matches) <= 1 {
 		return
 	}
-
 	r, _ = time.Parse("02-01-2006 15:04:05", matches[1])
 	result = &r
 

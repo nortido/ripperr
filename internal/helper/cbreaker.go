@@ -15,10 +15,10 @@ const (
 )
 
 type CircuitBreaker struct {
+	MaxFailures     int
+	Timeout         time.Duration
 	state           State
 	failures        int
-	maxFailures     int
-	timeout         time.Duration
 	lastFailureTime time.Time
 	mx              sync.Mutex
 }
@@ -34,7 +34,7 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 			return err
 		}
 	case StateClosed:
-		if time.Since(cb.lastFailureTime) > cb.timeout {
+		if time.Since(cb.lastFailureTime) > cb.Timeout {
 			cb.state = StateHalfOpen
 		}
 		err = errors.New("call failed")
@@ -53,7 +53,7 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 func (cb *CircuitBreaker) recordFailure() {
 	cb.failures++
 	cb.lastFailureTime = time.Now()
-	if cb.failures >= cb.maxFailures {
+	if cb.failures >= cb.MaxFailures {
 		cb.state = StateClosed
 	}
 }
@@ -66,7 +66,7 @@ func (cb *CircuitBreaker) reset() {
 func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBreaker {
 	return &CircuitBreaker{
 		state:       StateOpen,
-		maxFailures: maxFailures,
-		timeout:     resetTimeout,
+		MaxFailures: maxFailures,
+		Timeout:     resetTimeout,
 	}
 }

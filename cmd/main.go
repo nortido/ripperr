@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"time"
 
 	"github.com/sethvargo/go-envconfig"
 
 	"torr/internal/config"
+	"torr/internal/helper"
 	"torr/internal/manager"
 	"torr/internal/manager/client/qbittorrent"
 	"torr/internal/model"
@@ -29,6 +31,7 @@ func main() {
 		tc  qbittorrent.IClient
 		px  proxy.IClient
 		ht  *http.Client
+		cj  *cookiejar.Jar
 		err error
 		cfg configuration
 	)
@@ -49,10 +52,16 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+	if cj, err = cookiejar.New(nil); err != nil {
+		fmt.Println(err)
+		return
+	}
 	ht = &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+		Jar:     cj,
+		Timeout: time.Duration(cfg.Runner.HttpTimeout) * time.Second,
 	}
 	px = proxy.New(ht, &mproxy.Config{
 		None: mproxy.ItemConfig{},
@@ -62,18 +71,18 @@ func main() {
 		},
 		Http: mproxy.ItemConfig{},
 	})
-	s := tracker.New(ht, px)
+	s := tracker.New(ht, px, helper.NewCircuitBreaker(
+		cfg.Runner.ConnMaxRetries,
+		time.Duration(cfg.Runner.ConnMinutesToRetry)*time.Minute,
+	))
 	if err = s.CacheAll(ctx); err != nil {
 		fmt.Println(err)
 	}
-	// TODO: Add global proxy switcher
 	h := runner.NewRunner(s, manager.NewManager(tc), model.HandlerConfig{
-		RunsPerDay: cfg.Runner.RunsPerDay,
-		WatchTag:   cfg.Runner.WatchTag,
-		ProcessTimeout: func() time.Duration {
-			return time.Duration(cfg.Runner.ProcessTimeout) * time.Second
-		}(),
-		MinDateDiff: cfg.Runner.UpdateThreshold,
+		RunsPerDay:   cfg.Runner.RunsPerDay,
+		WatchTag:     cfg.Runner.WatchTag,
+		ProcessDelay: time.Duration(cfg.Runner.ProcessSecondsDelay) * time.Second,
+		MinDateDiff:  cfg.Runner.UpdateThreshold,
 	})
 	h.Run(ctx)
 }

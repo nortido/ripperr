@@ -10,10 +10,13 @@ type Manager struct {
 }
 
 type Runner struct {
-	ProcessTimeout  int    `env:"RUNNER_PROCESS_TIMEOUT, default=60"`
-	RunsPerDay      int    `env:"RUNNER_PER_DAY, default=6"`
-	WatchTag        string `env:"RUNNER_TAG, default=watch"`
-	UpdateThreshold int64  `env:"RUNNER_UPDATE_THRESHOLD, default=43200"`
+	ProcessSecondsDelay int    `env:"RUNNER_PROCESS_SECONDS_DELAY, default=20"`
+	RunsPerDay          int    `env:"RUNNER_PER_DAY, default=24"`
+	WatchTag            string `env:"RUNNER_TAG, default=watch"`
+	UpdateThreshold     int64  `env:"RUNNER_UPDATE_THRESHOLD, default=43200"`
+	HttpTimeout         int64  `env:"RUNNER_HTTP_TIMEOUT, default=10"`
+	ConnMaxRetries      int    `env:"RUNNER_CONN_MAX_RETRIES, default=1"`
+	ConnMinutesToRetry  int    `env:"RUNNER_CONN_MINUTES_TO_RETRY, default=10"`
 }
 
 type Flaresolverr struct {

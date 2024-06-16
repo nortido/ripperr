@@ -33,7 +33,7 @@ func (t Tracker) Host() (host string) {
 	return Host
 }
 
-func (t Tracker) LoginData() (link string, data *strings.Reader) {
+func (t Tracker) LoginData() (link string, data *strings.Reader, cookies []*http.Cookie) {
 	// TODO: Put credentials into envs
 	form := url.Values{
 		"login_username": {"johan01"},

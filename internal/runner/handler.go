@@ -65,7 +65,7 @@ func (h *handler) Run(ctx context.Context) {
 					cherr <- err
 				}
 			}()
-		case <-time.After(h.config.ProcessTimeout):
+		case <-time.After(h.config.ProcessDelay):
 			go func() {
 				var reset bool
 				if reset, err = h.pushEntries(ctx, ch); err != nil {

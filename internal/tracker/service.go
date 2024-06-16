@@ -165,7 +165,7 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
-	tc = client.New(s.hc, tr, s.px)
+	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cb.MaxFailures, s.cb.Timeout))
 	fmt.Println("trying to cache ", tr.Name())
 	if err = tc.InitSession(ctx); err != nil {
 		tc = nil
@@ -180,11 +180,13 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 	return
 }
 
-func New(hc *http.Client, px IProxy) IService {
+// TODO: get circuit breaker config
+
+func New(hc *http.Client, px IProxy, cb *helper.CircuitBreaker) IService {
 	return &service{
 		hc:      hc,
 		px:      px,
 		clients: make(map[int]*CachedItem),
-		cb:      helper.NewCircuitBreaker(2, 1*time.Minute),
+		cb:      cb,
 	}
 }

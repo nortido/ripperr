@@ -19,7 +19,7 @@ type ITracker interface {
 	Host() (host string)
 	DownloadLink(topicID string) (url string)
 	TopicLink(topicID string) (url string)
-	LoginData() (link string, data *strings.Reader)
+	LoginData() (link string, data *strings.Reader, cookies []*http.Cookie)
 	Datetime(b *bytes.Buffer, encoded bool) (result *time.Time)
 	ProxyType() (proxyType proxy.ProxyType)
 }
@@ -35,13 +35,13 @@ type IClient interface {
 }
 
 type client struct {
-	ITracker //TODO: make tracker implemented
-	session  string
-	hc       *http.Client
-	header   *http.Header
-	cookies  []*http.Cookie
-	px       proxyService
-	cb       *helper.CircuitBreaker
+	ITracker
+	session string
+	hc      *http.Client
+	header  *http.Header
+	cookies []*http.Cookie
+	px      proxyService
+	cb      *helper.CircuitBreaker
 }
 
 func (c *client) InitSession(ctx context.Context) (err error) {
@@ -51,7 +51,7 @@ func (c *client) InitSession(ctx context.Context) (err error) {
 		req  *http.Request
 		res  *http.Response
 	)
-	link, body = c.ITracker.LoginData()
+	link, body, c.cookies = c.ITracker.LoginData()
 
 	if body != nil {
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, link, body)
@@ -66,15 +66,22 @@ func (c *client) InitSession(ctx context.Context) (err error) {
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", body.Len()))
 		req.Header.Set("Host", c.ITracker.Host())
 	}
-	res, err = c.tryProxy(ctx, req, &proxy.Options{Session: "", OnlyCookies: body != nil}, c.ITracker.ProxyType())
+	if c.cookies != nil {
+		c.header = c.ITracker.Header()
+		c.hc.Jar.SetCookies(req.URL, c.cookies)
+		return
+	}
+	res, err = c.tryProxy(ctx, req, &proxy.Options{OnlyCookies: body != nil}, c.ITracker.ProxyType())
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
 		err = fmt.Errorf("%s login error: %w", c.ITracker.Name(), err)
 		return
 	}
-	// TODO: add extra headers if no flaresolverr
 	c.header = c.ITracker.Header()
-	c.grabResponseHeaders(res)
+	if res.Header.Get("User-Agent") != "" {
+		c.header.Set("User-Agent", res.Header.Get("User-Agent"))
+	}
+	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
 
 	return
 }
@@ -103,7 +110,7 @@ func (c *client) GetResponse(ctx context.Context, link string) (res *http.Respon
 		if res.Request != nil && res.Request.URL.String() != link {
 			err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
 		}
-		c.grabResponseHeaders(res)
+		c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
 		return
 	})
 	return
@@ -118,21 +125,11 @@ func (c *client) tryProxy(ctx context.Context, req *http.Request, opts *proxy.Op
 	return
 }
 
-func (c *client) grabResponseHeaders(res *http.Response) (header *http.Header) {
-	var cv *http.Cookie
-	for _, cv = range res.Cookies() {
-		c.cookies = append(c.cookies, cv)
-		c.header.Add("Cookie", cv.String())
-	}
-	c.header.Set("User-Agent", res.Header.Get("User-Agent"))
-	return
-}
-
-func New(hc *http.Client, t ITracker, px proxyService) IClient {
+func New(hc *http.Client, t ITracker, px proxyService, cb *helper.CircuitBreaker) IClient {
 	return &client{
 		hc:       hc,
 		ITracker: t,
 		px:       px,
-		cb:       helper.NewCircuitBreaker(2, 10*time.Minute),
+		cb:       cb,
 	}
 }
