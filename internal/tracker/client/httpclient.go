@@ -102,6 +102,10 @@ func (c *client) GetResponse(ctx context.Context, link string) (res *http.Respon
 	if res, err = c.tryHttp(ctx, req, nil, proxy.TypeNone); err != nil {
 		return
 	}
+	if res.StatusCode >= http.StatusBadRequest {
+		err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
+		return
+	}
 	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
 	return
 }
@@ -135,10 +139,6 @@ func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Opt
 			return
 		}
 		if res, err = c.hc.Do(req); err != nil {
-			return
-		}
-		if res.StatusCode != http.StatusOK {
-			err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
 			return
 		}
 		if res.Request != nil && res.Request.URL.String() != req.URL.String() {

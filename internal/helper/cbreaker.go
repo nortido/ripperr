@@ -8,6 +8,11 @@ import (
 
 type State int
 
+type CircuitBreakerConfig struct {
+	MaxFailures int
+	Timeout     time.Duration
+}
+
 const (
 	StateClosed State = iota
 	StateOpen
@@ -63,10 +68,10 @@ func (cb *CircuitBreaker) reset() {
 	cb.failures = 0
 }
 
-func NewCircuitBreaker(maxFailures int, resetTimeout time.Duration) *CircuitBreaker {
+func NewCircuitBreaker(cfg *CircuitBreakerConfig) *CircuitBreaker {
 	return &CircuitBreaker{
 		state:       StateOpen,
-		MaxFailures: maxFailures,
-		Timeout:     resetTimeout,
+		MaxFailures: cfg.MaxFailures,
+		Timeout:     cfg.Timeout,
 	}
 }

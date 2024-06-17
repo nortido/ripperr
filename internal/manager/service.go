@@ -7,20 +7,20 @@ import (
 	"torr/internal/model"
 )
 
-type torrentClient interface {
+type client interface {
 	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, hash string) (err error)
 }
 
-type ITorrentManager interface {
+type IManager interface {
 	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
 type manager struct {
 	offset int
-	client torrentClient
+	client client
 	index  chan *model.Entry
 }
 
@@ -35,7 +35,6 @@ func (m *manager) Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer,
 	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	// TODO: delete torrent setting for tracker
 	if err = m.client.Delete(ctx, e.Hash); err != nil {
 		return
 	}
@@ -43,7 +42,7 @@ func (m *manager) Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer,
 	return
 }
 
-func NewManager(client torrentClient) ITorrentManager {
+func NewManager(client client) IManager {
 	return &manager{
 		client: client,
 	}

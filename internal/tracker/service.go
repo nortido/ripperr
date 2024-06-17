@@ -61,7 +61,7 @@ type service struct {
 	px      IProxy
 	mx      sync.RWMutex
 	clients map[int]*CachedItem
-	cb      *helper.CircuitBreaker
+	cbcfg   *helper.CircuitBreakerConfig
 }
 
 func (s *service) ClientByLink(ctx context.Context, link string) (tc IHttpClient, err error) {
@@ -165,7 +165,7 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
-	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cb.MaxFailures, s.cb.Timeout))
+	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbcfg))
 	fmt.Println("trying to cache ", tr.Name())
 	if err = tc.InitCookies(ctx); err != nil {
 		tc = nil
@@ -182,11 +182,11 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 
 // TODO: get circuit breaker config
 
-func New(hc *http.Client, px IProxy, cb *helper.CircuitBreaker) IService {
+func New(hc *http.Client, px IProxy, cbcfg *helper.CircuitBreakerConfig) IService {
 	return &service{
 		hc:      hc,
 		px:      px,
 		clients: make(map[int]*CachedItem),
-		cb:      cb,
+		cbcfg:   cbcfg,
 	}
 }

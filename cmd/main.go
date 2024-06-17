@@ -71,10 +71,10 @@ func main() {
 		},
 		Http: mproxy.ItemConfig{},
 	})
-	s := tracker.New(ht, px, helper.NewCircuitBreaker(
-		cfg.Runner.ConnMaxRetries,
-		time.Duration(cfg.Runner.ConnMinutesToRetry)*time.Minute,
-	))
+	s := tracker.New(ht, px, &helper.CircuitBreakerConfig{
+		MaxFailures: cfg.Runner.ConnMaxRetries,
+		Timeout:     time.Duration(cfg.Runner.ConnMinutesToRetry) * time.Minute,
+	})
 	if err = s.CacheAll(ctx); err != nil {
 		fmt.Println(err)
 	}
