@@ -22,7 +22,7 @@ type IClient interface {
 type client struct {
 	hc    *http.Client
 	conf  *proxy.Config
-	index struct {
+	cache struct {
 		fl fclient.IClient
 	}
 }
@@ -33,15 +33,17 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 		fres   *fclient.Response
 	)
 	switch proxyType {
-	case proxy.ProxyNone:
+	case proxy.TypeNone:
 		res, err = f.hc.Do(r)
-	case proxy.ProxyFlaresolverr:
-		fmt.Println("sending request to flaresolverr")
+	case proxy.TypeFlare:
+		fmt.Printf("getting \"%s\" by flaresolverr\n", r.URL.String())
 		params = fmapper.PrepareParams(r, opts)
 		if err != nil {
 			return
 		}
-		fres, err = f.index.fl.Send(r, params)
+		if fres, err = f.cache.fl.Send(r, params); err != nil {
+			return
+		}
 		res, err = fmapper.MakeResponse(fres, r)
 	default:
 		err = fmt.Errorf("unknown proxy type: %d", proxyType)
@@ -54,7 +56,7 @@ func New(hc *http.Client, conf *proxy.Config) (sw IClient) {
 		hc:   hc,
 		conf: conf,
 	}
-	px.index.fl = fclient.New(hc, &fclient.Config{
+	px.cache.fl = fclient.New(hc, &fclient.Config{
 		Host:       conf.Flaresolverr.URL,
 		MaxTimeout: conf.Flaresolverr.MaxTimeout,
 	})

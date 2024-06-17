@@ -3,8 +3,8 @@ package proxy
 import "net/http"
 
 const (
-	ProxyNone = iota
-	ProxyFlaresolverr
+	TypeNone = iota
+	TypeFlare
 )
 
 type ProxyType uint8

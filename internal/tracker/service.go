@@ -37,7 +37,7 @@ var (
 
 type IHttpClient interface {
 	client.ITracker
-	InitSession(ctx context.Context) (err error)
+	InitCookies(ctx context.Context) (err error)
 	GetResponse(ctx context.Context, link string) (res *http.Response, err error)
 }
 
@@ -167,7 +167,7 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 	}
 	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cb.MaxFailures, s.cb.Timeout))
 	fmt.Println("trying to cache ", tr.Name())
-	if err = tc.InitSession(ctx); err != nil {
+	if err = tc.InitCookies(ctx); err != nil {
 		tc = nil
 	}
 	s.mx.RLock()

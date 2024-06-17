@@ -41,8 +41,6 @@ func MakeResponse(resp *flaresolverr.Response, req *http.Request) (result *http.
 		Body:       io.NopCloser(bytes.NewBufferString(resp.Solution.Response)),
 		Request:    req,
 		Header: http.Header{
-			//"Content-Type":   []string{"text/html; charset=Windows-1251"}, // TODO: add parser for content type
-			//"Location":       []string{flresp.Solution.URL},
 			"Content-Length": []string{fmt.Sprint(len(resp.Solution.Response))},
 			"User-Agent":     []string{resp.Solution.UserAgent},
 		},
