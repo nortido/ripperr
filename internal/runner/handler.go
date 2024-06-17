@@ -146,9 +146,9 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 
 func (h *handler) forUpdate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
 	var (
-		b    *bytes.Buffer
-		cur  *time.Time
-		diff int64
+		b      *bytes.Buffer
+		cur    *time.Time
+		curInt int64
 	)
 	b, err = h.tracker.Response(ctx, tc.TopicLink(e.ID), tc)
 	if err != nil {
@@ -161,9 +161,9 @@ func (h *handler) forUpdate(ctx context.Context, tc tracker.IHttpClient, e *mode
 		err = fmt.Errorf("current time not found")
 		return
 	}
-	diff = cur.Unix() - e.Timestamp
+	curInt = cur.Unix()
 	// TODO: add check count of updates in DB
-	if diff < h.config.MinDateDiff {
+	if curInt > e.Timestamp && (curInt-e.Timestamp) < h.config.MinDateDiff {
 		err = fmt.Errorf("file is not updated")
 		return
 	}

@@ -10,7 +10,7 @@ import (
 type client interface {
 	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	Delete(ctx context.Context, hash string) (err error)
+	Delete(ctx context.Context, e *model.Entry) (err error)
 }
 
 type IManager interface {
@@ -35,7 +35,7 @@ func (m *manager) Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer,
 	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	if err = m.client.Delete(ctx, e.Hash); err != nil {
+	if err = m.client.Delete(ctx, e); err != nil {
 		return
 	}
 	err = m.client.AddFromBuffer(ctx, buf, opts)

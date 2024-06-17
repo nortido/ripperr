@@ -158,6 +158,7 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 		tc IHttpClient
 	)
 
+	// TODO: store login cookies in DB
 	if tr, ok = index[tid]; !ok {
 		s.mx.RLock()
 		s.clients[tid] = &CachedItem{Created: time.Now()}
@@ -179,8 +180,6 @@ func (s *service) store(ctx context.Context, tid int) (err error) {
 
 	return
 }
-
-// TODO: get circuit breaker config
 
 func New(hc *http.Client, px IProxy, cbcfg *helper.CircuitBreakerConfig) IService {
 	return &service{

@@ -43,10 +43,11 @@ func main() {
 	}
 	tc, err = qbittorrent.New(
 		model.ManagerConfig{
-			Host:        cfg.Manager.QbitTorrent.Host,
-			Username:    cfg.Manager.QbitTorrent.Username,
-			Password:    cfg.Manager.QbitTorrent.Password,
-			DeleteFiles: cfg.Manager.AllowDeleteFiles,
+			Host:             cfg.Manager.QbitTorrent.Host,
+			Username:         cfg.Manager.QbitTorrent.Username,
+			Password:         cfg.Manager.QbitTorrent.Password,
+			DeleteEnabled:    cfg.Manager.DeleteFilesEnabled,
+			DeleteCategories: cfg.Manager.DeleteFilesCategories,
 		})
 	if err != nil {
 		fmt.Println(err)

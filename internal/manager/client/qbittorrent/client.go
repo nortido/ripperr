@@ -19,7 +19,7 @@ var (
 type IClient interface {
 	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	Delete(ctx context.Context, hash string) (err error)
+	Delete(ctx context.Context, e *model.Entry) (err error)
 }
 
 type client struct {
@@ -93,11 +93,17 @@ func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 	return
 }
 
-func (c *client) Delete(ctx context.Context, hash string) (err error) {
-	if !c.config.DeleteFiles {
+func (c *client) Delete(ctx context.Context, e *model.Entry) (err error) {
+	if !c.config.DeleteEnabled {
 		return
 	}
-	return c.client.DeleteTorrentsCtx(ctx, []string{hash}, true)
+	for i := range c.config.DeleteCategories {
+		if e.Category == c.config.DeleteCategories[i] {
+			fmt.Println("deleting torrent: ", e.Name)
+			return c.client.DeleteTorrentsCtx(ctx, []string{e.Hash}, true)
+		}
+	}
+	return
 }
 
 func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
