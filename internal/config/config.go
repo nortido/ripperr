@@ -6,7 +6,6 @@ type Manager struct {
 		Username string `env:"QBIT_USER, default=admin"`
 		Password string `env:"QBIT_PASS, default=adminadmin"`
 	}
-	//TODO: delete files for specific category only
 	DeleteFilesEnabled    bool     `env:"MANAGER_DELETE_FILES, default=false"`
 	DeleteFilesCategories []string `env:"MANAGER_DELETE_FILES_CATEGORIES, default=switch,files"`
 }

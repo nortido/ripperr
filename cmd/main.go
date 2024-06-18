@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/sethvargo/go-envconfig"
@@ -28,7 +31,7 @@ type configuration struct {
 
 func main() {
 	var (
-		tc  qbittorrent.IClient
+		qbc qbittorrent.IClient
 		px  proxy.IClient
 		ht  *http.Client
 		cj  *cookiejar.Jar
@@ -41,7 +44,7 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	tc, err = qbittorrent.New(
+	qbc, err = qbittorrent.New(
 		model.ManagerConfig{
 			Host:             cfg.Manager.QbitTorrent.Host,
 			Username:         cfg.Manager.QbitTorrent.Username,
@@ -79,11 +82,17 @@ func main() {
 	if err = s.CacheAll(ctx); err != nil {
 		fmt.Println(err)
 	}
-	h := runner.NewRunner(s, manager.NewManager(tc), model.HandlerConfig{
+	h := runner.NewRunner(s, manager.NewManager(qbc), model.HandlerConfig{
 		RunsPerDay:   cfg.Runner.RunsPerDay,
 		WatchTag:     cfg.Runner.WatchTag,
 		ProcessDelay: time.Duration(cfg.Runner.ProcessSecondsDelay) * time.Second,
 		MinDateDiff:  cfg.Runner.UpdateThreshold,
 	})
 	h.Run(ctx)
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
+	defer func(sig os.Signal) {
+		fmt.Println("goodbye")
+	}(<-c)
 }

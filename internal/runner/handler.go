@@ -44,6 +44,7 @@ func (h *handler) Run(ctx context.Context) {
 		ge    = make(chan struct{})
 		err   error
 	)
+
 	defer close(ch)
 	defer close(cherr)
 	defer close(ge)
@@ -163,6 +164,7 @@ func (h *handler) forUpdate(ctx context.Context, tc tracker.IHttpClient, e *mode
 	}
 	curInt = cur.Unix()
 	// TODO: add check count of updates in DB
+	// TODO: save last timestamp in DB
 	if curInt > e.Timestamp && (curInt-e.Timestamp) < h.config.MinDateDiff {
 		err = fmt.Errorf("file is not updated")
 		return

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"torr/internal/helper"
 	"torr/internal/model/proxy"
 )
 
@@ -15,7 +16,6 @@ const (
 	Name        = "teamhd"
 	Domain      = "teamhd.org"
 	Host        = "https://" + Domain
-	LoginURL    = Host + "/takelogin.php"
 	DownloadURL = Host + "/download.php?id="
 	TopicURL    = Host + "/details/id"
 )
@@ -29,16 +29,8 @@ func (t Tracker) Host() (host string) {
 
 func (t Tracker) LoginData() (link string, data *strings.Reader, cookies []*http.Cookie) {
 	link = DownloadURL
-	// TODO: parse cookies from single string
-	cookies = make([]*http.Cookie, 6)
-	cookies = []*http.Cookie{
-		{Name: "cross-site-cookie", Value: "https://teamhd.org"},
-		{Name: "PHPSESSID", Value: "PLACEHOLDER"},
-		{Name: "uid", Value: "6347"},
-		{Name: "lang", Value: "russian"},
-		{Name: "pass", Value: "PLACEHOLDER"},
-		{Name: "token", Value: "PLACEHOLDER"},
-	}
+	cookies = helper.ParseCookie("cross-site-cookie=https://teamhd.org; PHPSESSID=PLACEHOLDER; uid=PLACEHOLDER; lang=russian; pass=PLACEHOLDER; token=PLACEHOLDER", "")
+
 	return
 }
 
