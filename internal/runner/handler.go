@@ -7,7 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"trackerr/internal/model"
+	"trackerr/internal/model/runner"
 	"trackerr/internal/tracker"
 )
 
@@ -22,18 +25,24 @@ type manager interface {
 	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
+type database interface {
+	GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error)
+	SaveItem(ctx context.Context, item *runner.HistoryItem) (err error)
+}
+
 type IHandler interface {
 	Run(ctx context.Context)
 }
 
 type handler struct {
-	m       sync.RWMutex
-	offset  int
-	limit   int
-	config  model.HandlerConfig
-	entries []*model.Entry
-	tracker trackerClient
-	manager manager
+	m        sync.RWMutex
+	offset   int
+	limit    int
+	config   *model.HandlerConfig
+	entries  []*model.Entry
+	tracker  trackerClient
+	manager  manager
+	database database
 }
 
 func (h *handler) Run(ctx context.Context) {
@@ -87,6 +96,7 @@ func (h *handler) Run(ctx context.Context) {
 
 func (h *handler) getEntries(ctx context.Context) (err error) {
 	var entries []*model.Entry
+
 	if entries, err = h.manager.GetEntries(ctx, model.FilterOptions{Tag: "watch"}); err != nil {
 		err = fmt.Errorf("get torrents error: %w", err)
 		return
@@ -136,21 +146,61 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 	if tc, err = h.tracker.ClientByLink(ctx, e.URL); err != nil {
 		return
 	}
-	if err = h.forUpdate(ctx, tc, e); err != nil {
+	if err = h.isUpdated(ctx, tc, e); err != nil {
 		return
 	}
-	err = h.save(ctx, tc, e)
-	fmt.Println("saved entry: ", e.Name)
+	err = h.submit(ctx, tc, e)
+	if err == nil {
+		fmt.Println("saved entry: ", e.Name)
+	}
 
 	return
 }
 
-func (h *handler) forUpdate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
-	var (
-		b      *bytes.Buffer
-		cur    *time.Time
-		curInt int64
-	)
+func (h *handler) isUpdated(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
+	var hi *runner.HistoryItem
+
+	if hi, err = h.checkHistoryDate(ctx, e); err != nil {
+		return
+	}
+	if err = h.checkPageDate(ctx, tc, hi, e); err != nil {
+		return
+	}
+	return
+}
+
+func (h *handler) checkHistoryDate(ctx context.Context, e *model.Entry) (hi *runner.HistoryItem, err error) {
+	// TODO: cache history
+	if hi, err = h.database.GetItem(ctx, e.URL); err == pgx.ErrNoRows {
+		err = nil
+	} else if err != nil {
+		return
+	}
+	if hi.Exists && (e.Timestamp-hi.UpdatedAt.Unix()) < h.config.MinDateDiff {
+		err = fmt.Errorf("skipped by db: %s", e.Name)
+	}
+	return
+}
+
+func (h *handler) checkPageDate(ctx context.Context, tc tracker.IHttpClient, hi *runner.HistoryItem, e *model.Entry) (err error) {
+	var cur *time.Time
+
+	if cur, err = h.getPageDate(ctx, tc, e); err != nil {
+		return
+	}
+	// TODO: add check count of updates in DB
+	if err = h.saveHistory(ctx, hi.URLHash, e, hi.Exists); err != nil {
+		return
+	}
+	if (e.Timestamp - cur.Unix()) < h.config.MinDateDiff {
+		err = fmt.Errorf("file is not updated")
+		return
+	}
+	return
+}
+func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (cur *time.Time, err error) {
+	var b *bytes.Buffer
+
 	b, err = h.tracker.Response(ctx, tc.TopicLink(e.ID), tc)
 	if err != nil {
 		return
@@ -158,24 +208,13 @@ func (h *handler) forUpdate(ctx context.Context, tc tracker.IHttpClient, e *mode
 		err = fmt.Errorf("no page data")
 		return
 	}
-	if cur = tc.Datetime(b, false); cur == nil {
+	if cur = tc.ParseDate(b, false); cur == nil {
 		err = fmt.Errorf("current time not found")
-		return
-	}
-	curInt = cur.Unix()
-	// TODO: add check count of updates in DB
-	// TODO: save last timestamp in DB
-	//hash := fnv.New32()
-	//hash.Write([]byte(e.URL))
-	//hash.Sum32()
-	if curInt < e.Timestamp || (curInt-e.Timestamp) < h.config.MinDateDiff {
-		err = fmt.Errorf("file is not updated")
-		return
 	}
 	return
 }
 
-func (h *handler) save(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
+func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
 	var b *bytes.Buffer
 
 	b, err = h.tracker.Response(ctx, tc.DownloadLink(e.ID), tc)
@@ -195,10 +234,26 @@ func (h *handler) save(ctx context.Context, tc tracker.IHttpClient, e *model.Ent
 	return
 }
 
-func NewRunner(tracker trackerClient, manager manager, config model.HandlerConfig) IHandler {
+func (h *handler) saveHistory(ctx context.Context, urlHash string, e *model.Entry, update bool) (err error) {
+	if err = h.database.SaveItem(ctx, &runner.HistoryItem{
+		URLHash:  urlHash,
+		TopicID:  e.ID,
+		Category: e.Category,
+		Tag:      e.Tag,
+		Name:     e.Name,
+		URL:      e.URL,
+		Exists:   update,
+	}); err != nil {
+		return
+	}
+	return
+}
+
+func NewRunner(tracker trackerClient, manager manager, database database, config *model.HandlerConfig) IHandler {
 	return &handler{
-		tracker: tracker,
-		manager: manager,
-		config:  config,
+		tracker:  tracker,
+		manager:  manager,
+		config:   config,
+		database: database,
 	}
 }

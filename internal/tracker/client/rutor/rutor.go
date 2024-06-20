@@ -49,7 +49,7 @@ func (t Tracker) Header() (header *http.Header) {
 	return
 }
 
-func (t Tracker) Datetime(b *bytes.Buffer, encoded bool) (result *time.Time) {
+func (t Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	return &time.Time{}
 }
 

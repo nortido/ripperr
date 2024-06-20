@@ -19,7 +19,7 @@ import (
 	"trackerr/internal/manager"
 	"trackerr/internal/manager/client/qbittorrent"
 	"trackerr/internal/model"
-	mproxy "trackerr/internal/model/proxy"
+	proxyModel "trackerr/internal/model/proxy"
 	"trackerr/internal/proxy"
 	"trackerr/internal/runner"
 	"trackerr/internal/tracker"
@@ -34,14 +34,15 @@ type configuration struct {
 
 func main() {
 	var (
-		qbc   qbittorrent.IClient
-		px    proxy.IClient
-		ht    *http.Client
-		cj    *cookiejar.Jar
-		db    *pgxpool.Pool
-		dbcfg *pgxpool.Config
-		err   error
-		cfg   configuration
+		cfg    configuration
+		qbc    qbittorrent.IClient
+		px     proxy.IClient
+		ht     *http.Client
+		cj     *cookiejar.Jar
+		dbConn *pgxpool.Pool
+		dbCfg  *pgxpool.Config
+		db     database.IClient
+		err    error
 	)
 	ctx := context.Background()
 
@@ -51,6 +52,7 @@ func main() {
 	}
 
 	// Init manager client
+	// TODO: move creation to manager constructor
 	if qbc, err = qbittorrent.New(
 		model.ManagerConfig{
 			Host:             cfg.Manager.QbitTorrent.Host,
@@ -77,26 +79,27 @@ func main() {
 	}
 
 	// Init proxy client
-	px = proxy.New(ht, &mproxy.Config{
-		None: mproxy.ItemConfig{},
-		Flaresolverr: mproxy.ItemConfig{
+	px = proxy.New(ht, &proxyModel.Config{
+		None: proxyModel.ItemConfig{},
+		Flaresolverr: proxyModel.ItemConfig{
 			URL:        cfg.Flaresolverr.Host,
 			MaxTimeout: cfg.Flaresolverr.MaxTimeout,
 		},
-		Http: mproxy.ItemConfig{},
+		Http: proxyModel.ItemConfig{},
 	})
 
 	// Init db client
-	dbcfg, _ = pgxpool.ParseConfig(cfg.DB.MasterURL)
-	dbcfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DB.ConnectTimeout) * time.Second
-	if db, err = pgxpool.NewWithConfig(ctx, dbcfg); err != nil {
+	dbCfg, _ = pgxpool.ParseConfig(cfg.DB.MasterURL)
+	dbCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DB.ConnectTimeout) * time.Second
+	if dbConn, err = pgxpool.NewWithConfig(ctx, dbCfg); err != nil {
 		fmt.Println(err)
 		return
 	}
-	defer db.Close()
+	defer dbConn.Close()
+	db = database.New(dbConn)
 
 	// Init trackers client
-	tr := tracker.New(ht, px, database.New(db), &helper.CircuitBreakerConfig{
+	tr := tracker.New(ht, px, db, &helper.CircuitBreakerConfig{
 		MaxFailures: cfg.Runner.ConnMaxRetries,
 		Timeout:     time.Duration(cfg.Runner.ConnMinutesToRetry) * time.Minute,
 	})
@@ -106,7 +109,7 @@ func main() {
 	}
 
 	// Init handler client
-	rn := runner.NewRunner(tr, manager.NewManager(qbc), model.HandlerConfig{
+	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, &model.HandlerConfig{
 		RunsPerDay:   cfg.Runner.RunsPerDay,
 		WatchTag:     cfg.Runner.WatchTag,
 		ProcessDelay: time.Duration(cfg.Runner.ProcessSecondsDelay) * time.Second,

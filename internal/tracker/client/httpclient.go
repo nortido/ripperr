@@ -22,7 +22,7 @@ type ITracker interface {
 	DownloadLink(topicID string) (url string)
 	TopicLink(topicID string) (url string)
 	LoginData() (link string, credentials *url.Values, cookies []*http.Cookie)
-	Datetime(b *bytes.Buffer, encoded bool) (result *time.Time)
+	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
 	ProxyType() (proxyType proxy.ProxyType)
 }
 
