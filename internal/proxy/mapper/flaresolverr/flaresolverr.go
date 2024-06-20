@@ -8,7 +8,7 @@ import (
 
 	"github.com/nortido/go-flaresolverr"
 
-	"torr/internal/model/proxy"
+	"trackerr/internal/model/proxy"
 )
 
 const (

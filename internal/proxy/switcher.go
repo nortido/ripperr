@@ -3,11 +3,11 @@ package proxy
 import (
 	"fmt"
 	"net/http"
-	"torr/internal/model/proxy"
+	"trackerr/internal/model/proxy"
 
 	fclient "github.com/nortido/go-flaresolverr"
 
-	fmapper "torr/internal/proxy/mapper/flaresolverr"
+	fmapper "trackerr/internal/proxy/mapper/flaresolverr"
 )
 
 type Config struct {

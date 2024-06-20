@@ -4,17 +4,17 @@ import (
 	"bytes"
 	"context"
 
-	"torr/internal/model"
+	"trackerr/internal/model"
 )
 
 type client interface {
-	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
+	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, e *model.Entry) (err error)
 }
 
 type IManager interface {
-	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
+	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
@@ -24,7 +24,7 @@ type manager struct {
 	index  chan *model.Entry
 }
 
-func (m *manager) GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error) {
+func (m *manager) GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error) {
 	if entries, err = m.client.List(ctx, opts); err != nil {
 		return
 	}

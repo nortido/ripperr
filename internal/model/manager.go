@@ -1,6 +1,6 @@
 package model
 
-type TorrentFilterOptions struct {
+type FilterOptions struct {
 	Tag string
 }
 

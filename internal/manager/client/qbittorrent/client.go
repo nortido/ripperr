@@ -9,7 +9,7 @@ import (
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
-	"torr/internal/model"
+	"trackerr/internal/model"
 )
 
 var (
@@ -17,7 +17,7 @@ var (
 )
 
 type IClient interface {
-	List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
+	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, e *model.Entry) (err error)
 }
@@ -27,7 +27,7 @@ type client struct {
 	config model.ManagerConfig
 }
 
-func (c *client) List(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error) {
+func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error) {
 	var (
 		i     int
 		qts   []qbt.Torrent

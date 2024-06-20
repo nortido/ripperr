@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"torr/internal/model"
-	"torr/internal/tracker"
+	"trackerr/internal/model"
+	"trackerr/internal/tracker"
 )
 
 type trackerClient interface {
@@ -18,7 +18,7 @@ type trackerClient interface {
 }
 
 type manager interface {
-	GetEntries(ctx context.Context, opts model.TorrentFilterOptions) (entries []*model.Entry, err error)
+	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
@@ -87,7 +87,7 @@ func (h *handler) Run(ctx context.Context) {
 
 func (h *handler) getEntries(ctx context.Context) (err error) {
 	var entries []*model.Entry
-	if entries, err = h.manager.GetEntries(ctx, model.TorrentFilterOptions{Tag: "watch"}); err != nil {
+	if entries, err = h.manager.GetEntries(ctx, model.FilterOptions{Tag: "watch"}); err != nil {
 		err = fmt.Errorf("get torrents error: %w", err)
 		return
 	}
@@ -165,7 +165,10 @@ func (h *handler) forUpdate(ctx context.Context, tc tracker.IHttpClient, e *mode
 	curInt = cur.Unix()
 	// TODO: add check count of updates in DB
 	// TODO: save last timestamp in DB
-	if curInt > e.Timestamp && (curInt-e.Timestamp) < h.config.MinDateDiff {
+	//hash := fnv.New32()
+	//hash.Write([]byte(e.URL))
+	//hash.Sum32()
+	if curInt < e.Timestamp || (curInt-e.Timestamp) < h.config.MinDateDiff {
 		err = fmt.Errorf("file is not updated")
 		return
 	}

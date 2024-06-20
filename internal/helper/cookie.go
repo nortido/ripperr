@@ -4,11 +4,12 @@ import (
 	"net/http"
 	"net/textproto"
 	"strings"
+	"time"
 
 	"golang.org/x/net/http/httpguts"
 )
 
-func ParseCookie(line string, filter string) (cookies []*http.Cookie) {
+func ParseCookies(line string, filter string) (cookies []*http.Cookie) {
 	var part string
 
 	if len(line) == 0 {
@@ -34,7 +35,14 @@ func ParseCookie(line string, filter string) (cookies []*http.Cookie) {
 		if !ok {
 			continue
 		}
-		cookies = append(cookies, &http.Cookie{Name: name, Value: val})
+		cookies = append(cookies, &http.Cookie{Name: name, Value: val, Expires: time.Now().AddDate(0, 0, 30)})
+	}
+	return
+}
+
+func CookiesString(ck []*http.Cookie) (res string) {
+	for _, c := range ck {
+		res += c.Name + "=" + c.Value + "; "
 	}
 	return
 }

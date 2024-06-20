@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
-	"torr/internal/helper"
-	"torr/internal/model/proxy"
+	"trackerr/internal/helper"
+	"trackerr/internal/model/proxy"
 )
 
 const (
@@ -27,9 +27,10 @@ func (t Tracker) Host() (host string) {
 	return Host
 }
 
-func (t Tracker) LoginData() (link string, data *strings.Reader, cookies []*http.Cookie) {
+func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
 	link = DownloadURL
-	cookies = helper.ParseCookie("cross-site-cookie=https://teamhd.org; PHPSESSID=PLACEHOLDER; uid=PLACEHOLDER; lang=russian; pass=PLACEHOLDER; token=PLACEHOLDER", "")
+	credentials = &url.Values{}
+	cookies = helper.ParseCookies("cross-site-cookie=https://teamhd.org; PHPSESSID=PLACEHOLDER; uid=PLACEHOLDER; lang=russian; pass=PLACEHOLDER; token=PLACEHOLDER", "")
 
 	return
 }

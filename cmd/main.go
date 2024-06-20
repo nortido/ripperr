@@ -10,33 +10,38 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sethvargo/go-envconfig"
 
-	"torr/internal/config"
-	"torr/internal/helper"
-	"torr/internal/manager"
-	"torr/internal/manager/client/qbittorrent"
-	"torr/internal/model"
-	mproxy "torr/internal/model/proxy"
-	"torr/internal/proxy"
-	"torr/internal/runner"
-	"torr/internal/tracker"
+	"trackerr/internal/config"
+	"trackerr/internal/database"
+	"trackerr/internal/helper"
+	"trackerr/internal/manager"
+	"trackerr/internal/manager/client/qbittorrent"
+	"trackerr/internal/model"
+	mproxy "trackerr/internal/model/proxy"
+	"trackerr/internal/proxy"
+	"trackerr/internal/runner"
+	"trackerr/internal/tracker"
 )
 
 type configuration struct {
 	Runner       *config.Runner
 	Manager      *config.Manager
 	Flaresolverr *config.Flaresolverr
+	DB           *config.Database
 }
 
 func main() {
 	var (
-		qbc qbittorrent.IClient
-		px  proxy.IClient
-		ht  *http.Client
-		cj  *cookiejar.Jar
-		err error
-		cfg configuration
+		qbc   qbittorrent.IClient
+		px    proxy.IClient
+		ht    *http.Client
+		cj    *cookiejar.Jar
+		db    *pgxpool.Pool
+		dbcfg *pgxpool.Config
+		err   error
+		cfg   configuration
 	)
 	ctx := context.Background()
 
@@ -44,18 +49,21 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	qbc, err = qbittorrent.New(
+
+	// Init manager client
+	if qbc, err = qbittorrent.New(
 		model.ManagerConfig{
 			Host:             cfg.Manager.QbitTorrent.Host,
 			Username:         cfg.Manager.QbitTorrent.Username,
 			Password:         cfg.Manager.QbitTorrent.Password,
 			DeleteEnabled:    cfg.Manager.DeleteFilesEnabled,
 			DeleteCategories: cfg.Manager.DeleteFilesCategories,
-		})
-	if err != nil {
+		}); err != nil {
 		fmt.Println(err)
 		return
 	}
+
+	// Init http client
 	if cj, err = cookiejar.New(nil); err != nil {
 		fmt.Println(err)
 		return
@@ -67,6 +75,8 @@ func main() {
 		Jar:     cj,
 		Timeout: time.Duration(cfg.Runner.HttpTimeout) * time.Second,
 	}
+
+	// Init proxy client
 	px = proxy.New(ht, &mproxy.Config{
 		None: mproxy.ItemConfig{},
 		Flaresolverr: mproxy.ItemConfig{
@@ -75,21 +85,36 @@ func main() {
 		},
 		Http: mproxy.ItemConfig{},
 	})
-	s := tracker.New(ht, px, &helper.CircuitBreakerConfig{
+
+	// Init db client
+	dbcfg, _ = pgxpool.ParseConfig(cfg.DB.MasterURL)
+	dbcfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DB.ConnectTimeout) * time.Second
+	if db, err = pgxpool.NewWithConfig(ctx, dbcfg); err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer db.Close()
+
+	// Init trackers client
+	tr := tracker.New(ht, px, database.New(db), &helper.CircuitBreakerConfig{
 		MaxFailures: cfg.Runner.ConnMaxRetries,
 		Timeout:     time.Duration(cfg.Runner.ConnMinutesToRetry) * time.Minute,
 	})
-	if err = s.CacheAll(ctx); err != nil {
+	if err = tr.CacheAll(ctx); err != nil {
 		fmt.Println(err)
+		return
 	}
-	h := runner.NewRunner(s, manager.NewManager(qbc), model.HandlerConfig{
+
+	// Init handler client
+	rn := runner.NewRunner(tr, manager.NewManager(qbc), model.HandlerConfig{
 		RunsPerDay:   cfg.Runner.RunsPerDay,
 		WatchTag:     cfg.Runner.WatchTag,
 		ProcessDelay: time.Duration(cfg.Runner.ProcessSecondsDelay) * time.Second,
 		MinDateDiff:  cfg.Runner.UpdateThreshold,
 	})
-	h.Run(ctx)
+	rn.Run(ctx)
 
+	// Graceful shutdown
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
 	defer func(sig os.Signal) {

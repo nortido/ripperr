@@ -24,3 +24,8 @@ type Flaresolverr struct {
 	Host       string `env:"FLARE_URL, default=http://192.168.1.200:8191/v1"`
 	MaxTimeout int    `env:"FLARE_TIMEOUT, default=30000"`
 }
+
+type Database struct {
+	MasterURL      string `env:"DB_URL, default=postgres://postgres:PLACEHOLDER@192.168.1.200:5432/trackerr"`
+	ConnectTimeout int    `env:"DB_CONNECT_TIMEOUT, default=60"`
+}

@@ -7,13 +7,12 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
 	"golang.org/x/text/encoding/charmap"
 
-	"torr/internal/helper"
-	"torr/internal/model/proxy"
+	"trackerr/internal/helper"
+	"trackerr/internal/model/proxy"
 )
 
 const (
@@ -33,15 +32,14 @@ func (t Tracker) Host() (host string) {
 	return Host
 }
 
-func (t Tracker) LoginData() (link string, data *strings.Reader, cookies []*http.Cookie) {
+func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
 	// TODO: Put credentials into envs|DB
-	form := url.Values{
+	credentials = &url.Values{
 		"login_username": {"johan01"},
 		"login_password": {"dbhnejp"},
 		"login":          {"вход"},
 	}
 	link = LoginURL
-	data = strings.NewReader(form.Encode())
 
 	return
 }

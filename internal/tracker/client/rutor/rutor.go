@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
-	"torr/internal/model/proxy"
+	"trackerr/internal/model/proxy"
 )
 
 const (
@@ -25,8 +25,9 @@ type Tracker struct {
 func (t Tracker) Host() (host string) {
 	return Host
 }
-func (t Tracker) LoginData() (link string, data *strings.Reader, cookies []*http.Cookie) {
+func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
 	link = Host
+	credentials = &url.Values{}
 
 	return
 }

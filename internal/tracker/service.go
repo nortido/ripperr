@@ -5,16 +5,20 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
-	"torr/internal/helper"
-	"torr/internal/model/proxy"
-	"torr/internal/tracker/client"
-	"torr/internal/tracker/client/kinozal"
-	"torr/internal/tracker/client/rutor"
-	"torr/internal/tracker/client/rutracker"
-	"torr/internal/tracker/client/teamhd"
+	"github.com/jackc/pgx/v5"
+
+	"trackerr/internal/helper"
+	"trackerr/internal/model/proxy"
+	"trackerr/internal/model/tracker"
+	"trackerr/internal/tracker/client"
+	"trackerr/internal/tracker/client/kinozal"
+	"trackerr/internal/tracker/client/rutor"
+	"trackerr/internal/tracker/client/rutracker"
+	"trackerr/internal/tracker/client/teamhd"
 )
 
 const (
@@ -35,13 +39,19 @@ var (
 	}
 )
 
+type db interface {
+	GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error)
+	SaveTracker(ctx context.Context, source *tracker.Tracker) (err error)
+}
+
 type IHttpClient interface {
 	client.ITracker
-	InitCookies(ctx context.Context) (err error)
+	Cookies() (res []*http.Cookie)
+	InitClient(ctx context.Context, payload *tracker.Tracker) (err error)
 	GetResponse(ctx context.Context, link string) (res *http.Response, err error)
 }
 
-type IProxy interface {
+type px interface {
 	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
 }
 
@@ -58,10 +68,11 @@ type CachedItem struct {
 
 type service struct {
 	hc      *http.Client
-	px      IProxy
+	px      px
 	mx      sync.RWMutex
 	clients map[int]*CachedItem
 	cbcfg   *helper.CircuitBreakerConfig
+	db      db
 }
 
 func (s *service) ClientByLink(ctx context.Context, link string) (tc IHttpClient, err error) {
@@ -98,12 +109,16 @@ func (s *service) Response(ctx context.Context, link string, tc IHttpClient) (bu
 }
 
 func (s *service) CacheAll(ctx context.Context) (err error) {
-	var wg sync.WaitGroup
+	var (
+		wg sync.WaitGroup
+	)
 	wg.Add(len(index))
 	for i := range index {
 		go func(i int) {
+			var e error
 			defer wg.Done()
-			if err = s.store(ctx, i); err != nil {
+			if e = s.cache(ctx, i); e != nil {
+				err = e
 				return
 			}
 		}(i)
@@ -144,48 +159,77 @@ func (s *service) getCachedClient(ctx context.Context, id int) (t IHttpClient, e
 		t = ct
 		return
 	}
-	if err = s.store(ctx, id); err != nil {
+	if err = s.cache(ctx, id); err != nil {
 		return
 	}
 	t = s.clients[id]
 	return
 }
 
-func (s *service) store(ctx context.Context, tid int) (err error) {
+func (s *service) cache(ctx context.Context, tid int) (err error) {
 	var (
 		ok bool
 		tr client.ITracker
 		tc IHttpClient
 	)
 
-	// TODO: store login cookies in DB
 	if tr, ok = index[tid]; !ok {
-		s.mx.RLock()
+		s.mx.Lock()
 		s.clients[tid] = &CachedItem{Created: time.Now()}
-		s.mx.RUnlock()
+		s.mx.Unlock()
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
 	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbcfg))
 	fmt.Println("trying to cache ", tr.Name())
-	if err = tc.InitCookies(ctx); err != nil {
-		tc = nil
+	if err = s.store(ctx, tid, tc); err != nil {
+		return
 	}
-	s.mx.RLock()
+	s.mx.Lock()
 	s.clients[tid] = &CachedItem{IHttpClient: tc, Created: time.Now()}
-	s.mx.RUnlock()
+	s.mx.Unlock()
 	if tc != nil {
 		fmt.Println("tracker cached: ", tr.Name())
+	} else {
+		fmt.Println("tracker caching failed: ", tr.Name())
 	}
 
 	return
 }
 
-func New(hc *http.Client, px IProxy, cbcfg *helper.CircuitBreakerConfig) IService {
+func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error) {
+	var (
+		creds *url.Values
+		attrs *tracker.Tracker
+	)
+	if attrs, err = s.db.GetTracker(ctx, tid); err != nil && err != pgx.ErrNoRows {
+		return
+	}
+	if err = tc.InitClient(ctx, attrs); err != nil {
+		tc = nil
+		return
+	}
+	if attrs == nil {
+		_, creds, _ = tc.LoginData()
+		attrs = &tracker.Tracker{
+			TypeID:      tid,
+			Name:        tc.Name(),
+			Cookies:     tc.Cookies(),
+			Credentials: creds.Encode(),
+		}
+	}
+	if err = s.db.SaveTracker(ctx, attrs); err != nil {
+		return
+	}
+	return
+}
+
+func New(hc *http.Client, px px, db db, cbcfg *helper.CircuitBreakerConfig) IService {
 	return &service{
 		hc:      hc,
 		px:      px,
-		clients: make(map[int]*CachedItem),
+		db:      db,
 		cbcfg:   cbcfg,
+		clients: make(map[int]*CachedItem),
 	}
 }
