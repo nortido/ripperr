@@ -86,7 +86,7 @@ func (h *handler) Run(ctx context.Context) {
 			}()
 		case e = <-ch:
 			go func(e *model.Entry) {
-				if err = h.processEntry(ctx, e); err != nil {
+				if err = h.processEntry(ctx, *e); err != nil {
 					cherr <- err
 				}
 			}(e)
@@ -134,7 +134,7 @@ func (h *handler) pushEntries(ctx context.Context, ch chan *model.Entry) (reset 
 	return
 }
 
-func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) {
+func (h *handler) processEntry(ctx context.Context, e model.Entry) (err error) {
 	var tc tracker.IHttpClient
 
 	if h.config.MinDateDiff == 0 {
@@ -146,11 +146,10 @@ func (h *handler) processEntry(ctx context.Context, e *model.Entry) (err error) 
 	if tc, err = h.tracker.ClientByLink(ctx, e.URL); err != nil {
 		return
 	}
-	if err = h.isUpdated(ctx, tc, e); err != nil {
+	if err = h.isUpdated(ctx, tc, &e); err != nil {
 		return
 	}
-	err = h.submit(ctx, tc, e)
-	if err == nil {
+	if err = h.submit(ctx, tc, &e); err == nil {
 		fmt.Println("saved entry: ", e.Name)
 	}
 
@@ -176,7 +175,9 @@ func (h *handler) checkHistoryDate(ctx context.Context, e *model.Entry) (hi *run
 	} else if err != nil {
 		return
 	}
-	if hi.Exists && (e.Timestamp-hi.UpdatedAt.Unix()) < h.config.MinDateDiff {
+	// TODO: save expire date instead of updated_at
+	if hi.Exists && time.Now().Unix() < (hi.UpdatedAt.Unix()+h.config.MinDateDiff) {
+		// TODO: add log instead of print
 		err = fmt.Errorf("skipped by db: %s", e.Name)
 	}
 	return
@@ -192,7 +193,7 @@ func (h *handler) checkPageDate(ctx context.Context, tc tracker.IHttpClient, hi 
 	if err = h.saveHistory(ctx, hi.URLHash, e, hi.Exists); err != nil {
 		return
 	}
-	if (e.Timestamp - cur.Unix()) < h.config.MinDateDiff {
+	if (e.Timestamp + h.config.MinDateDiff) > cur.Unix() {
 		err = fmt.Errorf("file is not updated")
 		return
 	}

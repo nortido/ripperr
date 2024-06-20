@@ -71,7 +71,7 @@ type service struct {
 	px      px
 	mx      sync.RWMutex
 	clients map[int]*CachedItem
-	cbcfg   *helper.CircuitBreakerConfig
+	cbCfg   *helper.CircuitBreakerConfig
 	db      db
 }
 
@@ -180,7 +180,7 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
-	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbcfg))
+	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
 	fmt.Println("trying to cache ", tr.Name())
 	if err = s.store(ctx, tid, tc); err != nil {
 		return
@@ -224,12 +224,12 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error
 	return
 }
 
-func New(hc *http.Client, px px, db db, cbcfg *helper.CircuitBreakerConfig) IService {
+func New(hc *http.Client, px px, db db, cbCfg *helper.CircuitBreakerConfig) IService {
 	return &service{
 		hc:      hc,
 		px:      px,
 		db:      db,
-		cbcfg:   cbcfg,
+		cbCfg:   cbCfg,
 		clients: make(map[int]*CachedItem),
 	}
 }
