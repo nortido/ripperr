@@ -39,7 +39,7 @@ type handler struct {
 	m        sync.RWMutex
 	offset   int
 	limit    int
-	config   *model.HandlerConfig
+	config   model.HandlerConfig
 	entries  []*model.Entry
 	tracker  trackerClient
 	manager  manager
@@ -104,7 +104,8 @@ func (h *handler) getEntries(ctx context.Context) (err error) {
 	defer h.m.Unlock()
 
 	h.entries = entries
-	h.limit = len(h.entries) / h.config.RunsPerDay
+	//h.limit = len(h.entries) / h.config.ChunkSize
+	h.limit = h.config.ChunkSize
 	if h.limit == 0 {
 		h.limit = 1
 	}
@@ -257,7 +258,7 @@ func (h *handler) saveHistory(ctx context.Context, urlHash string, e *model.Entr
 	return
 }
 
-func NewRunner(tracker trackerClient, manager manager, database database, config *model.HandlerConfig) IHandler {
+func NewRunner(tracker trackerClient, manager manager, database database, config model.HandlerConfig) IHandler {
 	return &handler{
 		tracker:  tracker,
 		manager:  manager,

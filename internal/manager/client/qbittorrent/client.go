@@ -122,13 +122,13 @@ func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err er
 }
 
 func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.Entry) {
+	// TODO: set max seed time to 0/1 if already paused
 	res = &model.Entry{
 		URL:            p.Comment,
 		TopicID:        idRegexp.FindString(p.Comment),
 		Category:       t.Category,
 		Name:           t.Name,
 		Hash:           t.Hash,
-		State:          string(t.State),
 		Tag:            t.Tags,
 		Timestamp:      int64(p.AdditionDate),
 		AutoManaged:    t.AutoManaged,

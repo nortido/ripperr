@@ -4,7 +4,7 @@ import "time"
 
 type HandlerConfig struct {
 	ProcessDelay time.Duration
-	RunsPerDay   int
+	ChunkSize    int
 	WatchTag     string
 	MinDateDiff  int64
 }

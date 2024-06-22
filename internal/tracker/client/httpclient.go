@@ -52,15 +52,16 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker) (err 
 		res   *http.Response
 		creds string
 	)
+
 	if payload != nil {
 		c.cookies = payload.Cookies
 		creds = payload.Credentials
 	}
 	c.header = c.ITracker.Header()
 	c.setDefaultHeaders()
-
 	req, err = c.makeLoginRequest(ctx, creds)
 
+	// TODO: make public/private param
 	if len(c.cookies) != 0 {
 		c.hc.Jar.SetCookies(req.URL, c.cookies)
 		return

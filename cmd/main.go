@@ -96,6 +96,7 @@ func main() {
 		return
 	}
 	defer dbConn.Close()
+	// TODO: catch db conn errors
 	db = database.New(dbConn)
 
 	// Init trackers client
@@ -109,8 +110,8 @@ func main() {
 	}
 
 	// Init handler client
-	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, &model.HandlerConfig{
-		RunsPerDay:   cfg.Runner.SeparatedListParts,
+	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, model.HandlerConfig{
+		ChunkSize:    cfg.Runner.ProcessSizeLimit,
 		WatchTag:     cfg.Runner.WatchTag,
 		ProcessDelay: time.Duration(cfg.Runner.ProcessDelay) * time.Minute,
 		MinDateDiff:  cfg.Runner.UpdateThreshold * 60,

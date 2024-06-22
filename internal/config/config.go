@@ -11,8 +11,8 @@ type Manager struct {
 }
 
 type Runner struct {
-	ProcessDelay       int    `env:"RUNNER_PROCESS_DELAY, default=20"`
-	SeparatedListParts int    `env:"RUNNER_SEPARATED_LIST_PARTS, default=8"`
+	ProcessDelay       int    `env:"RUNNER_PROCESS_DELAY, default=30"`
+	ProcessSizeLimit   int    `env:"RUNNER_PROCESS_SIZE_LIMIT, default=10"`
 	WatchTag           string `env:"RUNNER_TAG, default=watch"`
 	UpdateThreshold    int64  `env:"RUNNER_UPDATE_THRESHOLD, default=360"`
 	HttpTimeout        int64  `env:"RUNNER_HTTP_TIMEOUT, default=30"`
