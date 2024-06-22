@@ -11,4 +11,6 @@ type Entry struct {
 	AutoManaged    bool
 	MaxRatio       float64
 	MaxSeedingTime int64
+	URLHash        string
+	Update         bool
 }
