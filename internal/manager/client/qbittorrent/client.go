@@ -19,7 +19,7 @@ var (
 type IClient interface {
 	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	Delete(ctx context.Context, e *model.Entry) (err error)
+	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
 }
 
 type client struct {
@@ -87,20 +87,26 @@ func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []
 }
 
 func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
-	op := qbt.TorrentAddOptions{Tags: opts.Tag, Category: opts.Category}
+	op := qbt.TorrentAddOptions{
+		Tags:          opts.Tag,
+		Category:      opts.Category,
+		AutoTMM:       opts.AutoManaged,
+		LimitRatio:    opts.MaxRatio,
+		LimitSeedTime: opts.MaxSeedingTime,
+	}
 	err = c.client.AddTorrentFromMemoryCtx(ctx, buf.Bytes(), op.Prepare())
 
 	return
 }
 
-func (c *client) Delete(ctx context.Context, e *model.Entry) (err error) {
+func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {
 	if !c.config.DeleteEnabled {
 		return
 	}
 	for i := range c.config.DeleteCategories {
-		if e.Category == c.config.DeleteCategories[i] {
-			fmt.Println("deleting torrent: ", e.Name)
-			return c.client.DeleteTorrentsCtx(ctx, []string{e.Hash}, true)
+		if opts.Category == c.config.DeleteCategories[i] {
+			fmt.Println("deleting torrent: ", opts.Name)
+			return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, true)
 		}
 	}
 	return
@@ -117,13 +123,14 @@ func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err er
 
 func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.Entry) {
 	res = &model.Entry{
-		ID:             idRegexp.FindString(p.Comment),
-		Category:       t.Category,
-		Timestamp:      int64(p.AdditionDate),
-		Hash:           t.Hash,
-		Name:           t.Name,
 		URL:            p.Comment,
+		TopicID:        idRegexp.FindString(p.Comment),
+		Category:       t.Category,
+		Name:           t.Name,
+		Hash:           t.Hash,
+		State:          string(t.State),
 		Tag:            t.Tags,
+		Timestamp:      int64(p.AdditionDate),
 		AutoManaged:    t.AutoManaged,
 		MaxRatio:       t.MaxRatio,
 		MaxSeedingTime: t.MaxSeedingTime,

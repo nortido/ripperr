@@ -18,12 +18,13 @@ const (
 
 func PrepareParams(r *http.Request, opts *proxy.Options) (params *flaresolverr.Payload) {
 	params = &flaresolverr.Payload{
-		URL:         r.URL.String(),
-		Session:     opts.Session,
-		OnlyCookies: opts.OnlyCookies,
-		Cookies:     opts.Cookies,
+		URL: r.URL.String(),
 	}
-
+	if opts != nil {
+		params.Session = opts.Session
+		params.OnlyCookies = opts.OnlyCookies
+		params.Cookies = opts.Cookies
+	}
 	return
 }
 

@@ -110,10 +110,10 @@ func main() {
 
 	// Init handler client
 	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, &model.HandlerConfig{
-		RunsPerDay:   cfg.Runner.RunsPerDay,
+		RunsPerDay:   cfg.Runner.SeparatedListParts,
 		WatchTag:     cfg.Runner.WatchTag,
-		ProcessDelay: time.Duration(cfg.Runner.ProcessSecondsDelay) * time.Second,
-		MinDateDiff:  cfg.Runner.UpdateThreshold,
+		ProcessDelay: time.Duration(cfg.Runner.ProcessDelay) * time.Minute,
+		MinDateDiff:  cfg.Runner.UpdateThreshold * 60,
 	})
 	rn.Run(ctx)
 

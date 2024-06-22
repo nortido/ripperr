@@ -5,11 +5,19 @@ type FilterOptions struct {
 }
 
 type ManagerAddFileOptions struct {
+	Hash           string
+	Name           string
 	Category       string
 	Tag            string
 	AutoManaged    bool
 	MaxRatio       float64
 	MaxSeedingTime int64
+}
+
+type ManagerDeleteOptions struct {
+	Hash     string
+	Category string
+	Name     string
 }
 
 type ManagerConfig struct {

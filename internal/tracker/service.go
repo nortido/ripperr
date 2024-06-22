@@ -48,7 +48,7 @@ type IHttpClient interface {
 	client.ITracker
 	Cookies() (res []*http.Cookie)
 	InitClient(ctx context.Context, payload *tracker.Tracker) (err error)
-	GetResponse(ctx context.Context, link string) (res *http.Response, err error)
+	GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error)
 }
 
 type px interface {
@@ -58,7 +58,7 @@ type px interface {
 type IService interface {
 	CacheAll(ctx context.Context) (err error)
 	ClientByLink(ctx context.Context, link string) (tc IHttpClient, err error)
-	Response(ctx context.Context, link string, tc IHttpClient) (buf *bytes.Buffer, err error)
+	Response(ctx context.Context, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error)
 }
 
 type CachedItem struct {
@@ -87,7 +87,7 @@ func (s *service) ClientByLink(ctx context.Context, link string) (tc IHttpClient
 	return
 }
 
-func (s *service) Response(ctx context.Context, link string, tc IHttpClient) (buf *bytes.Buffer, err error) {
+func (s *service) Response(ctx context.Context, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error) {
 	var (
 		b   = bytes.Buffer{}
 		res *http.Response
@@ -95,7 +95,7 @@ func (s *service) Response(ctx context.Context, link string, tc IHttpClient) (bu
 	if tc == nil {
 		tc, err = s.ClientByLink(ctx, link)
 	}
-	if res, err = tc.GetResponse(ctx, link); err != nil {
+	if res, err = tc.GetResponse(ctx, link, download); err != nil {
 		return
 	}
 	defer res.Body.Close()

@@ -34,7 +34,7 @@ type IClient interface {
 	ITracker
 	Cookies() (res []*http.Cookie)
 	InitClient(ctx context.Context, payload *tracker.Tracker) (err error)
-	GetResponse(ctx context.Context, link string) (res *http.Response, err error)
+	GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error)
 }
 
 type client struct {
@@ -79,9 +79,13 @@ func (c *client) Cookies() (res []*http.Cookie) {
 
 }
 
-func (c *client) GetResponse(ctx context.Context, link string) (res *http.Response, err error) {
-	var req *http.Request
+func (c *client) GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error) {
+	var (
+		req *http.Request
+		pt  proxy.ProxyType
+	)
 
+	// TODO: tracker rate limit
 	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil); err != nil {
 		return
 	}
@@ -91,11 +95,12 @@ func (c *client) GetResponse(ctx context.Context, link string) (res *http.Respon
 		err = fmt.Errorf("no header")
 		return
 	}
-	if res, err = c.tryHttp(ctx, req, nil, proxy.TypeNone); err != nil {
-		return
+	pt = proxy.TypeNone
+
+	if !download {
+		pt = c.ITracker.ProxyType()
 	}
-	if res.StatusCode >= http.StatusBadRequest {
-		err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
+	if res, err = c.tryHttp(ctx, req, nil, pt); err != nil {
 		return
 	}
 	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
@@ -177,6 +182,10 @@ func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Opt
 		}
 		if res.Request != nil && res.Request.URL.String() != req.URL.String() {
 			err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
+		}
+		if res.StatusCode >= http.StatusBadRequest {
+			err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
+			return
 		}
 		return
 	})

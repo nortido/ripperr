@@ -10,12 +10,12 @@ import (
 type client interface {
 	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	Delete(ctx context.Context, e *model.Entry) (err error)
+	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
 }
 
 type IManager interface {
 	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
-	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
+	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
 type manager struct {
@@ -31,11 +31,11 @@ func (m *manager) GetEntries(ctx context.Context, opts model.FilterOptions) (ent
 	return
 }
 
-func (m *manager) Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
+func (m *manager) Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
 	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	if err = m.client.Delete(ctx, e); err != nil {
+	if err = m.client.Delete(ctx, model.ManagerDeleteOptions{Hash: opts.Hash, Category: opts.Category, Name: opts.Name}); err != nil {
 		return
 	}
 	err = m.client.AddFromBuffer(ctx, buf, opts)

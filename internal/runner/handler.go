@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"trackerr/internal/model"
+	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/runner"
 	"trackerr/internal/tracker"
 )
@@ -17,12 +18,12 @@ import (
 type trackerClient interface {
 	CacheAll(ctx context.Context) (err error)
 	ClientByLink(ctx context.Context, link string) (tc tracker.IHttpClient, err error)
-	Response(ctx context.Context, link string, tc tracker.IHttpClient) (buf *bytes.Buffer, err error)
+	Response(ctx context.Context, link string, tc tracker.IHttpClient, download bool) (buf *bytes.Buffer, err error)
 }
 
 type manager interface {
 	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
-	Submit(ctx context.Context, e *model.Entry, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
+	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
 type database interface {
@@ -51,17 +52,13 @@ func (h *handler) Run(ctx context.Context) {
 		ch    = make(chan *model.Entry)
 		cherr = make(chan error)
 		ge    = make(chan struct{})
+		tmr   = time.NewTimer(0)
 		err   error
 	)
 
 	defer close(ch)
 	defer close(cherr)
 	defer close(ge)
-	go func() {
-		if err = h.getEntries(ctx); err != nil {
-			cherr <- err
-		}
-	}()
 
 	for {
 		select {
@@ -74,8 +71,9 @@ func (h *handler) Run(ctx context.Context) {
 				if err = h.getEntries(ctx); err != nil {
 					cherr <- err
 				}
+				tmr.Reset(0)
 			}()
-		case <-time.After(h.config.ProcessDelay):
+		case <-tmr.C:
 			go func() {
 				var reset bool
 				if reset, err = h.pushEntries(ctx, ch); err != nil {
@@ -83,6 +81,7 @@ func (h *handler) Run(ctx context.Context) {
 				} else if reset {
 					ge <- struct{}{}
 				}
+				tmr.Reset(h.config.ProcessDelay)
 			}()
 		case e = <-ch:
 			go func(e *model.Entry) {
@@ -146,13 +145,16 @@ func (h *handler) processEntry(ctx context.Context, e model.Entry) (err error) {
 	if tc, err = h.tracker.ClientByLink(ctx, e.URL); err != nil {
 		return
 	}
+
+	// TODO: remove param pointers OR do multithreading
+	h.m.Lock()
+	defer h.m.Unlock()
 	if err = h.isUpdated(ctx, tc, &e); err != nil {
 		return
 	}
 	if err = h.submit(ctx, tc, &e); err == nil {
 		fmt.Println("saved entry: ", e.Name)
 	}
-
 	return
 }
 
@@ -176,7 +178,7 @@ func (h *handler) checkHistoryDate(ctx context.Context, e *model.Entry) (hi *run
 		return
 	}
 	// TODO: save expire date instead of updated_at
-	if hi.Exists && time.Now().Unix() < (hi.UpdatedAt.Unix()+h.config.MinDateDiff) {
+	if hi.Exists && time.Now().UTC().Unix() < (hi.UpdatedAt.Unix()+h.config.MinDateDiff) {
 		// TODO: add log instead of print
 		err = fmt.Errorf("skipped by db: %s", e.Name)
 	}
@@ -190,26 +192,28 @@ func (h *handler) checkPageDate(ctx context.Context, tc tracker.IHttpClient, hi 
 		return
 	}
 	// TODO: add check count of updates in DB
+	// TODO: save page date and expire date
 	if err = h.saveHistory(ctx, hi.URLHash, e, hi.Exists); err != nil {
 		return
 	}
 	if (e.Timestamp + h.config.MinDateDiff) > cur.Unix() {
-		err = fmt.Errorf("file is not updated")
+		err = fmt.Errorf("page is not updated")
 		return
 	}
 	return
 }
+
 func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (cur *time.Time, err error) {
 	var b *bytes.Buffer
 
-	b, err = h.tracker.Response(ctx, tc.TopicLink(e.ID), tc)
+	b, err = h.tracker.Response(ctx, tc.TopicLink(e.TopicID), tc, false)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
 		err = fmt.Errorf("no page data")
 		return
 	}
-	if cur = tc.ParseDate(b, false); cur == nil {
+	if cur = tc.ParseDate(b, tc.ProxyType() != proxy.TypeNone); cur == nil {
 		err = fmt.Errorf("current time not found")
 	}
 	return
@@ -218,16 +222,19 @@ func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e *mo
 func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
 	var b *bytes.Buffer
 
-	b, err = h.tracker.Response(ctx, tc.DownloadLink(e.ID), tc)
+	b, err = h.tracker.Response(ctx, tc.DownloadLink(e.TopicID), tc, true)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
 		err = fmt.Errorf("no file data")
 		return
 	}
-	err = h.manager.Submit(ctx, e, b, model.ManagerAddFileOptions{
-		Category:       e.Category,
-		Tag:            e.Tag,
+	// TODO: add more attributes
+	err = h.manager.Submit(ctx, b, model.ManagerAddFileOptions{
+		Name:     e.Name,
+		Hash:     e.Hash,
+		Category: e.Category,
+		//Tag:            e.Tag,
 		AutoManaged:    e.AutoManaged,
 		MaxRatio:       e.MaxRatio,
 		MaxSeedingTime: e.MaxSeedingTime,
@@ -235,15 +242,15 @@ func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e *model.E
 	return
 }
 
-func (h *handler) saveHistory(ctx context.Context, urlHash string, e *model.Entry, update bool) (err error) {
+func (h *handler) saveHistory(ctx context.Context, urlHash string, e *model.Entry, exists bool) (err error) {
 	if err = h.database.SaveItem(ctx, &runner.HistoryItem{
 		URLHash:  urlHash,
-		TopicID:  e.ID,
+		TopicID:  e.TopicID,
 		Category: e.Category,
 		Tag:      e.Tag,
 		Name:     e.Name,
 		URL:      e.URL,
-		Exists:   update,
+		Exists:   exists,
 	}); err != nil {
 		return
 	}

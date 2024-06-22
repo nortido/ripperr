@@ -42,7 +42,7 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 		if time.Since(cb.lastFailureTime) > cb.Timeout {
 			cb.state = StateHalfOpen
 		}
-		err = errors.New("call failed")
+		err = errors.New("failed to call")
 		return
 	case StateHalfOpen:
 		if err = fn(); err != nil {
