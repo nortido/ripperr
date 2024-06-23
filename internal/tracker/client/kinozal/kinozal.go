@@ -20,7 +20,6 @@ const (
 	Host        = "https://" + Domain
 	LoginURL    = Host + "/takelogin.php"
 	DownloadURL = Host + "/download.php?id="
-	TopicURL    = Host + "/details.php?id="
 )
 
 type Tracker struct {
@@ -43,10 +42,6 @@ func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*h
 
 func (t Tracker) DownloadLink(topicID string) (url string) {
 	return fmt.Sprint(DownloadURL, topicID)
-}
-
-func (t Tracker) TopicLink(topicID string) (url string) {
-	return fmt.Sprint(TopicURL, topicID)
 }
 
 func (t Tracker) Header() (header *http.Header) {

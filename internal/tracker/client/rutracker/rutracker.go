@@ -3,7 +3,6 @@ package rutracker
 import (
 	"bytes"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -21,7 +20,6 @@ const (
 	Host        = "https://" + Domain
 	LoginURL    = Host + "/forum/login.php"
 	DownloadURL = Host + "/forum/dl.php?t="
-	TopicURL    = Host + "/forum/viewtopic.php?t="
 )
 
 type Tracker struct {
@@ -48,16 +46,11 @@ func (t Tracker) DownloadLink(topicID string) (url string) {
 	return fmt.Sprint(DownloadURL, topicID)
 }
 
-func (t Tracker) TopicLink(topicID string) (url string) {
-	return fmt.Sprint(TopicURL, topicID)
-}
-
 func (t Tracker) Header() (header *http.Header) {
 	header = &http.Header{}
 
 	header.Add("Content-Type", "text/html; charset=cp1251")
 	header.Add("Host", Host)
-	header.Add("Referer", TopicURL+fmt.Sprint(rand.Intn(2000)+50))
 	//header.Add("Cookie", "bb_ssl=1; bb_guid=PLACEHOLDER; bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
 
 	return

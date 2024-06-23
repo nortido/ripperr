@@ -20,7 +20,6 @@ type ITracker interface {
 	Header() (header *http.Header)
 	Host() (host string)
 	DownloadLink(topicID string) (url string)
-	TopicLink(topicID string) (url string)
 	LoginData() (link string, credentials *url.Values, cookies []*http.Cookie)
 	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
 	ProxyType() (proxyType proxy.ProxyType)
@@ -53,23 +52,23 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker) (err 
 		creds string
 	)
 
-	if payload != nil {
+	if payload != nil && payload.Exists {
 		c.cookies = payload.Cookies
 		creds = payload.Credentials
 	}
 	c.header = c.ITracker.Header()
 	c.setDefaultHeaders()
-	req, err = c.makeLoginRequest(ctx, creds)
-
+	if req, err = c.buildLoginRequest(ctx, creds); err != nil {
+		return
+	}
 	// TODO: make public/private param
-	if len(c.cookies) != 0 {
-		c.hc.Jar.SetCookies(req.URL, c.cookies)
-		return
+	if len(c.cookies) == 0 {
+		if res, err = c.loginFromPage(ctx, req); err != nil {
+			return
+		}
+		c.cookies = res.Cookies()
 	}
-	if res, err = c.loginFromPage(ctx, req); err != nil {
-		return
-	}
-	c.cookies = res.Cookies()
+	c.hc.Jar.SetCookies(req.URL, c.cookies)
 
 	return
 }
@@ -101,7 +100,7 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 	if !download {
 		pt = c.ITracker.ProxyType()
 	}
-	if res, err = c.tryHttp(ctx, req, nil, pt); err != nil {
+	if res, err = c.tryHttp(ctx, req, &proxy.Options{Cookies: c.cookies}, pt); err != nil {
 		return
 	}
 	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
@@ -129,7 +128,6 @@ func (c *client) setDefaultHeaders() {
 }
 
 func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *http.Response, err error) {
-	req.Header = *c.header
 	res, err = c.tryHttp(ctx, req, &proxy.Options{OnlyCookies: true}, c.ITracker.ProxyType())
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
@@ -143,17 +141,19 @@ func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *htt
 	return
 }
 
-func (c *client) makeLoginRequest(ctx context.Context, body string) (req *http.Request, err error) {
+func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.Request, err error) {
 	var (
-		link  string
-		creds *url.Values
+		link    string
+		creds   *url.Values
+		cookies []*http.Cookie
 	)
-	link, _, _ = c.ITracker.LoginData()
+	link, creds, cookies = c.ITracker.LoginData()
 
-	if body == "" {
-		if _, creds, _ = c.ITracker.LoginData(); creds != nil {
-			body = creds.Encode()
-		}
+	if len(cookies) > 0 {
+		c.cookies = cookies
+	}
+	if body == "" && creds != nil {
+		body = creds.Encode()
 	}
 	if body == "" {
 		req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
@@ -162,6 +162,7 @@ func (c *client) makeLoginRequest(ctx context.Context, body string) (req *http.R
 	if req, err = http.NewRequestWithContext(ctx, http.MethodPost, link, strings.NewReader(body)); err != nil {
 		return
 	}
+	req.Header = *c.header
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	req.Header.Set("Host", c.ITracker.Host())

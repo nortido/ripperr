@@ -65,7 +65,6 @@ func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []
 				}
 				e := c.mapEntry(&t, p)
 				ch <- e
-				fmt.Println("got entry: ", e.Name)
 			}(t)
 		}
 	}

@@ -16,7 +16,6 @@ const (
 	Domain      = "rutor.is"
 	Host        = "https://" + Domain
 	DownloadURL = "https://d.rutor.info/download/"
-	TopicURL    = "http://" + Domain + "/torrent/"
 )
 
 type Tracker struct {
@@ -34,10 +33,6 @@ func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*h
 
 func (t Tracker) DownloadLink(topicID string) (url string) {
 	return fmt.Sprint(DownloadURL, topicID)
-}
-
-func (t Tracker) TopicLink(topicID string) (url string) {
-	return fmt.Sprint(TopicURL, topicID)
 }
 
 func (t Tracker) Header() (header *http.Header) {

@@ -42,7 +42,7 @@ func (c *client) AddTracker(ctx context.Context, tracker *database.Tracker) (err
 
 func (c *client) UpdateTracker(ctx context.Context, tracker *database.Tracker) (err error) {
 	_, err = c.db.Exec(ctx,
-		"UPDATE trackerr.trackers SET cookies = $1, credentials = $2,updated_at = NOW() WHERE tracker_type_id = $3",
+		"UPDATE trackerr.trackers SET cookies = $1, credentials = $2, updated_at = NOW() WHERE tracker_type_id = $3",
 		tracker.Cookies, tracker.Credentials, tracker.TypeID)
 
 	return

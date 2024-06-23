@@ -16,6 +16,7 @@ import (
 	"trackerr/internal/model/tracker"
 	"trackerr/internal/tracker/client"
 	"trackerr/internal/tracker/client/kinozal"
+	"trackerr/internal/tracker/client/nnm"
 	"trackerr/internal/tracker/client/rutor"
 	"trackerr/internal/tracker/client/rutracker"
 	"trackerr/internal/tracker/client/teamhd"
@@ -28,6 +29,7 @@ const (
 	KinozalID
 	RutorID
 	TeamhdID
+	NnmID
 )
 
 var (
@@ -36,6 +38,7 @@ var (
 		KinozalID:   kinozal.New(),
 		RutorID:     rutor.New(),
 		TeamhdID:    teamhd.New(),
+		NnmID:       nnm.New(),
 	}
 )
 
@@ -209,14 +212,15 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error
 		tc = nil
 		return
 	}
-	if attrs == nil {
-		_, creds, _ = tc.LoginData()
-		attrs = &tracker.Tracker{
-			TypeID:      tid,
-			Name:        tc.Name(),
-			Cookies:     tc.Cookies(),
-			Credentials: creds.Encode(),
-		}
+	if attrs != nil {
+		return
+	}
+	_, creds, _ = tc.LoginData()
+	attrs = &tracker.Tracker{
+		TypeID:      tid,
+		Name:        tc.Name(),
+		Cookies:     tc.Cookies(),
+		Credentials: creds.Encode(),
 	}
 	if err = s.db.SaveTracker(ctx, attrs); err != nil {
 		return

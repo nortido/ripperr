@@ -37,7 +37,7 @@ type service struct {
 }
 
 func (s *service) GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error) {
-	var sttr *database.Tracker
+	var sttr = &database.Tracker{}
 
 	if sttr, err = s.pg.GetTracker(ctx, trackerID); err != nil {
 		return

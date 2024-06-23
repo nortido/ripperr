@@ -182,10 +182,10 @@ func (h *handler) processEntry(ctx context.Context, e model.Entry) (err error) {
 	if tc, err = h.tracker.ClientByLink(ctx, e.URL); err != nil {
 		return
 	}
-
 	// TODO: remove param pointers OR do multithreading
 	h.m.Lock()
 	defer h.m.Unlock()
+
 	if err = h.checkPageUpdate(ctx, tc, &e); err != nil {
 		return
 	}
@@ -216,7 +216,8 @@ func (h *handler) checkPageUpdate(ctx context.Context, tc tracker.IHttpClient, e
 func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (cur *time.Time, err error) {
 	var b *bytes.Buffer
 
-	b, err = h.tracker.Response(ctx, tc.TopicLink(e.TopicID), tc, false)
+	// TODO: add check url for tracker domain
+	b, err = h.tracker.Response(ctx, e.URL, tc, false)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
