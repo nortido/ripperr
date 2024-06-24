@@ -44,7 +44,7 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 		if fres, err = f.cache.fl.Send(r, params); err != nil {
 			return
 		}
-		res, err = fmapper.MakeResponse(fres, r)
+		res, err = fmapper.BuildResponse(fres, r)
 	default:
 		err = fmt.Errorf("unknown proxy type: %d", proxyType)
 	}

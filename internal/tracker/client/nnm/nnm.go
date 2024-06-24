@@ -30,7 +30,6 @@ func (t Tracker) Host() (host string) {
 }
 
 func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
-	// TODO: Put credentials into envs|DB
 	credentials = &url.Values{
 		"username":  {"johan90"},
 		"password":  {"dbhnejp"},

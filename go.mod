@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/autobrr/go-qbittorrent v1.9.0
 	github.com/jackc/pgx/v5 v5.6.0
-	github.com/nortido/go-flaresolverr v0.1.0
+	github.com/nortido/go-flaresolverr v0.1.1
 	github.com/sethvargo/go-envconfig v1.0.3
 	golang.org/x/net v0.10.0
 	golang.org/x/text v0.14.0

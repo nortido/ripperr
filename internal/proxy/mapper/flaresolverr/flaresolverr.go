@@ -28,7 +28,7 @@ func PrepareParams(r *http.Request, opts *proxy.Options) (params *flaresolverr.P
 	return
 }
 
-func MakeResponse(resp *flaresolverr.Response, req *http.Request) (result *http.Response, err error) {
+func BuildResponse(resp *flaresolverr.Response, req *http.Request) (result *http.Response, err error) {
 	var (
 		cv *http.Cookie
 	)

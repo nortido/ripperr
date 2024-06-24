@@ -101,8 +101,8 @@ func main() {
 
 	// Init trackers client
 	tr := tracker.New(ht, px, db, &helper.CircuitBreakerConfig{
-		MaxFailures: cfg.Runner.ConnMaxRetries,
-		Timeout:     time.Duration(cfg.Runner.ConnMinutesToRetry) * time.Minute,
+		MaxFailures: cfg.Runner.CBRetries,
+		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	})
 	if err = tr.CacheAll(ctx); err != nil {
 		fmt.Println(err)
@@ -111,9 +111,9 @@ func main() {
 
 	// Init handler client
 	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, model.HandlerConfig{
-		ChunkSize:    cfg.Runner.ProcessSizeLimit,
+		ChunkSize:    cfg.Runner.WorkersLimit,
 		WatchTag:     cfg.Runner.WatchTag,
-		ProcessDelay: time.Duration(cfg.Runner.ProcessDelay) * time.Minute,
+		ProcessDelay: time.Duration(cfg.Runner.WorkerDelay) * time.Minute,
 		MinDateDiff:  cfg.Runner.UpdateThreshold * 60,
 	})
 	rn.Run(ctx)

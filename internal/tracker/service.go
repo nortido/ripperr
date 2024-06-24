@@ -144,6 +144,7 @@ func (s *service) getClientID(ctx context.Context, url string) (id int, err erro
 			return
 		}
 	}
+	// TODO: add entry without tracker to blacklist
 	err = fmt.Errorf("tracker not found")
 
 	return

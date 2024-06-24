@@ -11,18 +11,18 @@ type Manager struct {
 }
 
 type Runner struct {
-	ProcessDelay       int    `env:"RUNNER_PROCESS_DELAY, default=20"`
-	ProcessSizeLimit   int    `env:"RUNNER_PROCESS_SIZE_LIMIT, default=5"`
-	WatchTag           string `env:"RUNNER_TAG, default=watch"`
-	UpdateThreshold    int64  `env:"RUNNER_UPDATE_THRESHOLD, default=1440"`
-	HttpTimeout        int64  `env:"RUNNER_HTTP_TIMEOUT, default=60"`
-	ConnMaxRetries     int    `env:"RUNNER_CONN_MAX_RETRIES, default=3"`
-	ConnMinutesToRetry int    `env:"RUNNER_CONN_MINUTES_TO_RETRY, default=1440"`
+	WorkerDelay      int    `env:"RUNNER_WORKER_DELAY, default=15"`
+	WorkersLimit     int    `env:"RUNNER_WORKERS_LIMIT, default=5"`
+	WatchTag         string `env:"RUNNER_TAG, default=watch"`
+	UpdateThreshold  int64  `env:"RUNNER_UPDATE_THRESHOLD, default=1440"`
+	HttpTimeout      int64  `env:"RUNNER_HTTP_TIMEOUT, default=30"`
+	CBRetries        int    `env:"RUNNER_CB_RETRIES, default=3"`
+	CBMinutesToRetry int    `env:"RUNNER_CB_MINUTES_TO_RETRY, default=30"`
 }
 
 type Flaresolverr struct {
 	Host       string `env:"FLARE_URL, default=http://192.168.1.200:8191/v1"`
-	MaxTimeout int    `env:"FLARE_TIMEOUT, default=60000"`
+	MaxTimeout int    `env:"FLARE_TIMEOUT, default=120000"`
 }
 
 type Database struct {

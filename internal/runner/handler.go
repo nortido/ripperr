@@ -71,7 +71,7 @@ func (h *handler) Run(ctx context.Context) {
 			fmt.Println(err)
 		case <-ge:
 			go func() {
-				if err = h.getEntries(ctx); err != nil {
+				if err = h.pull(ctx); err != nil {
 					cherr <- err
 				}
 				tmr.Reset(0)
@@ -79,7 +79,7 @@ func (h *handler) Run(ctx context.Context) {
 		case <-tmr.C:
 			go func() {
 				var reset bool
-				if reset, err = h.pushEntries(ctx, ch); err != nil {
+				if reset, err = h.push(ctx, ch); err != nil {
 					cherr <- err
 				} else if reset {
 					ge <- struct{}{}
@@ -88,7 +88,7 @@ func (h *handler) Run(ctx context.Context) {
 			}()
 		case e = <-ch:
 			go func(e *model.Entry) {
-				if err = h.processEntry(ctx, *e); err != nil {
+				if err = h.worker(ctx, *e); err != nil {
 					cherr <- err
 				}
 			}(e)
@@ -96,8 +96,8 @@ func (h *handler) Run(ctx context.Context) {
 	}
 }
 
-func (h *handler) getEntries(ctx context.Context) (err error) {
-	if h.entries, err = h.manager.GetEntries(ctx, model.FilterOptions{Tag: "watch"}); err != nil {
+func (h *handler) pull(ctx context.Context) (err error) {
+	if h.entries, err = h.manager.GetEntries(ctx, model.FilterOptions{Tag: h.config.WatchTag}); err != nil {
 		err = fmt.Errorf("get torrents error: %w", err)
 		return
 	}
@@ -112,16 +112,16 @@ func (h *handler) getEntries(ctx context.Context) (err error) {
 	return
 }
 
-func (h *handler) pushEntries(ctx context.Context, ch chan *model.Entry) (reset bool, err error) {
-	var pushed int
+func (h *handler) push(ctx context.Context, ch chan *model.Entry) (reset bool, err error) {
+	var (
+		i      int
+		pushed int
+	)
 
-	if h.offset >= len(h.entries) {
-		reset = true
-		return
-	}
-	for _, e := range h.entries[h.offset:] {
-		h.offset++
-		if err = h.setEntry(ctx, e); err == ErrSkipped {
+	//TODO: add separate channel for each tracker
+	for i = range h.entries[h.offset:] {
+		if err = h.buildEntry(ctx, h.entries[i]); err == ErrSkipped {
+			err = nil
 			continue
 		} else if err != nil {
 			fmt.Println(err)
@@ -130,20 +130,23 @@ func (h *handler) pushEntries(ctx context.Context, ch chan *model.Entry) (reset 
 		pushed++
 
 		if pushed > h.config.ChunkSize {
-			pushed = 0
 			break
 		}
-		ch <- e
+		ch <- h.entries[i]
 	}
-	err = nil
+	h.offset += pushed
 
+	if h.offset >= len(h.entries) {
+		reset = true
+		return
+	}
 	return
 }
 
-func (h *handler) setEntry(ctx context.Context, e *model.Entry) (err error) {
+func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 	var hi *runner.HistoryItem
 
-	if hi, err = h.checkHistoryDate(ctx, e); err != nil {
+	if hi, err = h.checkHistory(ctx, e); err != nil {
 		return
 	}
 	e.URLHash = hi.URLHash
@@ -155,7 +158,7 @@ func (h *handler) setEntry(ctx context.Context, e *model.Entry) (err error) {
 	return
 }
 
-func (h *handler) checkHistoryDate(ctx context.Context, e *model.Entry) (hi *runner.HistoryItem, err error) {
+func (h *handler) checkHistory(ctx context.Context, e *model.Entry) (hi *runner.HistoryItem, err error) {
 	// TODO: cache history
 	if hi, err = h.database.GetItem(ctx, e.URL); err == pgx.ErrNoRows {
 		err = nil
@@ -163,6 +166,7 @@ func (h *handler) checkHistoryDate(ctx context.Context, e *model.Entry) (hi *run
 		return
 	}
 	// TODO: save expire date instead of updated_at
+	// TODO: check if created date is below half year, then check only every month
 	if hi.Exists && time.Now().UTC().Unix() < (hi.UpdatedAt.Unix()+h.config.MinDateDiff) {
 		// TODO: add log instead of print
 		err = ErrSkipped
@@ -170,7 +174,7 @@ func (h *handler) checkHistoryDate(ctx context.Context, e *model.Entry) (hi *run
 	return
 }
 
-func (h *handler) processEntry(ctx context.Context, e model.Entry) (err error) {
+func (h *handler) worker(ctx context.Context, e model.Entry) (err error) {
 	var tc tracker.IHttpClient
 
 	if h.config.MinDateDiff == 0 {
@@ -186,7 +190,7 @@ func (h *handler) processEntry(ctx context.Context, e model.Entry) (err error) {
 	h.m.Lock()
 	defer h.m.Unlock()
 
-	if err = h.checkPageUpdate(ctx, tc, &e); err != nil {
+	if err = h.checkPage(ctx, tc, &e); err != nil {
 		return
 	}
 	if err = h.submit(ctx, tc, &e); err == nil {
@@ -195,7 +199,7 @@ func (h *handler) processEntry(ctx context.Context, e model.Entry) (err error) {
 	return
 }
 
-func (h *handler) checkPageUpdate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
+func (h *handler) checkPage(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
 	var cur *time.Time
 
 	if cur, err = h.getPageDate(ctx, tc, e); err != nil {
@@ -203,7 +207,7 @@ func (h *handler) checkPageUpdate(ctx context.Context, tc tracker.IHttpClient, e
 	}
 	// TODO: add check count of updates in DB
 	// TODO: save page date and expire date
-	if err = h.saveHistory(ctx, e); err != nil {
+	if err = h.saveHistory(ctx, tc, e); err != nil {
 		return
 	}
 	if (e.Timestamp + h.config.MinDateDiff) > cur.Unix() {
@@ -253,7 +257,7 @@ func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e *model.E
 	return
 }
 
-func (h *handler) saveHistory(ctx context.Context, e *model.Entry) (err error) {
+func (h *handler) saveHistory(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
 	if err = h.database.SaveItem(ctx, &runner.HistoryItem{
 		URLHash:  e.URLHash,
 		TopicID:  e.TopicID,
@@ -272,7 +276,7 @@ func NewRunner(tracker trackerClient, manager manager, database database, config
 	return &handler{
 		tracker:  tracker,
 		manager:  manager,
-		config:   config,
 		database: database,
+		config:   config,
 	}
 }
