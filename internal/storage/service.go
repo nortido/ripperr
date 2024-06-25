@@ -95,7 +95,7 @@ func (s *service) GetItem(ctx context.Context, link string) (item *runner.Histor
 		Tag:           dbItem.Tag,
 		Name:          dbItem.Name,
 		URL:           dbItem.URL,
-		UpdatedAt:     dbItem.UpdatedAt,
+		RecheckAt:     dbItem.RecheckAt,
 		Exists:        true,
 	}
 	return
@@ -112,6 +112,7 @@ func (s *service) SaveItem(ctx context.Context, item *runner.HistoryItem) (err e
 		Tag:           item.Tag,
 		Name:          item.Name,
 		URL:           item.URL,
+		RecheckAt:     item.RecheckAt,
 	}
 	if item.Exists {
 		return s.pg.UpdateItem(ctx, dbItem)

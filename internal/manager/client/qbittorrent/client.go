@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sync"
+	"time"
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
@@ -121,7 +122,8 @@ func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err er
 }
 
 func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.Entry) {
-	// TODO: set max seed time to 0/1 if already paused
+	var ts = time.Unix(int64(p.AdditionDate), 0)
+
 	res = &model.Entry{
 		URL:            p.Comment,
 		TopicID:        idRegexp.FindString(p.Comment),
@@ -129,10 +131,13 @@ func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.
 		Name:           t.Name,
 		Hash:           t.Hash,
 		Tag:            t.Tags,
-		Timestamp:      int64(p.AdditionDate),
+		Timestamp:      &ts,
 		AutoManaged:    t.AutoManaged,
 		MaxRatio:       t.MaxRatio,
 		MaxSeedingTime: t.MaxSeedingTime,
+	}
+	if t.State == qbt.TorrentStatePausedUp {
+		res.MaxRatio = 1
 	}
 	return
 }

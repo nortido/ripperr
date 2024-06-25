@@ -18,6 +18,5 @@ type Item struct {
 	Tag           string     `pgx:"item_tag"`
 	Name          string     `pgx:"item_name"`
 	URL           string     `pgx:"item_url"`
-	CreatedAt     *time.Time `pgx:"created_at"`
-	UpdatedAt     *time.Time `pgx:"updated_at"`
+	RecheckAt     *time.Time `pgx:"recheck_at"`
 }

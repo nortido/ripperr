@@ -16,7 +16,7 @@ type Runner struct {
 	WatchTag         string `env:"RUNNER_TAG, default=watch"`
 	UpdateThreshold  int64  `env:"RUNNER_UPDATE_THRESHOLD, default=1440"`
 	HttpTimeout      int64  `env:"RUNNER_HTTP_TIMEOUT, default=30"`
-	CBRetries        int    `env:"RUNNER_CB_RETRIES, default=3"`
+	CBRetries        int    `env:"RUNNER_CB_RETRIES, default=2"`
 	CBMinutesToRetry int    `env:"RUNNER_CB_MINUTES_TO_RETRY, default=30"`
 }
 

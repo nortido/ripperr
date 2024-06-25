@@ -50,8 +50,8 @@ func (c *client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (e
 
 func (c *client) GetItem(ctx context.Context, urlHash string) (item *storage.Item, err error) {
 	item = &storage.Item{}
-	err = c.db.QueryRow(ctx, "SELECT topic_id, category_name, item_url, updated_at FROM trackerr.history WHERE url_hash = $1", urlHash).Scan(
-		&item.TopicID, &item.Category, &item.URL, &item.UpdatedAt)
+	err = c.db.QueryRow(ctx, "SELECT topic_id, category_name, item_url, recheck_at FROM trackerr.history WHERE url_hash = $1", urlHash).Scan(
+		&item.TopicID, &item.Category, &item.URL, &item.RecheckAt)
 	item.URLHash = urlHash
 
 	return
@@ -59,16 +59,16 @@ func (c *client) GetItem(ctx context.Context, urlHash string) (item *storage.Ite
 
 func (c *client) AddItem(ctx context.Context, item *storage.Item) (err error) {
 	_, err = c.db.Exec(ctx,
-		"INSERT INTO trackerr.history(url_hash, tracker_type_id, topic_id, category_name, item_tag, item_name, item_url, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, NOW())",
-		item.URLHash, item.TrackerTypeID, item.TopicID, item.Category, item.Tag, item.Name, item.URL)
+		"INSERT INTO trackerr.history(url_hash, tracker_type_id, topic_id, category_name, item_tag, item_name, item_url, recheck_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8)",
+		item.URLHash, item.TrackerTypeID, item.TopicID, item.Category, item.Tag, item.Name, item.URL, item.RecheckAt)
 
 	return
 }
 
 func (c *client) UpdateItem(ctx context.Context, item *storage.Item) (err error) {
 	_, err = c.db.Exec(ctx,
-		"UPDATE trackerr.history SET topic_id = $1, category_name = $2, item_tag = $3, item_name = $4, item_url = $5, updated_at = NOW() WHERE url_hash = $6",
-		item.TopicID, item.Category, item.Tag, item.Name, item.URL, item.URLHash)
+		"UPDATE trackerr.history SET topic_id = $1, category_name = $2, item_tag = $3, item_name = $4, item_url = $5, recheck_at = $6 WHERE url_hash = $7",
+		item.TopicID, item.Category, item.Tag, item.Name, item.URL, item.RecheckAt, item.URLHash)
 	return
 }
 

@@ -1,12 +1,14 @@
 package model
 
+import "time"
+
 type Entry struct {
 	Hash           string
 	Category       string
 	Tag            string
 	URL            string
 	TopicID        string
-	Timestamp      int64
+	Timestamp      *time.Time
 	Name           string
 	AutoManaged    bool
 	MaxRatio       float64

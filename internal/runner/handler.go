@@ -20,7 +20,7 @@ var (
 	ErrSkipped = fmt.Errorf("skipped")
 )
 
-type trackerClient interface {
+type trackerService interface {
 	InitCache(ctx context.Context) (err error)
 	CachedList() (res map[int]client.ITracker)
 	GetID(url string) (id int)
@@ -43,14 +43,14 @@ type IHandler interface {
 }
 
 type handler struct {
-	m       sync.RWMutex
-	i       map[int]chan model.Entry
-	offset  int
-	config  model.HandlerConfig
-	entries []*model.Entry
-	tracker trackerClient
-	manager manager
-	storage storage
+	m              map[int]*sync.RWMutex
+	i              map[int]chan model.Entry
+	offset         int
+	config         model.HandlerConfig
+	entries        []*model.Entry
+	trackerService trackerService
+	manager        manager
+	storage        storage
 }
 
 func (h *handler) Run(ctx context.Context) {
@@ -105,9 +105,11 @@ func (h *handler) initTrackerChannels() {
 	var (
 		ttid int
 	)
-	h.i = make(map[int]chan model.Entry, len(h.tracker.CachedList()))
-	for ttid = range h.tracker.CachedList() {
+	h.m = make(map[int]*sync.RWMutex, len(h.trackerService.CachedList()))
+	h.i = make(map[int]chan model.Entry, len(h.trackerService.CachedList()))
+	for ttid = range h.trackerService.CachedList() {
 		h.i[ttid] = make(chan model.Entry)
+		h.m[ttid] = &sync.RWMutex{}
 	}
 }
 
@@ -130,7 +132,7 @@ func (h *handler) push(ctx context.Context) (err error) {
 			return
 		}
 		go func(i int) {
-			t = h.tracker.GetID(entries[i].URL)
+			t = h.trackerService.GetID(entries[i].URL)
 			h.i[t] <- *entries[i]
 		}(i)
 	}
@@ -146,8 +148,8 @@ func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 	e.URLHash = hi.URLHash
 	e.Update = hi.Exists
 
-	if hi.UpdatedAt != nil {
-		e.Timestamp = hi.UpdatedAt.Unix()
+	if hi.Exists {
+		e.Timestamp = hi.RecheckAt
 	}
 	return
 }
@@ -161,7 +163,7 @@ func (h *handler) checkHistory(ctx context.Context, e *model.Entry) (hi *runner.
 	}
 	// TODO: save expire date instead of updated_at
 	// TODO: check if created date is below half year, then check only every month
-	if hi.Exists && time.Now().UTC().Unix() < (hi.UpdatedAt.Unix()+h.config.MinDateDiff) {
+	if hi.Exists && time.Now().Before(*hi.RecheckAt) {
 		// TODO: add log instead of print
 		err = ErrSkipped
 	}
@@ -175,17 +177,17 @@ func (h *handler) worker(ctx context.Context, ttid int, e model.Entry) (err erro
 		err = fmt.Errorf("min threshold not set")
 		return
 	}
-	fmt.Println("processing entry: ", e.Name)
+	fmt.Println("processing: ", e.Name)
 
-	if tc, err = h.tracker.GetCached(ctx, ttid); err != nil {
+	if tc, err = h.trackerService.GetCached(ctx, ttid); err != nil {
 		return
 	}
-	// TODO: remove param pointers OR do multithreading
-
+	h.m[ttid].Lock()
+	defer h.m[ttid].Unlock()
 	if err = h.checkPage(ctx, ttid, tc, e); err != nil {
 		return
 	}
-	if err = h.submit(ctx, ttid, tc, e); err == nil {
+	if err = h.submit(ctx, tc, e); err == nil {
 		fmt.Println("saved: ", e.Name)
 	}
 	return
@@ -202,7 +204,7 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClien
 	if err = h.saveHistory(ctx, ttid, e); err != nil {
 		return
 	}
-	if (e.Timestamp + h.config.MinDateDiff) > cur.Unix() {
+	if e.Timestamp.After(*cur) {
 		err = fmt.Errorf("is not updated: %s", e.Name)
 		return
 	}
@@ -213,7 +215,7 @@ func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e mod
 	var b *bytes.Buffer
 
 	// TODO: add check url for tracker domain
-	b, err = h.tracker.Response(ctx, e.URL, tc, false)
+	b, err = h.trackerService.Response(ctx, e.URL, tc, false)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
@@ -226,10 +228,10 @@ func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e mod
 	return
 }
 
-func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, e model.Entry) (err error) {
+func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e model.Entry) (err error) {
 	var b *bytes.Buffer
 
-	b, err = h.tracker.Response(ctx, tc.DownloadLink(e.TopicID), tc, true)
+	b, err = h.trackerService.Response(ctx, tc.DownloadLink(e.TopicID), tc, true)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
@@ -252,26 +254,34 @@ func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, 
 }
 
 func (h *handler) saveHistory(ctx context.Context, ttid int, e model.Entry) (err error) {
+	var recheckAt time.Time
+
+	if e.Update {
+		recheckAt = e.Timestamp.Add(time.Duration(h.config.MinDateDiff))
+	} else {
+		recheckAt = time.Unix(time.Now().Unix()+h.config.MinDateDiff, 0)
+	}
 	if err = h.storage.SaveItem(ctx, &runner.HistoryItem{
+		TrackerTypeID: ttid,
 		URLHash:       e.URLHash,
 		TopicID:       e.TopicID,
+		URL:           e.URL,
 		Category:      e.Category,
 		Tag:           e.Tag,
 		Name:          e.Name,
-		URL:           e.URL,
-		TrackerTypeID: ttid,
 		Exists:        e.Update,
+		RecheckAt:     &recheckAt,
 	}); err != nil {
 		return
 	}
 	return
 }
 
-func NewRunner(tracker trackerClient, manager manager, storage storage, config model.HandlerConfig) IHandler {
+func NewRunner(tracker trackerService, manager manager, storage storage, config model.HandlerConfig) IHandler {
 	return &handler{
-		tracker: tracker,
-		manager: manager,
-		storage: storage,
-		config:  config,
+		trackerService: tracker,
+		manager:        manager,
+		storage:        storage,
+		config:         config,
 	}
 }
