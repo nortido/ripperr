@@ -13,6 +13,7 @@ import (
 	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/runner"
 	"trackerr/internal/tracker"
+	"trackerr/internal/tracker/client"
 )
 
 var (
@@ -20,8 +21,10 @@ var (
 )
 
 type trackerClient interface {
-	CacheAll(ctx context.Context) (err error)
-	ClientByLink(ctx context.Context, link string) (tc tracker.IHttpClient, err error)
+	InitCache(ctx context.Context) (err error)
+	CachedList() (res map[int]client.ITracker)
+	GetID(url string) (id int)
+	GetCached(ctx context.Context, ttid int) (tc tracker.IHttpClient, err error)
 	Response(ctx context.Context, link string, tc tracker.IHttpClient, download bool) (buf *bytes.Buffer, err error)
 }
 
@@ -30,7 +33,7 @@ type manager interface {
 	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 }
 
-type database interface {
+type storage interface {
 	GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error)
 	SaveItem(ctx context.Context, item *runner.HistoryItem) (err error)
 }
@@ -40,105 +43,96 @@ type IHandler interface {
 }
 
 type handler struct {
-	m        sync.RWMutex
-	offset   int
-	config   model.HandlerConfig
-	entries  []*model.Entry
-	tracker  trackerClient
-	manager  manager
-	database database
+	m       sync.RWMutex
+	i       map[int]chan model.Entry
+	offset  int
+	config  model.HandlerConfig
+	entries []*model.Entry
+	tracker trackerClient
+	manager manager
+	storage storage
 }
 
 func (h *handler) Run(ctx context.Context) {
 	var (
-		e     *model.Entry
 		ch    = make(chan *model.Entry)
 		cherr = make(chan error)
 		ge    = make(chan struct{})
-		tmr   = time.NewTimer(0)
+		wt    = time.NewTimer(0)
+		pt    = time.NewTimer(0)
 		err   error
 	)
+
+	wt.Stop()
 
 	defer close(ch)
 	defer close(cherr)
 	defer close(ge)
 
+	h.initTrackerChannels()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case err = <-cherr:
 			fmt.Println(err)
-		case <-ge:
+		case <-pt.C:
 			go func() {
-				if err = h.pull(ctx); err != nil {
+				if err = h.push(ctx); err != nil {
 					cherr <- err
 				}
-				tmr.Reset(0)
+				pt.Reset(time.Hour * 24)
+				wt.Reset(0)
 			}()
-		case <-tmr.C:
-			go func() {
-				var reset bool
-				if reset, err = h.push(ctx, ch); err != nil {
-					cherr <- err
-				} else if reset {
-					ge <- struct{}{}
-				}
-				tmr.Reset(h.config.ProcessDelay)
-			}()
-		case e = <-ch:
-			go func(e *model.Entry) {
-				if err = h.worker(ctx, *e); err != nil {
-					cherr <- err
-				}
-			}(e)
+		case <-wt.C:
+			for ttid := range h.i {
+				go func(ttid int) {
+					for j := 0; j < h.config.WorkerChunkLimit; j++ {
+						go func() {
+							if err = h.worker(ctx, ttid, <-h.i[ttid]); err != nil {
+								cherr <- err
+							}
+						}()
+					}
+				}(ttid)
+			}
+			wt.Reset(h.config.WorkerDelay)
 		}
 	}
 }
 
-func (h *handler) pull(ctx context.Context) (err error) {
-	if h.entries, err = h.manager.GetEntries(ctx, model.FilterOptions{Tag: h.config.WatchTag}); err != nil {
-		err = fmt.Errorf("get torrents error: %w", err)
-		return
+func (h *handler) initTrackerChannels() {
+	var (
+		ttid int
+	)
+	h.i = make(map[int]chan model.Entry, len(h.tracker.CachedList()))
+	for ttid = range h.tracker.CachedList() {
+		h.i[ttid] = make(chan model.Entry)
 	}
-	h.m.Lock()
-	defer h.m.Unlock()
-
-	if h.config.ChunkSize == 0 {
-		h.config.ChunkSize = 1
-	}
-	h.offset = 0
-
-	return
 }
 
-func (h *handler) push(ctx context.Context, ch chan *model.Entry) (reset bool, err error) {
+func (h *handler) push(ctx context.Context) (err error) {
 	var (
-		i      int
-		pushed int
+		i       int
+		t       int
+		entries []*model.Entry
 	)
-
+	if entries, err = h.manager.GetEntries(ctx, model.FilterOptions{Tag: h.config.WatchTag}); err != nil {
+		err = fmt.Errorf("get entries error: %w", err)
+		return
+	}
 	//TODO: add separate channel for each tracker
-	for i = range h.entries[h.offset:] {
-		if err = h.buildEntry(ctx, h.entries[i]); err == ErrSkipped {
+	for i = range entries {
+		if err = h.buildEntry(ctx, entries[i]); err == ErrSkipped {
 			err = nil
 			continue
 		} else if err != nil {
-			fmt.Println(err)
 			return
 		}
-		pushed++
-
-		if pushed > h.config.ChunkSize {
-			break
-		}
-		ch <- h.entries[i]
-	}
-	h.offset += pushed
-
-	if h.offset >= len(h.entries) {
-		reset = true
-		return
+		go func(i int) {
+			t = h.tracker.GetID(entries[i].URL)
+			h.i[t] <- *entries[i]
+		}(i)
 	}
 	return
 }
@@ -160,7 +154,7 @@ func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 
 func (h *handler) checkHistory(ctx context.Context, e *model.Entry) (hi *runner.HistoryItem, err error) {
 	// TODO: cache history
-	if hi, err = h.database.GetItem(ctx, e.URL); err == pgx.ErrNoRows {
+	if hi, err = h.storage.GetItem(ctx, e.URL); err == pgx.ErrNoRows {
 		err = nil
 	} else if err != nil {
 		return
@@ -174,7 +168,7 @@ func (h *handler) checkHistory(ctx context.Context, e *model.Entry) (hi *runner.
 	return
 }
 
-func (h *handler) worker(ctx context.Context, e model.Entry) (err error) {
+func (h *handler) worker(ctx context.Context, ttid int, e model.Entry) (err error) {
 	var tc tracker.IHttpClient
 
 	if h.config.MinDateDiff == 0 {
@@ -183,41 +177,39 @@ func (h *handler) worker(ctx context.Context, e model.Entry) (err error) {
 	}
 	fmt.Println("processing entry: ", e.Name)
 
-	if tc, err = h.tracker.ClientByLink(ctx, e.URL); err != nil {
+	if tc, err = h.tracker.GetCached(ctx, ttid); err != nil {
 		return
 	}
 	// TODO: remove param pointers OR do multithreading
-	h.m.Lock()
-	defer h.m.Unlock()
 
-	if err = h.checkPage(ctx, tc, &e); err != nil {
+	if err = h.checkPage(ctx, ttid, tc, e); err != nil {
 		return
 	}
-	if err = h.submit(ctx, tc, &e); err == nil {
+	if err = h.submit(ctx, ttid, tc, e); err == nil {
 		fmt.Println("saved: ", e.Name)
 	}
 	return
 }
 
-func (h *handler) checkPage(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
+func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClient, e model.Entry) (err error) {
 	var cur *time.Time
 
 	if cur, err = h.getPageDate(ctx, tc, e); err != nil {
 		return
 	}
 	// TODO: add check count of updates in DB
-	// TODO: save page date and expire date
-	if err = h.saveHistory(ctx, tc, e); err != nil {
+	// TODO: save page date (if already saved) and expire date
+	if err = h.saveHistory(ctx, ttid, e); err != nil {
 		return
 	}
 	if (e.Timestamp + h.config.MinDateDiff) > cur.Unix() {
-		err = fmt.Errorf("page is not updated")
+		err = fmt.Errorf("is not updated: %s", e.Name)
 		return
 	}
 	return
 }
 
-func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (cur *time.Time, err error) {
+func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e model.Entry) (cur *time.Time, err error) {
 	var b *bytes.Buffer
 
 	// TODO: add check url for tracker domain
@@ -234,7 +226,7 @@ func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e *mo
 	return
 }
 
-func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
+func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, e model.Entry) (err error) {
 	var b *bytes.Buffer
 
 	b, err = h.tracker.Response(ctx, tc.DownloadLink(e.TopicID), tc, true)
@@ -245,7 +237,7 @@ func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e *model.E
 		return
 	}
 	// TODO: add more attributes
-	err = h.manager.Submit(ctx, b, model.ManagerAddFileOptions{
+	if err = h.manager.Submit(ctx, b, model.ManagerAddFileOptions{
 		Name:     e.Name,
 		Hash:     e.Hash,
 		Category: e.Category,
@@ -253,30 +245,33 @@ func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e *model.E
 		AutoManaged:    e.AutoManaged,
 		MaxRatio:       e.MaxRatio,
 		MaxSeedingTime: e.MaxSeedingTime,
-	})
+	}); err != nil {
+		err = fmt.Errorf("submit error: %w", err)
+	}
 	return
 }
 
-func (h *handler) saveHistory(ctx context.Context, tc tracker.IHttpClient, e *model.Entry) (err error) {
-	if err = h.database.SaveItem(ctx, &runner.HistoryItem{
-		URLHash:  e.URLHash,
-		TopicID:  e.TopicID,
-		Category: e.Category,
-		Tag:      e.Tag,
-		Name:     e.Name,
-		URL:      e.URL,
-		Exists:   e.Update,
+func (h *handler) saveHistory(ctx context.Context, ttid int, e model.Entry) (err error) {
+	if err = h.storage.SaveItem(ctx, &runner.HistoryItem{
+		URLHash:       e.URLHash,
+		TopicID:       e.TopicID,
+		Category:      e.Category,
+		Tag:           e.Tag,
+		Name:          e.Name,
+		URL:           e.URL,
+		TrackerTypeID: ttid,
+		Exists:        e.Update,
 	}); err != nil {
 		return
 	}
 	return
 }
 
-func NewRunner(tracker trackerClient, manager manager, database database, config model.HandlerConfig) IHandler {
+func NewRunner(tracker trackerClient, manager manager, storage storage, config model.HandlerConfig) IHandler {
 	return &handler{
-		tracker:  tracker,
-		manager:  manager,
-		database: database,
-		config:   config,
+		tracker: tracker,
+		manager: manager,
+		storage: storage,
+		config:  config,
 	}
 }

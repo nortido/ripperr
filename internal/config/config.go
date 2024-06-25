@@ -11,8 +11,8 @@ type Manager struct {
 }
 
 type Runner struct {
-	WorkerDelay      int    `env:"RUNNER_WORKER_DELAY, default=15"`
-	WorkersLimit     int    `env:"RUNNER_WORKERS_LIMIT, default=5"`
+	WorkerDelay      int    `env:"RUNNER_WORKER_DELAY, default=60"`
+	WorkerChunkLimit int    `env:"RUNNER_WORKER_CHUNK_LIMIT, default=10"`
 	WatchTag         string `env:"RUNNER_TAG, default=watch"`
 	UpdateThreshold  int64  `env:"RUNNER_UPDATE_THRESHOLD, default=1440"`
 	HttpTimeout      int64  `env:"RUNNER_HTTP_TIMEOUT, default=30"`
@@ -25,7 +25,7 @@ type Flaresolverr struct {
 	MaxTimeout int    `env:"FLARE_TIMEOUT, default=120000"`
 }
 
-type Database struct {
+type Storage struct {
 	MasterURL      string `env:"DB_URL, default=postgres://postgres:PLACEHOLDER@192.168.1.200:5432/trackerr"`
 	ConnectTimeout int    `env:"DB_CONNECT_TIMEOUT, default=60"`
 }

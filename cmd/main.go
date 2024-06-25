@@ -14,7 +14,6 @@ import (
 	"github.com/sethvargo/go-envconfig"
 
 	"trackerr/internal/config"
-	"trackerr/internal/database"
 	"trackerr/internal/helper"
 	"trackerr/internal/manager"
 	"trackerr/internal/manager/client/qbittorrent"
@@ -22,6 +21,7 @@ import (
 	proxyModel "trackerr/internal/model/proxy"
 	"trackerr/internal/proxy"
 	"trackerr/internal/runner"
+	"trackerr/internal/storage"
 	"trackerr/internal/tracker"
 )
 
@@ -29,7 +29,7 @@ type configuration struct {
 	Runner       *config.Runner
 	Manager      *config.Manager
 	Flaresolverr *config.Flaresolverr
-	DB           *config.Database
+	DB           *config.Storage
 }
 
 func main() {
@@ -41,7 +41,7 @@ func main() {
 		cj     *cookiejar.Jar
 		dbConn *pgxpool.Pool
 		dbCfg  *pgxpool.Config
-		db     database.IClient
+		db     storage.IClient
 		err    error
 	)
 	ctx := context.Background()
@@ -97,24 +97,24 @@ func main() {
 	}
 	defer dbConn.Close()
 	// TODO: catch db conn errors
-	db = database.New(dbConn)
+	db = storage.New(dbConn)
 
 	// Init trackers client
 	tr := tracker.New(ht, px, db, &helper.CircuitBreakerConfig{
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	})
-	if err = tr.CacheAll(ctx); err != nil {
+	if err = tr.InitCache(ctx); err != nil {
 		fmt.Println(err)
 		return
 	}
 
 	// Init handler client
 	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, model.HandlerConfig{
-		ChunkSize:    cfg.Runner.WorkersLimit,
-		WatchTag:     cfg.Runner.WatchTag,
-		ProcessDelay: time.Duration(cfg.Runner.WorkerDelay) * time.Minute,
-		MinDateDiff:  cfg.Runner.UpdateThreshold * 60,
+		WorkerChunkLimit: cfg.Runner.WorkerChunkLimit,
+		WatchTag:         cfg.Runner.WatchTag,
+		WorkerDelay:      time.Duration(cfg.Runner.WorkerDelay) * time.Minute,
+		MinDateDiff:      cfg.Runner.UpdateThreshold * 60,
 	})
 	rn.Run(ctx)
 

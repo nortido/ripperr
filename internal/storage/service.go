@@ -1,4 +1,4 @@
-package database
+package storage
 
 import (
 	"context"
@@ -9,20 +9,20 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"trackerr/internal/database/client/pg"
 	"trackerr/internal/helper"
-	"trackerr/internal/model/database"
 	"trackerr/internal/model/runner"
+	"trackerr/internal/model/storage"
 	"trackerr/internal/model/tracker"
+	"trackerr/internal/storage/client/pg"
 )
 
 type postgres interface {
-	GetTracker(ctx context.Context, trackerID int) (res *database.Tracker, err error)
-	AddTracker(ctx context.Context, tracker *database.Tracker) (err error)
-	UpdateTracker(ctx context.Context, tracker *database.Tracker) (err error)
-	GetItem(ctx context.Context, urlHash string) (item *database.Item, err error)
-	AddItem(ctx context.Context, item *database.Item) (err error)
-	UpdateItem(ctx context.Context, item *database.Item) (err error)
+	GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error)
+	AddTracker(ctx context.Context, tracker *storage.Tracker) (err error)
+	UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error)
+	GetItem(ctx context.Context, urlHash string) (item *storage.Item, err error)
+	AddItem(ctx context.Context, item *storage.Item) (err error)
+	UpdateItem(ctx context.Context, item *storage.Item) (err error)
 }
 
 type IClient interface {
@@ -37,7 +37,7 @@ type service struct {
 }
 
 func (s *service) GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error) {
-	var sttr = &database.Tracker{}
+	var sttr = &storage.Tracker{}
 
 	if sttr, err = s.pg.GetTracker(ctx, trackerID); err != nil {
 		return
@@ -55,9 +55,9 @@ func (s *service) GetTracker(ctx context.Context, trackerID int) (res *tracker.T
 }
 
 func (s *service) SaveTracker(ctx context.Context, source *tracker.Tracker) (err error) {
-	var target *database.Tracker
+	var target *storage.Tracker
 
-	target = &database.Tracker{
+	target = &storage.Tracker{
 		TypeID:      source.TypeID,
 		Name:        source.Name,
 		Cookies:     helper.CookiesString(source.Cookies),
@@ -71,7 +71,7 @@ func (s *service) SaveTracker(ctx context.Context, source *tracker.Tracker) (err
 
 func (s *service) GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error) {
 	var (
-		dbItem     *database.Item
+		dbItem     *storage.Item
 		hashBuffer hash.Hash32
 		urlHash    string
 	)
@@ -102,9 +102,9 @@ func (s *service) GetItem(ctx context.Context, link string) (item *runner.Histor
 }
 
 func (s *service) SaveItem(ctx context.Context, item *runner.HistoryItem) (err error) {
-	var dbItem *database.Item
+	var dbItem *storage.Item
 
-	dbItem = &database.Item{
+	dbItem = &storage.Item{
 		URLHash:       item.URLHash,
 		TrackerTypeID: item.TrackerTypeID,
 		TopicID:       item.TopicID,

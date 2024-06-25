@@ -47,6 +47,10 @@ type db interface {
 	SaveTracker(ctx context.Context, source *tracker.Tracker) (err error)
 }
 
+type px interface {
+	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
+}
+
 type IHttpClient interface {
 	client.ITracker
 	Cookies() (res []*http.Cookie)
@@ -54,18 +58,17 @@ type IHttpClient interface {
 	GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error)
 }
 
-type px interface {
-	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
-}
-
 type IService interface {
-	CacheAll(ctx context.Context) (err error)
-	ClientByLink(ctx context.Context, link string) (tc IHttpClient, err error)
+	InitCache(ctx context.Context) (err error)
+	CachedList() (res map[int]client.ITracker)
+	GetID(url string) (id int)
+	GetCached(ctx context.Context, ttid int) (tc IHttpClient, err error)
 	Response(ctx context.Context, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error)
 }
 
 type CachedItem struct {
 	IHttpClient
+	ID      int
 	Created time.Time
 }
 
@@ -78,25 +81,37 @@ type service struct {
 	db      db
 }
 
-func (s *service) ClientByLink(ctx context.Context, link string) (tc IHttpClient, err error) {
+func (s *service) GetID(link string) (id int) {
 	var (
-		id int
+		i  int
+		ct *CachedItem
 	)
-	if id, err = s.getClientID(ctx, link); err != nil {
-		return
+	for i, ct = range s.clients {
+		if ct.IHttpClient == nil {
+			continue
+		}
+		if ct.IHttpClient.Detect(link) {
+			id = i
+			return
+		}
 	}
-	tc, err = s.getCachedClient(ctx, id)
+	// TODO: add entry without tracker to blacklist
 
 	return
 }
 
+func (s *service) CachedList() (res map[int]client.ITracker) {
+	return index
+}
+
 func (s *service) Response(ctx context.Context, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error) {
 	var (
-		b   = bytes.Buffer{}
-		res *http.Response
+		b    = bytes.Buffer{}
+		res  *http.Response
+		ttid = s.GetID(link)
 	)
 	if tc == nil {
-		tc, err = s.ClientByLink(ctx, link)
+		tc, err = s.GetCached(ctx, ttid)
 	}
 	if res, err = tc.GetResponse(ctx, link, download); err != nil {
 		return
@@ -111,7 +126,7 @@ func (s *service) Response(ctx context.Context, link string, tc IHttpClient, dow
 	return
 }
 
-func (s *service) CacheAll(ctx context.Context) (err error) {
+func (s *service) InitCache(ctx context.Context) (err error) {
 	var (
 		wg sync.WaitGroup
 	)
@@ -130,27 +145,7 @@ func (s *service) CacheAll(ctx context.Context) (err error) {
 	return
 }
 
-func (s *service) getClientID(ctx context.Context, url string) (id int, err error) {
-	var (
-		i  int
-		ct *CachedItem
-	)
-	for i, ct = range s.clients {
-		if ct.IHttpClient == nil {
-			continue
-		}
-		if ct.IHttpClient.Detect(url) {
-			id = i
-			return
-		}
-	}
-	// TODO: add entry without tracker to blacklist
-	err = fmt.Errorf("tracker not found")
-
-	return
-}
-
-func (s *service) getCachedClient(ctx context.Context, id int) (t IHttpClient, err error) {
+func (s *service) GetCached(ctx context.Context, id int) (t IHttpClient, err error) {
 	var (
 		ok bool
 		ct *CachedItem
