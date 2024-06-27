@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +44,7 @@ type IHandler interface {
 }
 
 type handler struct {
-	m              map[int]*sync.RWMutex
+	mx             *sync.RWMutex
 	i              map[int]chan model.Entry
 	offset         int
 	config         model.HandlerConfig
@@ -105,11 +106,10 @@ func (h *handler) initTrackerChannels() {
 	var (
 		ttid int
 	)
-	h.m = make(map[int]*sync.RWMutex, len(h.trackerService.CachedList()))
+	h.mx = &sync.RWMutex{}
 	h.i = make(map[int]chan model.Entry, len(h.trackerService.CachedList()))
 	for ttid = range h.trackerService.CachedList() {
 		h.i[ttid] = make(chan model.Entry)
-		h.m[ttid] = &sync.RWMutex{}
 	}
 }
 
@@ -142,7 +142,7 @@ func (h *handler) push(ctx context.Context) (err error) {
 func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 	var hi *runner.HistoryItem
 
-	if hi, err = h.checkHistory(ctx, e); err != nil {
+	if hi, err = h.checkHistory(ctx, e.URL); err != nil {
 		return
 	}
 	e.URLHash = hi.URLHash
@@ -154,9 +154,9 @@ func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 	return
 }
 
-func (h *handler) checkHistory(ctx context.Context, e *model.Entry) (hi *runner.HistoryItem, err error) {
+func (h *handler) checkHistory(ctx context.Context, link string) (hi *runner.HistoryItem, err error) {
 	// TODO: cache history
-	if hi, err = h.storage.GetItem(ctx, e.URL); err == pgx.ErrNoRows {
+	if hi, err = h.storage.GetItem(ctx, link); err == pgx.ErrNoRows {
 		err = nil
 	} else if err != nil {
 		return
@@ -179,11 +179,12 @@ func (h *handler) worker(ctx context.Context, ttid int, e model.Entry) (err erro
 	}
 	fmt.Println("processing: ", e.Name)
 
+	h.mx.Lock()
+	defer h.mx.Unlock()
+
 	if tc, err = h.trackerService.GetCached(ctx, ttid); err != nil {
 		return
 	}
-	h.m[ttid].Lock()
-	defer h.m[ttid].Unlock()
 	if err = h.checkPage(ctx, ttid, tc, e); err != nil {
 		return
 	}
@@ -238,6 +239,10 @@ func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e model.En
 		err = fmt.Errorf("no file data")
 		return
 	}
+	if strings.Contains(b.String(), "<html") {
+		err = fmt.Errorf("unexpected html response on download")
+		return
+	}
 	// TODO: add more attributes
 	if err = h.manager.Submit(ctx, b, model.ManagerAddFileOptions{
 		Name:     e.Name,
@@ -257,7 +262,7 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e model.Entry) (err
 	var recheckAt time.Time
 
 	if e.Update {
-		recheckAt = e.Timestamp.Add(time.Duration(h.config.MinDateDiff))
+		recheckAt = time.Unix(e.Timestamp.Unix()+h.config.MinDateDiff, 0)
 	} else {
 		recheckAt = time.Unix(time.Now().Unix()+h.config.MinDateDiff, 0)
 	}

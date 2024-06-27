@@ -79,7 +79,12 @@ func main() {
 	}
 
 	// Init proxy client
-	px = proxy.New(ht, &proxyModel.Config{
+	px = proxy.New(&http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: time.Duration(cfg.Flaresolverr.MaxTimeout) * time.Second,
+	}, &proxyModel.Config{
 		None: proxyModel.ItemConfig{},
 		Flaresolverr: proxyModel.ItemConfig{
 			URL:        cfg.Flaresolverr.Host,

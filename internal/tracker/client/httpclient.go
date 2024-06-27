@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -82,7 +83,6 @@ func (c *client) Cookies() (res []*http.Cookie) {
 func (c *client) GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error) {
 	var (
 		req *http.Request
-		pt  proxy.ProxyType
 	)
 
 	// TODO: tracker rate limit
@@ -95,12 +95,7 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 		err = fmt.Errorf("no header")
 		return
 	}
-	pt = proxy.TypeNone
-
-	if !download {
-		pt = c.ITracker.ProxyType()
-	}
-	if res, err = c.tryHttp(ctx, req, &proxy.Options{Cookies: c.cookies}, pt); err != nil {
+	if res, err = c.tryHttp(ctx, req, &proxy.Options{Cookies: c.cookies}, download); err != nil {
 		return
 	}
 	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
@@ -128,7 +123,7 @@ func (c *client) setDefaultHeaders() {
 }
 
 func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *http.Response, err error) {
-	res, err = c.tryHttp(ctx, req, &proxy.Options{OnlyCookies: true}, c.ITracker.ProxyType())
+	res, err = c.tryHttp(ctx, req, &proxy.Options{OnlyCookies: true}, false)
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
 		err = fmt.Errorf("%s login error: %w", c.ITracker.Name(), err)
@@ -170,27 +165,52 @@ func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.
 	return
 }
 
-func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (res *http.Response, err error) {
+func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Options, download bool) (res *http.Response, err error) {
+	var proxyType proxy.ProxyType = proxy.TypeNone
+
+	if !download {
+		proxyType = c.ITracker.ProxyType()
+	}
 	err = c.cb.Call(func() (err error) {
 		if _, ok := c.px.(proxyService); ok {
-			res, err = c.px.Send(req, opts, proxyType)
+			if res, err = c.px.Send(req, opts, proxyType); err != nil {
+				return
+			}
+		} else if proxyType == proxy.TypeNone {
+			if res, err = c.hc.Do(req); err != nil {
+				return
+			}
+		} else {
+			err = fmt.Errorf("unsupported proxy type: %d", proxyType)
 			return
 		}
-		if proxyType != proxy.TypeNone {
-			return
-		}
-		if res, err = c.hc.Do(req); err != nil {
-			return
-		}
-		if res.Request != nil && res.Request.URL.String() != req.URL.String() {
-			err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
-		}
-		if res.StatusCode >= http.StatusBadRequest {
-			err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
-			return
-		}
+		err = c.checkResponse(req, res, download)
 		return
 	})
+	return
+}
+
+func (c *client) checkResponse(req *http.Request, res *http.Response, download bool) (err error) {
+	if res.Request != nil && res.Request.URL.String() != req.URL.String() {
+		err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
+	}
+	if res.StatusCode >= http.StatusBadRequest {
+		err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
+		return
+	}
+	if !download {
+		return
+	}
+	var data []byte
+
+	if data, err = io.ReadAll(res.Body); err != nil {
+		return
+	}
+	res.Body = io.NopCloser(bytes.NewBuffer(data))
+
+	if strings.Contains(string(data), "<html") {
+		err = fmt.Errorf("unexpected html response on download")
+	}
 	return
 }
 
