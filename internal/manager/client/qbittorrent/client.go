@@ -11,6 +11,7 @@ import (
 	qbt "github.com/autobrr/go-qbittorrent"
 
 	"trackerr/internal/model"
+	"trackerr/internal/system/logger"
 )
 
 var (
@@ -56,11 +57,9 @@ func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []
 		default:
 			wg.Add(1)
 			go func(t qbt.Torrent) {
-				var (
-					p *qbt.TorrentProperties
-				)
 				defer wg.Done()
-				if p, err = c.getProperties(&t); err != nil {
+				p, err := c.getProperties(&t)
+				if err != nil {
 					cherr <- err
 					return
 				}
@@ -100,13 +99,10 @@ func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 }
 
 func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {
-	if !c.config.DeleteEnabled {
-		return
-	}
 	for i := range c.config.DeleteCategories {
 		if opts.Category == c.config.DeleteCategories[i] {
-			fmt.Println("deleting torrent: ", opts.Name)
-			return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, true)
+			logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))
+			return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, c.config.DeleteEnabled)
 		}
 	}
 	return

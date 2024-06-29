@@ -12,6 +12,7 @@ import (
 
 	"trackerr/internal/helper"
 	"trackerr/internal/model/proxy"
+	"trackerr/internal/model/tracker"
 )
 
 const (
@@ -23,7 +24,6 @@ const (
 )
 
 type Tracker struct {
-	// TODO: public type without credentials
 }
 
 func (t Tracker) Host() (host string) {
@@ -31,7 +31,6 @@ func (t Tracker) Host() (host string) {
 }
 
 func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
-	// TODO: put credentials into envs|DB
 	credentials = &url.Values{
 		"login_username": {"johan01"},
 		"login_password": {"dbhnejp"},
@@ -84,6 +83,10 @@ func (t Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 
 func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
 	return proxy.TypeFlare
+}
+
+func (t Tracker) Publicity() (publicity string) {
+	return tracker.PublicityPrivate
 }
 
 func (t Tracker) Detect(url string) bool {

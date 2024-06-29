@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"trackerr/internal/model/proxy"
+	"trackerr/internal/model/tracker"
 )
 
 const (
@@ -25,7 +26,7 @@ func (t Tracker) Host() (host string) {
 	return Host
 }
 func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
-	link = Host
+	link = ""
 	credentials = &url.Values{}
 
 	return
@@ -50,6 +51,10 @@ func (t Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 
 func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
 	return proxy.TypeNone
+}
+
+func (t Tracker) Publicity() (publicity string) {
+	return tracker.PublicityPublic
 }
 
 func (t Tracker) Detect(url string) bool {

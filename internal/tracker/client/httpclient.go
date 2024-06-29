@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"trackerr/internal/helper"
 	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/tracker"
+	"trackerr/internal/system/logger"
 )
 
 type ITracker interface {
@@ -24,6 +24,7 @@ type ITracker interface {
 	LoginData() (link string, credentials *url.Values, cookies []*http.Cookie)
 	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
 	ProxyType() (proxyType proxy.ProxyType)
+	Publicity() (publicity string)
 }
 
 type proxyService interface {
@@ -52,13 +53,17 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker) (err 
 		res   *http.Response
 		creds string
 	)
-
-	if payload != nil && payload.Exists {
+	if payload.Exists {
 		c.cookies = payload.Cookies
 		creds = payload.Credentials
 	}
 	c.header = c.ITracker.Header()
 	c.setDefaultHeaders()
+
+	switch tracker.PublicityPublic {
+	case c.ITracker.Publicity(), payload.Publicity:
+		return
+	}
 	if req, err = c.buildLoginRequest(ctx, creds); err != nil {
 		return
 	}
@@ -85,7 +90,6 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 		req *http.Request
 	)
 
-	// TODO: tracker rate limit
 	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil); err != nil {
 		return
 	}
@@ -98,8 +102,10 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 	if res, err = c.tryHttp(ctx, req, &proxy.Options{Cookies: c.cookies}, download); err != nil {
 		return
 	}
-	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
-	c.cookies = c.hc.Jar.Cookies(res.Request.URL)
+	//if !download {
+	//	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
+	//	c.cookies = c.hc.Jar.Cookies(res.Request.URL)
+	//}
 	return
 }
 
@@ -150,11 +156,16 @@ func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.
 	if body == "" && creds != nil {
 		body = creds.Encode()
 	}
-	if body == "" {
-		req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
-		return
+	if link == "" {
+		link = c.ITracker.Host()
 	}
-	if req, err = http.NewRequestWithContext(ctx, http.MethodPost, link, strings.NewReader(body)); err != nil {
+	switch {
+	case body == "":
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	default:
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, link, strings.NewReader(body))
+	}
+	if err != nil {
 		return
 	}
 	req.Header = *c.header
@@ -166,22 +177,25 @@ func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.
 }
 
 func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Options, download bool) (res *http.Response, err error) {
-	var proxyType proxy.ProxyType = proxy.TypeNone
+	var (
+		_, proxyExists = c.px.(proxyService)
+		proxyType      = c.ITracker.ProxyType()
+	)
 
-	if !download {
-		proxyType = c.ITracker.ProxyType()
+	if download {
+		proxyType = proxy.TypeNone
 	}
 	err = c.cb.Call(func() (err error) {
-		if _, ok := c.px.(proxyService); ok {
-			if res, err = c.px.Send(req, opts, proxyType); err != nil {
-				return
-			}
-		} else if proxyType == proxy.TypeNone {
-			if res, err = c.hc.Do(req); err != nil {
-				return
-			}
-		} else {
-			err = fmt.Errorf("unsupported proxy type: %d", proxyType)
+		switch {
+		case proxyType == proxy.TypeNone:
+			logger.Info(fmt.Sprintf("getting \"%s\" by direct http", req.URL.String()))
+			res, err = c.hc.Do(req)
+		case proxyExists:
+			res, err = c.px.Send(req, opts, proxyType)
+		default:
+			err = fmt.Errorf("proxy is not set: %d", proxyType)
+		}
+		if err != nil {
 			return
 		}
 		err = c.checkResponse(req, res, download)
@@ -197,19 +211,6 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 	if res.StatusCode >= http.StatusBadRequest {
 		err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
 		return
-	}
-	if !download {
-		return
-	}
-	var data []byte
-
-	if data, err = io.ReadAll(res.Body); err != nil {
-		return
-	}
-	res.Body = io.NopCloser(bytes.NewBuffer(data))
-
-	if strings.Contains(string(data), "<html") {
-		err = fmt.Errorf("unexpected html response on download")
 	}
 	return
 }

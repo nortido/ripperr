@@ -3,11 +3,12 @@ package proxy
 import (
 	"fmt"
 	"net/http"
-	"trackerr/internal/model/proxy"
 
 	fclient "github.com/nortido/go-flaresolverr"
 
+	"trackerr/internal/model/proxy"
 	fmapper "trackerr/internal/proxy/mapper/flaresolverr"
+	"trackerr/internal/system/logger"
 )
 
 type Config struct {
@@ -33,10 +34,8 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 		fres   *fclient.Response
 	)
 	switch proxyType {
-	case proxy.TypeNone:
-		res, err = f.hc.Do(r)
 	case proxy.TypeFlare:
-		fmt.Printf("getting \"%s\" by flaresolverr\n", r.URL.String())
+		logger.Info(fmt.Sprintf("getting \"%s\" by flaresolverr", r.URL.String()))
 		params = fmapper.PrepareParams(r, opts)
 		if err != nil {
 			return

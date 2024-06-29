@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -22,6 +21,7 @@ import (
 	"trackerr/internal/proxy"
 	"trackerr/internal/runner"
 	"trackerr/internal/storage"
+	"trackerr/internal/system/logger"
 	"trackerr/internal/tracker"
 )
 
@@ -47,7 +47,7 @@ func main() {
 	ctx := context.Background()
 
 	if err = envconfig.Process(ctx, &cfg); err != nil {
-		fmt.Println(err)
+		logger.Error(err.Error())
 		return
 	}
 
@@ -61,13 +61,13 @@ func main() {
 			DeleteEnabled:    cfg.Manager.DeleteFilesEnabled,
 			DeleteCategories: cfg.Manager.DeleteFilesCategories,
 		}); err != nil {
-		fmt.Println(err)
+		logger.Error(err.Error())
 		return
 	}
 
 	// Init http client
 	if cj, err = cookiejar.New(nil); err != nil {
-		fmt.Println(err)
+		logger.Error(err.Error())
 		return
 	}
 	ht = &http.Client{
@@ -97,7 +97,7 @@ func main() {
 	dbCfg, _ = pgxpool.ParseConfig(cfg.DB.MasterURL)
 	dbCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DB.ConnectTimeout) * time.Second
 	if dbConn, err = pgxpool.NewWithConfig(ctx, dbCfg); err != nil {
-		fmt.Println(err)
+		logger.Error(err.Error())
 		return
 	}
 	defer dbConn.Close()
@@ -110,7 +110,7 @@ func main() {
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	})
 	if err = tr.InitCache(ctx); err != nil {
-		fmt.Println(err)
+		logger.Error(err.Error())
 		return
 	}
 
@@ -119,7 +119,9 @@ func main() {
 		WorkerChunkLimit: cfg.Runner.WorkerChunkLimit,
 		WatchTag:         cfg.Runner.WatchTag,
 		WorkerDelay:      time.Duration(cfg.Runner.WorkerDelay) * time.Minute,
-		MinDateDiff:      cfg.Runner.UpdateThreshold * 60,
+		ThresholdMonth:   cfg.Runner.MonthThresholdDays,
+		ThresholdYear:    cfg.Runner.YearThresholdDays,
+		ThresholdOld:     cfg.Runner.OldThresholdDays,
 	})
 	rn.Run(ctx)
 
@@ -127,6 +129,6 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
 	defer func(sig os.Signal) {
-		fmt.Println("goodbye")
+		logger.Info("goodbye")
 	}(<-c)
 }

@@ -6,5 +6,7 @@ type HandlerConfig struct {
 	WorkerDelay      time.Duration
 	WorkerChunkLimit int
 	WatchTag         string
-	MinDateDiff      int64
+	ThresholdMonth   int
+	ThresholdYear    int
+	ThresholdOld     int
 }

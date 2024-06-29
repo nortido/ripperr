@@ -12,6 +12,7 @@ import (
 
 	"trackerr/internal/helper"
 	"trackerr/internal/model/proxy"
+	"trackerr/internal/model/tracker"
 )
 
 const (
@@ -89,6 +90,10 @@ func (t Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 
 func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
 	return proxy.TypeFlare
+}
+
+func (t Tracker) Publicity() (publicity string) {
+	return tracker.PublicityPrivate
 }
 
 func (t Tracker) Detect(url string) bool {

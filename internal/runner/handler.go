@@ -8,17 +8,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"trackerr/internal/model"
 	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/runner"
+	"trackerr/internal/system/logger"
 	"trackerr/internal/tracker"
 	"trackerr/internal/tracker/client"
 )
 
+const (
+	durationDay   = time.Hour * 24
+	durationMonth = time.Hour * 24 * 30
+	durationYear  = time.Hour * 24 * 365
+)
+
 var (
-	ErrSkipped = fmt.Errorf("skipped")
+	errSkipped = fmt.Errorf("skipped")
 )
 
 type trackerService interface {
@@ -26,7 +31,7 @@ type trackerService interface {
 	CachedList() (res map[int]client.ITracker)
 	GetID(url string) (id int)
 	GetCached(ctx context.Context, ttid int) (tc tracker.IHttpClient, err error)
-	Response(ctx context.Context, link string, tc tracker.IHttpClient, download bool) (buf *bytes.Buffer, err error)
+	Response(ctx context.Context, ttid int, link string, tc tracker.IHttpClient, download bool) (buf *bytes.Buffer, err error)
 }
 
 type manager interface {
@@ -45,7 +50,7 @@ type IHandler interface {
 
 type handler struct {
 	mx             *sync.RWMutex
-	i              map[int]chan model.Entry
+	i              map[int]chan *model.Entry
 	offset         int
 	config         model.HandlerConfig
 	entries        []*model.Entry
@@ -70,19 +75,23 @@ func (h *handler) Run(ctx context.Context) {
 	defer close(cherr)
 	defer close(ge)
 
+	if h.config.ThresholdMonth == 0 || h.config.ThresholdYear == 0 || h.config.ThresholdOld == 0 {
+		logger.Error("min thresholds are not set")
+		return
+	}
 	h.initTrackerChannels()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case err = <-cherr:
-			fmt.Println(err)
+			logger.Error(err.Error())
 		case <-pt.C:
 			go func() {
 				if err = h.push(ctx); err != nil {
 					cherr <- err
 				}
-				pt.Reset(time.Hour * 24)
+				pt.Reset(durationDay)
 				wt.Reset(0)
 			}()
 		case <-wt.C:
@@ -107,9 +116,9 @@ func (h *handler) initTrackerChannels() {
 		ttid int
 	)
 	h.mx = &sync.RWMutex{}
-	h.i = make(map[int]chan model.Entry, len(h.trackerService.CachedList()))
+	h.i = make(map[int]chan *model.Entry, len(h.trackerService.CachedList()))
 	for ttid = range h.trackerService.CachedList() {
-		h.i[ttid] = make(chan model.Entry)
+		h.i[ttid] = make(chan *model.Entry)
 	}
 }
 
@@ -123,17 +132,18 @@ func (h *handler) push(ctx context.Context) (err error) {
 		err = fmt.Errorf("get entries error: %w", err)
 		return
 	}
-	//TODO: add separate channel for each tracker
 	for i = range entries {
-		if err = h.buildEntry(ctx, entries[i]); err == ErrSkipped {
+		if err = h.buildEntry(ctx, entries[i]); err == errSkipped {
 			err = nil
 			continue
 		} else if err != nil {
 			return
 		}
 		go func(i int) {
-			t = h.trackerService.GetID(entries[i].URL)
-			h.i[t] <- *entries[i]
+			if t = h.trackerService.GetID(entries[i].URL); t == 0 {
+				return
+			}
+			h.i[t] <- entries[i]
 		}(i)
 	}
 	return
@@ -146,9 +156,9 @@ func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 		return
 	}
 	e.URLHash = hi.URLHash
-	e.Update = hi.Exists
 
 	if hi.Exists {
+		e.Update = true
 		e.Timestamp = hi.RecheckAt
 	}
 	return
@@ -156,28 +166,28 @@ func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 
 func (h *handler) checkHistory(ctx context.Context, link string) (hi *runner.HistoryItem, err error) {
 	// TODO: cache history
-	if hi, err = h.storage.GetItem(ctx, link); err == pgx.ErrNoRows {
-		err = nil
-	} else if err != nil {
+	if hi, err = h.storage.GetItem(ctx, link); err != nil {
 		return
 	}
-	// TODO: save expire date instead of updated_at
-	// TODO: check if created date is below half year, then check only every month
-	if hi.Exists && time.Now().Before(*hi.RecheckAt) {
-		// TODO: add log instead of print
-		err = ErrSkipped
+	if !hi.Exists {
+		return
+	}
+	if hi.RecheckAt != nil && time.Now().Before(*hi.RecheckAt) {
+		err = errSkipped
+	}
+	if hi.TrackerTypeID == 0 {
+		err = errSkipped
 	}
 	return
 }
 
-func (h *handler) worker(ctx context.Context, ttid int, e model.Entry) (err error) {
-	var tc tracker.IHttpClient
+func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err error) {
+	var (
+		updated bool
+		tc      tracker.IHttpClient
+	)
 
-	if h.config.MinDateDiff == 0 {
-		err = fmt.Errorf("min threshold not set")
-		return
-	}
-	fmt.Println("processing: ", e.Name)
+	logger.Info(fmt.Sprint("processing: ", e.Name))
 
 	h.mx.Lock()
 	defer h.mx.Unlock()
@@ -185,38 +195,41 @@ func (h *handler) worker(ctx context.Context, ttid int, e model.Entry) (err erro
 	if tc, err = h.trackerService.GetCached(ctx, ttid); err != nil {
 		return
 	}
-	if err = h.checkPage(ctx, ttid, tc, e); err != nil {
+	if updated, err = h.checkPage(ctx, ttid, tc, e); err != nil {
 		return
 	}
-	if err = h.submit(ctx, tc, e); err == nil {
-		fmt.Println("saved: ", e.Name)
+	if !updated {
+		logger.Info(fmt.Sprint("skipped: ", e.Name))
+		return
 	}
+	if err = h.submit(ctx, ttid, tc, e); err != nil {
+		return
+	}
+	logger.Info(fmt.Sprint("updated: ", e.Name))
+
 	return
 }
 
-func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClient, e model.Entry) (err error) {
+func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (res bool, err error) {
 	var cur *time.Time
 
-	if cur, err = h.getPageDate(ctx, tc, e); err != nil {
+	if cur, err = h.getPageDate(ctx, ttid, tc, e); err != nil {
 		return
 	}
 	// TODO: add check count of updates in DB
-	// TODO: save page date (if already saved) and expire date
-	if err = h.saveHistory(ctx, ttid, e); err != nil {
+	if err = h.saveHistory(ctx, ttid, e, cur); err != nil {
 		return
 	}
-	if e.Timestamp.After(*cur) {
-		err = fmt.Errorf("is not updated: %s", e.Name)
-		return
-	}
+	res = e.Timestamp.Before(*cur)
+
 	return
 }
 
-func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e model.Entry) (cur *time.Time, err error) {
+func (h *handler) getPageDate(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (cur *time.Time, err error) {
 	var b *bytes.Buffer
 
 	// TODO: add check url for tracker domain
-	b, err = h.trackerService.Response(ctx, e.URL, tc, false)
+	b, err = h.trackerService.Response(ctx, ttid, e.URL, tc, false)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
@@ -229,10 +242,10 @@ func (h *handler) getPageDate(ctx context.Context, tc tracker.IHttpClient, e mod
 	return
 }
 
-func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e model.Entry) (err error) {
+func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (err error) {
 	var b *bytes.Buffer
 
-	b, err = h.trackerService.Response(ctx, tc.DownloadLink(e.TopicID), tc, true)
+	b, err = h.trackerService.Response(ctx, ttid, tc.DownloadLink(e.TopicID), tc, true)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
@@ -245,10 +258,10 @@ func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e model.En
 	}
 	// TODO: add more attributes
 	if err = h.manager.Submit(ctx, b, model.ManagerAddFileOptions{
-		Name:     e.Name,
-		Hash:     e.Hash,
-		Category: e.Category,
-		//Tag:            e.Tag,
+		Name:           e.Name,
+		Hash:           e.Hash,
+		Category:       e.Category,
+		Tag:            e.Tag,
 		AutoManaged:    e.AutoManaged,
 		MaxRatio:       e.MaxRatio,
 		MaxSeedingTime: e.MaxSeedingTime,
@@ -258,13 +271,13 @@ func (h *handler) submit(ctx context.Context, tc tracker.IHttpClient, e model.En
 	return
 }
 
-func (h *handler) saveHistory(ctx context.Context, ttid int, e model.Entry) (err error) {
+func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur *time.Time) (err error) {
 	var recheckAt time.Time
 
-	if e.Update {
-		recheckAt = time.Unix(e.Timestamp.Unix()+h.config.MinDateDiff, 0)
+	if e.Update && cur != nil {
+		recheckAt = h.getRecheckAt(cur)
 	} else {
-		recheckAt = time.Unix(time.Now().Unix()+h.config.MinDateDiff, 0)
+		recheckAt = time.Now().AddDate(0, 0, 1)
 	}
 	if err = h.storage.SaveItem(ctx, &runner.HistoryItem{
 		TrackerTypeID: ttid,
@@ -275,9 +288,24 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e model.Entry) (err
 		Tag:           e.Tag,
 		Name:          e.Name,
 		Exists:        e.Update,
+		CreatedAt:     cur,
 		RecheckAt:     &recheckAt,
 	}); err != nil {
 		return
+	}
+	return
+}
+
+func (h *handler) getRecheckAt(tm *time.Time) (recheckAt time.Time) {
+	var d = time.Since(*tm)
+
+	switch {
+	case tm == nil, tm.Year() == 1, d < durationMonth:
+		recheckAt = time.Now().AddDate(0, 0, h.config.ThresholdMonth)
+	case d < durationYear:
+		recheckAt = time.Now().AddDate(0, 0, h.config.ThresholdYear)
+	case d >= durationYear:
+		recheckAt = time.Now().AddDate(0, 0, h.config.ThresholdOld)
 	}
 	return
 }

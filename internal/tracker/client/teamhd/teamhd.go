@@ -10,6 +10,7 @@ import (
 
 	"trackerr/internal/helper"
 	"trackerr/internal/model/proxy"
+	"trackerr/internal/model/tracker"
 )
 
 const (
@@ -27,7 +28,7 @@ func (t Tracker) Host() (host string) {
 }
 
 func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
-	link = DownloadURL
+	link = ""
 	credentials = &url.Values{}
 	cookies = helper.ParseCookies("cross-site-cookie=https://teamhd.org; PHPSESSID=PLACEHOLDER; uid=PLACEHOLDER; lang=russian; pass=PLACEHOLDER; token=PLACEHOLDER", "")
 
@@ -67,6 +68,10 @@ func (t Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 
 func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
 	return proxy.TypeNone
+}
+
+func (t Tracker) Publicity() (publicity string) {
+	return tracker.PublicityPrivate
 }
 
 func (t Tracker) Detect(url string) bool {

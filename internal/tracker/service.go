@@ -9,11 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"trackerr/internal/helper"
 	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/tracker"
+	"trackerr/internal/system/logger"
 	"trackerr/internal/tracker/client"
 	"trackerr/internal/tracker/client/kinozal"
 	"trackerr/internal/tracker/client/nnm"
@@ -63,7 +62,7 @@ type IService interface {
 	CachedList() (res map[int]client.ITracker)
 	GetID(url string) (id int)
 	GetCached(ctx context.Context, ttid int) (tc IHttpClient, err error)
-	Response(ctx context.Context, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error)
+	Response(ctx context.Context, ttid int, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error)
 }
 
 type CachedItem struct {
@@ -95,8 +94,6 @@ func (s *service) GetID(link string) (id int) {
 			return
 		}
 	}
-	// TODO: add entry without tracker to blacklist
-
 	return
 }
 
@@ -104,11 +101,10 @@ func (s *service) CachedList() (res map[int]client.ITracker) {
 	return index
 }
 
-func (s *service) Response(ctx context.Context, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error) {
+func (s *service) Response(ctx context.Context, ttid int, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error) {
 	var (
-		b    = bytes.Buffer{}
-		res  *http.Response
-		ttid = s.GetID(link)
+		b   = bytes.Buffer{}
+		res *http.Response
 	)
 	if tc == nil {
 		tc, err = s.GetCached(ctx, ttid)
@@ -180,7 +176,7 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 		return
 	}
 	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
-	fmt.Println("trying to cache ", tr.Name())
+	logger.Info(fmt.Sprint("trying to cache ", tr.Name()))
 	if err = s.store(ctx, tid, tc); err != nil {
 		return
 	}
@@ -188,9 +184,9 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 	s.clients[tid] = &CachedItem{IHttpClient: tc, Created: time.Now()}
 	s.mx.Unlock()
 	if tc != nil {
-		fmt.Println("tracker cached: ", tr.Name())
+		logger.Info(fmt.Sprint("tracker cached: ", tr.Name()))
 	} else {
-		fmt.Println("tracker caching failed: ", tr.Name())
+		logger.Error(fmt.Sprint("tracker caching failed: ", tr.Name()))
 	}
 
 	return
@@ -198,10 +194,11 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 
 func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error) {
 	var (
+		link  string
 		creds *url.Values
 		attrs *tracker.Tracker
 	)
-	if attrs, err = s.db.GetTracker(ctx, tid); err != nil && err != pgx.ErrNoRows {
+	if attrs, err = s.db.GetTracker(ctx, tid); err != nil {
 		return
 	}
 	if err = tc.InitClient(ctx, attrs); err != nil {
@@ -211,10 +208,14 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error
 	if attrs != nil {
 		return
 	}
-	_, creds, _ = tc.LoginData()
+	link, creds, _ = tc.LoginData()
 	attrs = &tracker.Tracker{
 		TypeID:      tid,
 		Name:        tc.Name(),
+		Host:        tc.Host(),
+		LoginURL:    link,
+		DownloadURL: tc.DownloadLink(""),
+		Publicity:   tc.Publicity(),
 		Cookies:     tc.Cookies(),
 		Credentials: creds.Encode(),
 	}

@@ -11,5 +11,6 @@ type HistoryItem struct {
 	Name          string
 	URL           string
 	Exists        bool
+	CreatedAt     *time.Time
 	RecheckAt     *time.Time
 }
