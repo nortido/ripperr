@@ -25,6 +25,7 @@ type ITracker interface {
 	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
 	ProxyType() (proxyType proxy.ProxyType)
 	Publicity() (publicity string)
+	HourLimit() (limit int)
 }
 
 type proxyService interface {
@@ -86,9 +87,7 @@ func (c *client) Cookies() (res []*http.Cookie) {
 }
 
 func (c *client) GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error) {
-	var (
-		req *http.Request
-	)
+	var req *http.Request
 
 	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil); err != nil {
 		return
@@ -195,12 +194,14 @@ func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Opt
 		default:
 			err = fmt.Errorf("proxy is not set: %d", proxyType)
 		}
-		if err != nil {
-			return
+		if err == nil {
+			err = c.checkResponse(req, res, download)
 		}
-		err = c.checkResponse(req, res, download)
 		return
 	})
+	if err != nil {
+		err = fmt.Errorf("%s error: %w", c.ITracker.Name(), err)
+	}
 	return
 }
 
@@ -209,7 +210,13 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 		err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
 	}
 	if res.StatusCode >= http.StatusBadRequest {
-		err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
+		b := new(bytes.Buffer)
+		defer res.Body.Close()
+
+		if _, err = b.ReadFrom(res.Body); err != nil {
+			return
+		}
+		err = fmt.Errorf("unexpected status code: %d\n%s", res.StatusCode, b.String()[0:100])
 		return
 	}
 	return

@@ -1,12 +1,10 @@
 package model
 
-import "time"
-
 type HandlerConfig struct {
-	WorkerDelay      time.Duration
-	WorkerChunkLimit int
-	WatchTag         string
-	ThresholdMonth   int
-	ThresholdYear    int
-	ThresholdOld     int
+	WorkerDelay       int
+	WatchTag          string
+	ThresholdMonth    int
+	ThresholdHalfYear int
+	ThresholdYear     int
+	ThresholdOld      int
 }

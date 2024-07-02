@@ -55,11 +55,13 @@ func main() {
 	// TODO: move creation to manager constructor
 	if qbc, err = qbittorrent.New(
 		model.ManagerConfig{
-			Host:             cfg.Manager.QbitTorrent.Host,
-			Username:         cfg.Manager.QbitTorrent.Username,
-			Password:         cfg.Manager.QbitTorrent.Password,
-			DeleteEnabled:    cfg.Manager.DeleteFilesEnabled,
-			DeleteCategories: cfg.Manager.DeleteFilesCategories,
+			Host:               cfg.Manager.QbitTorrent.Host,
+			Username:           cfg.Manager.QbitTorrent.Username,
+			Password:           cfg.Manager.QbitTorrent.Password,
+			PausedMaxRatio:     cfg.Manager.PausedMaxRatio,
+			DeleteEnabled:      cfg.Manager.DeleteEnabled,
+			DeleteFilesEnabled: cfg.Manager.DeleteFilesEnabled,
+			DeleteCategories:   cfg.Manager.DeleteFilesCategories,
 		}); err != nil {
 		logger.Error(err.Error())
 		return
@@ -109,19 +111,19 @@ func main() {
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	})
-	if err = tr.InitCache(ctx); err != nil {
+	if err = tr.BuildCache(ctx); err != nil {
 		logger.Error(err.Error())
 		return
 	}
 
 	// Init handler client
 	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, model.HandlerConfig{
-		WorkerChunkLimit: cfg.Runner.WorkerChunkLimit,
-		WatchTag:         cfg.Runner.WatchTag,
-		WorkerDelay:      time.Duration(cfg.Runner.WorkerDelay) * time.Minute,
-		ThresholdMonth:   cfg.Runner.MonthThresholdDays,
-		ThresholdYear:    cfg.Runner.YearThresholdDays,
-		ThresholdOld:     cfg.Runner.OldThresholdDays,
+		WatchTag:          cfg.Runner.WatchTag,
+		WorkerDelay:       cfg.Runner.WorkerDelay,
+		ThresholdMonth:    cfg.Runner.MonthThresholdDays,
+		ThresholdHalfYear: cfg.Runner.HalfYearThresholdDays,
+		ThresholdYear:     cfg.Runner.YearThresholdDays,
+		ThresholdOld:      cfg.Runner.YearThresholdDays,
 	})
 	rn.Run(ctx)
 

@@ -53,6 +53,10 @@ func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
 	return proxy.TypeNone
 }
 
+func (t Tracker) HourLimit() (limit int) {
+	return 30
+}
+
 func (t Tracker) Publicity() (publicity string) {
 	return tracker.PublicityPublic
 }

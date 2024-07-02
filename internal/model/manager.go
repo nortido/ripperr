@@ -21,9 +21,11 @@ type ManagerDeleteOptions struct {
 }
 
 type ManagerConfig struct {
-	Host             string
-	Username         string
-	Password         string
-	DeleteEnabled    bool
-	DeleteCategories []string
+	Host               string
+	Username           string
+	Password           string
+	PausedMaxRatio     float64
+	DeleteEnabled      bool
+	DeleteFilesEnabled bool
+	DeleteCategories   []string
 }

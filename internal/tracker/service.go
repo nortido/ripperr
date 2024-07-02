@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	TTL = 30 * 24 * time.Hour
+	TTL = time.Hour
 
 	RutrackerID = iota
 	KinozalID
@@ -58,32 +58,32 @@ type IHttpClient interface {
 }
 
 type IService interface {
-	InitCache(ctx context.Context) (err error)
+	BuildCache(ctx context.Context) (err error)
 	CachedList() (res map[int]client.ITracker)
 	GetID(url string) (id int)
-	GetCached(ctx context.Context, ttid int) (tc IHttpClient, err error)
-	Response(ctx context.Context, ttid int, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error)
+	GetHourLimit(ttid int) (limit int)
+	GetCachedClient(ctx context.Context, ttid int) (tc IHttpClient, err error)
+	Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error)
 }
 
-type CachedItem struct {
+type CachedTracker struct {
 	IHttpClient
-	ID      int
 	Created time.Time
 }
 
 type service struct {
-	hc      *http.Client
 	px      px
-	mx      sync.RWMutex
-	clients map[int]*CachedItem
-	cbCfg   *helper.CircuitBreakerConfig
 	db      db
+	mx      sync.RWMutex
+	hc      *http.Client
+	clients map[int]*CachedTracker
+	cbCfg   *helper.CircuitBreakerConfig
 }
 
 func (s *service) GetID(link string) (id int) {
 	var (
 		i  int
-		ct *CachedItem
+		ct *CachedTracker
 	)
 	for i, ct = range s.clients {
 		if ct.IHttpClient == nil {
@@ -97,19 +97,24 @@ func (s *service) GetID(link string) (id int) {
 	return
 }
 
+func (s *service) GetHourLimit(ttid int) (limit int) {
+	return index[ttid].HourLimit()
+}
+
 func (s *service) CachedList() (res map[int]client.ITracker) {
 	return index
 }
 
-func (s *service) Response(ctx context.Context, ttid int, link string, tc IHttpClient, download bool) (buf *bytes.Buffer, err error) {
+func (s *service) Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error) {
 	var (
-		b   = bytes.Buffer{}
 		res *http.Response
+		ct  *CachedTracker
+		b   = bytes.Buffer{}
 	)
-	if tc == nil {
-		tc, err = s.GetCached(ctx, ttid)
+	if ct, err = s.getCached(ctx, ttid); err != nil {
+		return
 	}
-	if res, err = tc.GetResponse(ctx, link, download); err != nil {
+	if res, err = ct.GetResponse(ctx, link, download); err != nil {
 		return
 	}
 	defer res.Body.Close()
@@ -122,7 +127,7 @@ func (s *service) Response(ctx context.Context, ttid int, link string, tc IHttpC
 	return
 }
 
-func (s *service) InitCache(ctx context.Context) (err error) {
+func (s *service) BuildCache(ctx context.Context) (err error) {
 	var (
 		wg sync.WaitGroup
 	)
@@ -141,23 +146,25 @@ func (s *service) InitCache(ctx context.Context) (err error) {
 	return
 }
 
-func (s *service) GetCached(ctx context.Context, id int) (t IHttpClient, err error) {
-	var (
-		ok bool
-		ct *CachedItem
-	)
+func (s *service) GetCachedClient(ctx context.Context, id int) (t IHttpClient, err error) {
+	return s.getCached(ctx, id)
+}
+
+func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err error) {
+	var ok bool
+
 	if ct, ok = s.clients[id]; ok && time.Since(ct.Created) < TTL {
 		if ct.IHttpClient == nil {
 			err = fmt.Errorf("tracker http error")
 			return
 		}
-		t = ct
 		return
 	}
 	if err = s.cache(ctx, id); err != nil {
 		return
 	}
-	t = s.clients[id]
+	ct = s.clients[id]
+
 	return
 }
 
@@ -167,10 +174,9 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 		tr client.ITracker
 		tc IHttpClient
 	)
-
 	if tr, ok = index[tid]; !ok {
 		s.mx.Lock()
-		s.clients[tid] = &CachedItem{Created: time.Now()}
+		s.clients[tid] = &CachedTracker{Created: time.Now()}
 		s.mx.Unlock()
 		err = fmt.Errorf("tracker not exists")
 		return
@@ -181,14 +187,14 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 		return
 	}
 	s.mx.Lock()
-	s.clients[tid] = &CachedItem{IHttpClient: tc, Created: time.Now()}
+	s.clients[tid] = &CachedTracker{IHttpClient: tc, Created: time.Now()}
 	s.mx.Unlock()
+
 	if tc != nil {
 		logger.Info(fmt.Sprint("tracker cached: ", tr.Name()))
 	} else {
 		logger.Error(fmt.Sprint("tracker caching failed: ", tr.Name()))
 	}
-
 	return
 }
 
@@ -231,6 +237,6 @@ func New(hc *http.Client, px px, db db, cbCfg *helper.CircuitBreakerConfig) ISer
 		px:      px,
 		db:      db,
 		cbCfg:   cbCfg,
-		clients: make(map[int]*CachedItem),
+		clients: make(map[int]*CachedTracker),
 	}
 }

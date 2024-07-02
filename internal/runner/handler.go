@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -27,11 +28,12 @@ var (
 )
 
 type trackerService interface {
-	InitCache(ctx context.Context) (err error)
+	BuildCache(ctx context.Context) (err error)
 	CachedList() (res map[int]client.ITracker)
 	GetID(url string) (id int)
-	GetCached(ctx context.Context, ttid int) (tc tracker.IHttpClient, err error)
-	Response(ctx context.Context, ttid int, link string, tc tracker.IHttpClient, download bool) (buf *bytes.Buffer, err error)
+	GetHourLimit(ttid int) (limit int)
+	GetCachedClient(ctx context.Context, ttid int) (tc tracker.IHttpClient, err error)
+	Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error)
 }
 
 type manager interface {
@@ -54,18 +56,18 @@ type handler struct {
 	offset         int
 	config         model.HandlerConfig
 	entries        []*model.Entry
-	trackerService trackerService
 	manager        manager
 	storage        storage
+	trackerService trackerService
 }
 
 func (h *handler) Run(ctx context.Context) {
 	var (
 		ch    = make(chan *model.Entry)
 		cherr = make(chan error)
-		ge    = make(chan struct{})
 		wt    = time.NewTimer(0)
 		pt    = time.NewTimer(0)
+		delay = time.Duration(h.config.WorkerDelay) * time.Minute
 		err   error
 	)
 
@@ -73,12 +75,12 @@ func (h *handler) Run(ctx context.Context) {
 
 	defer close(ch)
 	defer close(cherr)
-	defer close(ge)
 
-	if h.config.ThresholdMonth == 0 || h.config.ThresholdYear == 0 || h.config.ThresholdOld == 0 {
+	if h.config.ThresholdMonth == 0 || h.config.ThresholdHalfYear == 0 || h.config.ThresholdYear == 0 || h.config.ThresholdOld == 0 {
 		logger.Error("min thresholds are not set")
 		return
 	}
+	h.mx = &sync.RWMutex{}
 	h.initTrackerChannels()
 	for {
 		select {
@@ -97,27 +99,21 @@ func (h *handler) Run(ctx context.Context) {
 		case <-wt.C:
 			for ttid := range h.i {
 				go func(ttid int) {
-					for j := 0; j < h.config.WorkerChunkLimit; j++ {
-						go func() {
-							if err = h.worker(ctx, ttid, <-h.i[ttid]); err != nil {
-								cherr <- err
-							}
-						}()
+					for j := 0; j < h.chunkSize(ttid); j++ {
+						if err = h.worker(ctx, ttid, <-h.i[ttid]); err != nil {
+							cherr <- err
+						}
 					}
 				}(ttid)
 			}
-			wt.Reset(h.config.WorkerDelay)
+			wt.Reset(delay)
 		}
 	}
 }
 
 func (h *handler) initTrackerChannels() {
-	var (
-		ttid int
-	)
-	h.mx = &sync.RWMutex{}
 	h.i = make(map[int]chan *model.Entry, len(h.trackerService.CachedList()))
-	for ttid = range h.trackerService.CachedList() {
+	for ttid := range h.trackerService.CachedList() {
 		h.i[ttid] = make(chan *model.Entry)
 	}
 }
@@ -181,18 +177,27 @@ func (h *handler) checkHistory(ctx context.Context, link string) (hi *runner.His
 	return
 }
 
+func (h *handler) chunkSize(ttid int) (cs int) {
+	hourLimit := h.trackerService.GetHourLimit(ttid)
+	freq := h.config.WorkerDelay
+	cs = int(math.Floor(float64(hourLimit*freq) / 60))
+
+	if cs == 0 {
+		cs = 1
+	}
+	return
+}
+
 func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err error) {
 	var (
 		updated bool
 		tc      tracker.IHttpClient
 	)
-
 	logger.Info(fmt.Sprint("processing: ", e.Name))
-
 	h.mx.Lock()
 	defer h.mx.Unlock()
 
-	if tc, err = h.trackerService.GetCached(ctx, ttid); err != nil {
+	if tc, err = h.trackerService.GetCachedClient(ctx, ttid); err != nil {
 		return
 	}
 	if updated, err = h.checkPage(ctx, ttid, tc, e); err != nil {
@@ -229,7 +234,7 @@ func (h *handler) getPageDate(ctx context.Context, ttid int, tc tracker.IHttpCli
 	var b *bytes.Buffer
 
 	// TODO: add check url for tracker domain
-	b, err = h.trackerService.Response(ctx, ttid, e.URL, tc, false)
+	b, err = h.trackerService.Response(ctx, ttid, e.URL, false)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
@@ -245,7 +250,7 @@ func (h *handler) getPageDate(ctx context.Context, ttid int, tc tracker.IHttpCli
 func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (err error) {
 	var b *bytes.Buffer
 
-	b, err = h.trackerService.Response(ctx, ttid, tc.DownloadLink(e.TopicID), tc, true)
+	b, err = h.trackerService.Response(ctx, ttid, tc.DownloadLink(e.TopicID), true)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
@@ -272,13 +277,6 @@ func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, 
 }
 
 func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur *time.Time) (err error) {
-	var recheckAt time.Time
-
-	if e.Update && cur != nil {
-		recheckAt = h.getRecheckAt(cur)
-	} else {
-		recheckAt = time.Now().AddDate(0, 0, 1)
-	}
 	if err = h.storage.SaveItem(ctx, &runner.HistoryItem{
 		TrackerTypeID: ttid,
 		URLHash:       e.URLHash,
@@ -289,25 +287,29 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur
 		Name:          e.Name,
 		Exists:        e.Update,
 		CreatedAt:     cur,
-		RecheckAt:     &recheckAt,
+		RecheckAt:     h.getRecheckAt(cur),
 	}); err != nil {
 		return
 	}
 	return
 }
 
-func (h *handler) getRecheckAt(tm *time.Time) (recheckAt time.Time) {
-	var d = time.Since(*tm)
-
+func (h *handler) getRecheckAt(tm *time.Time) (result *time.Time) {
+	var (
+		tt = time.Now()
+		d  = time.Since(*tm)
+	)
 	switch {
 	case tm == nil, tm.Year() == 1, d < durationMonth:
-		recheckAt = time.Now().AddDate(0, 0, h.config.ThresholdMonth)
+		tt = tt.AddDate(0, 0, h.config.ThresholdMonth)
+	case d < durationYear/2:
+		tt = tt.AddDate(0, 0, h.config.ThresholdHalfYear)
 	case d < durationYear:
-		recheckAt = time.Now().AddDate(0, 0, h.config.ThresholdYear)
+		tt = tt.AddDate(0, 0, h.config.ThresholdYear)
 	case d >= durationYear:
-		recheckAt = time.Now().AddDate(0, 0, h.config.ThresholdOld)
+		tt = tt.AddDate(0, 0, h.config.ThresholdOld)
 	}
-	return
+	return &tt
 }
 
 func NewRunner(tracker trackerService, manager manager, storage storage, config model.HandlerConfig) IHandler {

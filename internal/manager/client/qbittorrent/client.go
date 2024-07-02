@@ -35,14 +35,18 @@ func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []
 		qts   []qbt.Torrent
 		wg    sync.WaitGroup
 		ch    chan *model.Entry
+		to    qbt.TorrentFilterOptions
 		cherr = make(chan error)
 	)
 
-	if qts, err = c.client.GetTorrents(qbt.TorrentFilterOptions{
-		Tag:    opts.Tag,
-		Filter: qbt.TorrentFilterCompleted,
+	to = qbt.TorrentFilterOptions{
+		Filter: qbt.TorrentFilterAll,
 		Sort:   "added_on",
-	}); err != nil {
+	}
+	if opts.Tag != "" {
+		to.Tag = opts.Tag
+	}
+	if qts, err = c.client.GetTorrents(to); err != nil {
 		return
 	}
 	ch = make(chan *model.Entry, len(qts))
@@ -99,13 +103,17 @@ func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 }
 
 func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {
+	if c.config.DeleteEnabled == false {
+		return
+	}
+	logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))
+
 	for i := range c.config.DeleteCategories {
 		if opts.Category == c.config.DeleteCategories[i] {
-			logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))
-			return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, c.config.DeleteEnabled)
+			return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, c.config.DeleteFilesEnabled)
 		}
 	}
-	return
+	return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, false)
 }
 
 func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
@@ -133,7 +141,7 @@ func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.
 		MaxSeedingTime: t.MaxSeedingTime,
 	}
 	if t.State == qbt.TorrentStatePausedUp {
-		res.MaxRatio = 1
+		res.MaxRatio = c.config.PausedMaxRatio
 	}
 	return
 }
