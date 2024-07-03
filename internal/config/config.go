@@ -12,6 +12,61 @@ type Manager struct {
 	DeleteFilesCategories []string `env:"MANAGER_DELETE_FILES_CATEGORIES, default=switch,files"`
 }
 
+type Tracker struct {
+	Rutracker struct {
+		Name        string `env:"TRACKER_RUTRACKER_NAME, default=rutracker"`
+		Domain      string `env:"TRACKER_RUTRACKER_DOMAIN, default=rutracker.org"`
+		Credentials string `env:"TRACKER_RUTRACKER_CREDENTIALS, default=login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=dbhnejp&login_username=johan01"`
+		Publicity   string `env:"TRACKER_RUTRACKER_PUBLICITY, default=private"`
+		LoginURL    string `env:"TRACKER_RUTRACKER_LOGIN_URL, default=https://rutracker.org/forum/login.php"`
+		DownloadURL string `env:"TRACKER_RUTRACKER_DOWNLOAD_URL, default=https://rutracker.org/forum/dl.php?t="`
+		HourLimit   int    `env:"TRACKER_RUTRACKER_HOUR_LIMIT, default=40"`
+		ProxyType   int    `env:"TRACKER_RUTRACKER_PROXY_TYPE, default=1"`
+	}
+	Kinozal struct {
+		Name        string `env:"TRACKER_KINOZAL_NAME, default=kinozal"`
+		Domain      string `env:"TRACKER_KINOZAL_DOMAIN, default=kinozal.tv"`
+		Credentials string `env:"TRACKER_KINOZAL_CREDENTIALS, default=login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=dbhnejp&login_username=johan01"`
+		Publicity   string `env:"TRACKER_KINOZAL_PUBLICITY, default=private"`
+		LoginURL    string `env:"TRACKER_KINOZAL_LOGIN_URL, default=https://kinozal.org/takelogin.php"`
+		DownloadURL string `env:"TRACKER_KINOZAL_DOWNLOAD_URL, default=https://kinozal.org/download.php?id="`
+		HourLimit   int    `env:"TRACKER_KINOZAL_HOUR_LIMIT, default=30"`
+		ProxyType   int    `env:"TRACKER_KINOZAL_PROXY_TYPE, default=1"`
+		Cookies     string `env:"TRACKER_KINOZAL_COOKIES, default="`
+	}
+	Rutor struct {
+		Name        string `env:"TRACKER_RUTOR_NAME, default=rutor"`
+		Domain      string `env:"TRACKER_RUTOR_DOMAIN, default=rutor.is"`
+		Publicity   string `env:"TRACKER_RUTOR_PUBLICITY, default=public"`
+		DownloadURL string `env:"TRACKER_RUTOR_DOWNLOAD_URL, default=https://d.rutor.info/download/"`
+		HourLimit   int    `env:"TRACKER_RUTOR_HOUR_LIMIT, default=30"`
+	}
+		Credentials string `env:"TRACKER_RUTRACKER_CREDENTIALS, default=login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=dbhnejp1&login_username=lamairith"`
+		Publicity   string `env:"TRACKER_RUTRACKER_PUBLICITY, default=private"`
+		HourLimit   int    `env:"TRACKER_RUTRACKER_HOUR_LIMIT, default=40"`
+		ProxyType   int    `env:"TRACKER_RUTRACKER_PROXY_TYPE, default=1"`
+	}
+	NNM struct {
+		Name        string `env:"TRACKER_NNM_NAME, default=nnm"`
+		Domain      string `env:"TRACKER_NNM_DOMAIN, default=nnmclub.to"`
+		Credentials string `env:"TRACKER_RUTRACKER_CREDENTIALS, default=autologin=on&code=58c36bdbff5c5639&login=%25C2%25F5%25EE%25E4&password=dbhnejp&redirect=&username=johan90"`
+		Publicity   string `env:"TRACKER_NNM_PUBLICITY, default=private"`
+		LoginURL    string `env:"TRACKER_RUTRACKER_LOGIN_URL, default=https://nnmclub.to/forum/login.php"`
+		DownloadURL string `env:"TRACKER_NNM_DOWNLOAD_URL, default=https://nnmclub.to/forum/download.php?id="`
+		HourLimit   int    `env:"TRACKER_NNM_HOUR_LIMIT, default=25"`
+		Cookies     string `env:"TRACKER_NNM_COOKIES, default="`
+		ProxyType   int    `env:"TRACKER_NNM_PROXY_TYPE, default=1"`
+	}
+	TeamHD struct {
+		Name        string `env:"TRACKER_TEAMHD_NAME, default=teamhd"`
+		Domain      string `env:"TRACKER_TEAMHD_DOMAIN, default=teamhd.org"`
+		Publicity   string `env:"TRACKER_TEAMHD_PUBLICITY, default=private"`
+		DownloadURL string `env:"TRACKER_TEAMHD_DOWNLOAD_URL, default=https://teamhd.org/download.php?id="`
+		HourLimit   int    `env:"TRACKER_TEAMHD_HOUR_LIMIT, default=25"`
+		Cookies     string `env:"TRACKER_TEAMHD_COOKIES, default=cross-site-cookie=https://teamhd.org; PHPSESSID=PLACEHOLDER; uid=PLACEHOLDER; lang=russian; pass=PLACEHOLDER; token=PLACEHOLDER"`
+	}
+}
+
 type Runner struct {
 	WorkerDelay           int    `env:"RUNNER_WORKER_DELAY, default=20"`
 	WatchTag              string `env:"RUNNER_TAG, default="`

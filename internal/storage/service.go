@@ -59,7 +59,7 @@ func (s *service) SaveTracker(ctx context.Context, source *tracker.Tracker) (err
 	target = &storage.Tracker{
 		TypeID:      source.TypeID,
 		Name:        source.Name,
-		Host:        source.Host,
+		Domain:      source.Domain,
 		LoginURL:    source.LoginURL,
 		DownloadURL: source.DownloadURL,
 		Cookies:     helper.CookiesString(source.Cookies),

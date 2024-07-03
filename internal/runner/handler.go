@@ -62,14 +62,13 @@ type handler struct {
 }
 
 func (h *handler) Run(ctx context.Context) {
-	var (
-		ch    = make(chan *model.Entry)
-		cherr = make(chan error)
-		wt    = time.NewTimer(0)
-		pt    = time.NewTimer(0)
-		delay = time.Duration(h.config.WorkerDelay) * time.Minute
-		err   error
-	)
+	var err error
+
+	ch := make(chan *model.Entry)
+	cherr := make(chan error)
+	delay := time.Duration(h.config.WorkerDelay) * time.Minute
+	pt := time.NewTimer(0)
+	wt := time.NewTimer(0)
 
 	wt.Stop()
 
@@ -93,7 +92,7 @@ func (h *handler) Run(ctx context.Context) {
 				if err = h.push(ctx); err != nil {
 					cherr <- err
 				}
-				pt.Reset(durationDay)
+				pt.Reset(durationDay / 4)
 				wt.Reset(0)
 			}()
 		case <-wt.C:
@@ -241,7 +240,7 @@ func (h *handler) getPageDate(ctx context.Context, ttid int, tc tracker.IHttpCli
 		err = fmt.Errorf("no page data")
 		return
 	}
-	if cur = tc.ParseDate(b, tc.ProxyType() != proxy.TypeNone); cur == nil {
+	if cur = tc.ParseDate(b, tc.GetProxyType() != proxy.TypeNone); cur == nil {
 		err = fmt.Errorf("current time not found")
 	}
 	return
@@ -261,7 +260,6 @@ func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, 
 		err = fmt.Errorf("unexpected html response on download")
 		return
 	}
-	// TODO: add more attributes
 	if err = h.manager.Submit(ctx, b, model.ManagerAddFileOptions{
 		Name:           e.Name,
 		Hash:           e.Hash,

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -16,16 +15,18 @@ import (
 )
 
 type ITracker interface {
-	Name() (name string)
-	Detect(url string) bool
-	Header() (header *http.Header)
-	Host() (host string)
+	GetName() (name string)
+	GetHost() (host string)
+	GetProxyType() (proxyType proxy.ProxyType)
+	GetPublicity() (publicity string)
+	GetHourLimit() (limit int)
+	GetCookies() (cookies []*http.Cookie)
+	GetCredentials() (credentials string)
+	LoginLink() (url string)
 	DownloadLink(topicID string) (url string)
-	LoginData() (link string, credentials *url.Values, cookies []*http.Cookie)
+	Detect(url string) bool
+	Headers() (header *http.Header)
 	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
-	ProxyType() (proxyType proxy.ProxyType)
-	Publicity() (publicity string)
-	HourLimit() (limit int)
 }
 
 type proxyService interface {
@@ -58,11 +59,11 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker) (err 
 		c.cookies = payload.Cookies
 		creds = payload.Credentials
 	}
-	c.header = c.ITracker.Header()
+	c.header = c.ITracker.Headers()
 	c.setDefaultHeaders()
 
 	switch tracker.PublicityPublic {
-	case c.ITracker.Publicity(), payload.Publicity:
+	case c.ITracker.GetPublicity(), payload.Publicity:
 		return
 	}
 	if req, err = c.buildLoginRequest(ctx, creds); err != nil {
@@ -131,7 +132,7 @@ func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *htt
 	res, err = c.tryHttp(ctx, req, &proxy.Options{OnlyCookies: true}, false)
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
-		err = fmt.Errorf("%s login error: %w", c.ITracker.Name(), err)
+		err = fmt.Errorf("%s login error: %w", c.ITracker.GetName(), err)
 		return
 	}
 	if res.Header.Get("User-Agent") != "" {
@@ -143,20 +144,18 @@ func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *htt
 
 func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.Request, err error) {
 	var (
-		link    string
-		creds   *url.Values
-		cookies []*http.Cookie
+		link    = c.ITracker.LoginLink()
+		creds   = c.ITracker.GetCredentials()
+		cookies = c.ITracker.GetCookies()
 	)
-	link, creds, cookies = c.ITracker.LoginData()
-
 	if len(cookies) > 0 {
 		c.cookies = cookies
 	}
-	if body == "" && creds != nil {
-		body = creds.Encode()
+	if body == "" && creds != "" {
+		body = creds
 	}
 	if link == "" {
-		link = c.ITracker.Host()
+		link = c.ITracker.GetHost()
 	}
 	switch {
 	case body == "":
@@ -170,7 +169,7 @@ func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.
 	req.Header = *c.header
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	req.Header.Set("Host", c.ITracker.Host())
+	req.Header.Set("Host", c.ITracker.GetHost())
 
 	return
 }
@@ -178,7 +177,7 @@ func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.
 func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Options, download bool) (res *http.Response, err error) {
 	var (
 		_, proxyExists = c.px.(proxyService)
-		proxyType      = c.ITracker.ProxyType()
+		proxyType      = c.ITracker.GetProxyType()
 	)
 
 	if download {
@@ -200,7 +199,7 @@ func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Opt
 		return
 	})
 	if err != nil {
-		err = fmt.Errorf("%s error: %w", c.ITracker.Name(), err)
+		err = fmt.Errorf("%s error: %w", c.ITracker.GetName(), err)
 	}
 	return
 }

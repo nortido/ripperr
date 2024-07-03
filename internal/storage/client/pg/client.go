@@ -25,8 +25,8 @@ type client struct {
 func (c *client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error) {
 	res = &storage.Tracker{}
 	err = c.db.QueryRow(ctx,
-		"SELECT tracker_type_id, tracker_name, host, login_url, download_url, credentials, cookies, publicity FROM trackerr.trackers WHERE tracker_type_id = $1::int",
-		trackerID).Scan(&res.TypeID, &res.Name, &res.Host, &res.LoginURL, &res.DownloadURL, &res.Credentials, &res.Cookies, &res.Publicity)
+		"SELECT tracker_type_id, tracker_name, domain_name, login_url, download_url, credentials, cookies, publicity FROM trackerr.trackers WHERE tracker_type_id = $1::int",
+		trackerID).Scan(&res.TypeID, &res.Name, &res.Domain, &res.LoginURL, &res.DownloadURL, &res.Credentials, &res.Cookies, &res.Publicity)
 	if err == pgx.ErrNoRows {
 		err = nil
 		return
@@ -38,8 +38,8 @@ func (c *client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tr
 
 func (c *client) AddTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
 	_, err = c.db.Exec(ctx,
-		"INSERT INTO trackerr.trackers(tracker_type_id, tracker_name, host, login_url, download_url, cookies, credentials, publicity, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW())",
-		tracker.TypeID, tracker.Name, tracker.Host, tracker.LoginURL, tracker.DownloadURL, tracker.Cookies, tracker.Credentials, tracker.Publicity)
+		"INSERT INTO trackerr.trackers(tracker_type_id, tracker_name, domain_name, login_url, download_url, cookies, credentials, publicity, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW())",
+		tracker.TypeID, tracker.Name, tracker.Domain, tracker.LoginURL, tracker.DownloadURL, tracker.Cookies, tracker.Credentials, tracker.Publicity)
 
 	return
 }

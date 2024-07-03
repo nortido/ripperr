@@ -18,6 +18,7 @@ import (
 	"trackerr/internal/manager/client/qbittorrent"
 	"trackerr/internal/model"
 	proxyModel "trackerr/internal/model/proxy"
+	trackerModel "trackerr/internal/model/tracker"
 	"trackerr/internal/proxy"
 	"trackerr/internal/runner"
 	"trackerr/internal/storage"
@@ -27,6 +28,7 @@ import (
 
 type configuration struct {
 	Runner       *config.Runner
+	Tracker      *config.Tracker
 	Manager      *config.Manager
 	Flaresolverr *config.Flaresolverr
 	DB           *config.Storage
@@ -110,6 +112,55 @@ func main() {
 	tr := tracker.New(ht, px, db, &helper.CircuitBreakerConfig{
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
+	}, &trackerModel.TrackerConfig{
+		Rutracker: trackerModel.Tracker{
+			Name:        cfg.Tracker.Rutracker.Name,
+			Domain:      cfg.Tracker.Rutracker.Domain,
+			Credentials: cfg.Tracker.Rutracker.Credentials,
+			ProxyType:   proxyModel.ProxyType(cfg.Tracker.Rutracker.ProxyType),
+			Publicity:   cfg.Tracker.Rutracker.Publicity,
+			LoginURL:    cfg.Tracker.Rutracker.LoginURL,
+			DownloadURL: cfg.Tracker.Rutracker.DownloadURL,
+			HourLimit:   cfg.Tracker.Rutracker.HourLimit,
+		},
+		Kinozal: trackerModel.Tracker{
+			Name:        cfg.Tracker.Kinozal.Name,
+			Domain:      cfg.Tracker.Kinozal.Domain,
+			Credentials: cfg.Tracker.Kinozal.Credentials,
+			ProxyType:   proxyModel.ProxyType(cfg.Tracker.Kinozal.ProxyType),
+			Publicity:   cfg.Tracker.Kinozal.Publicity,
+			LoginURL:    cfg.Tracker.Kinozal.LoginURL,
+			DownloadURL: cfg.Tracker.Kinozal.DownloadURL,
+			HourLimit:   cfg.Tracker.Kinozal.HourLimit,
+			Cookies:     helper.ParseCookies(cfg.Tracker.Kinozal.Cookies, ""),
+		},
+		Rutor: trackerModel.Tracker{
+			Name:        cfg.Tracker.Rutor.Name,
+			Domain:      cfg.Tracker.Rutor.Domain,
+			Publicity:   cfg.Tracker.Rutor.Publicity,
+			DownloadURL: cfg.Tracker.Rutor.DownloadURL,
+			HourLimit:   cfg.Tracker.Rutor.HourLimit,
+		},
+		},
+		TeamHD: trackerModel.Tracker{
+			Name:        cfg.Tracker.TeamHD.Name,
+			Domain:      cfg.Tracker.TeamHD.Domain,
+			Publicity:   cfg.Tracker.TeamHD.Publicity,
+			DownloadURL: cfg.Tracker.TeamHD.DownloadURL,
+			HourLimit:   cfg.Tracker.TeamHD.HourLimit,
+			Cookies:     helper.ParseCookies(cfg.Tracker.TeamHD.Cookies, ""),
+		},
+		NNM: trackerModel.Tracker{
+			Name:        cfg.Tracker.NNM.Name,
+			Domain:      cfg.Tracker.NNM.Domain,
+			Credentials: cfg.Tracker.NNM.Credentials,
+			ProxyType:   proxyModel.ProxyType(cfg.Tracker.NNM.ProxyType),
+			Publicity:   cfg.Tracker.NNM.Publicity,
+			LoginURL:    cfg.Tracker.NNM.LoginURL,
+			DownloadURL: cfg.Tracker.NNM.DownloadURL,
+			HourLimit:   cfg.Tracker.NNM.HourLimit,
+			Cookies:     helper.ParseCookies(cfg.Tracker.NNM.Cookies, ""),
+		},
 	})
 	if err = tr.BuildCache(ctx); err != nil {
 		logger.Error(err.Error())

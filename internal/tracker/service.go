@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -29,16 +28,6 @@ const (
 	RutorID
 	TeamhdID
 	NnmID
-)
-
-var (
-	index = map[int]client.ITracker{
-		RutrackerID: rutracker.New(),
-		KinozalID:   kinozal.New(),
-		RutorID:     rutor.New(),
-		TeamhdID:    teamhd.New(),
-		NnmID:       nnm.New(),
-	}
 )
 
 type db interface {
@@ -72,12 +61,13 @@ type CachedTracker struct {
 }
 
 type service struct {
-	px      px
-	db      db
-	mx      sync.RWMutex
-	hc      *http.Client
-	clients map[int]*CachedTracker
-	cbCfg   *helper.CircuitBreakerConfig
+	px           px
+	db           db
+	mx           sync.RWMutex
+	hc           *http.Client
+	clientIndex  map[int]*CachedTracker
+	trackerIndex map[int]client.ITracker
+	cbCfg        *helper.CircuitBreakerConfig
 }
 
 func (s *service) GetID(link string) (id int) {
@@ -85,7 +75,7 @@ func (s *service) GetID(link string) (id int) {
 		i  int
 		ct *CachedTracker
 	)
-	for i, ct = range s.clients {
+	for i, ct = range s.clientIndex {
 		if ct.IHttpClient == nil {
 			continue
 		}
@@ -98,11 +88,11 @@ func (s *service) GetID(link string) (id int) {
 }
 
 func (s *service) GetHourLimit(ttid int) (limit int) {
-	return index[ttid].HourLimit()
+	return s.trackerIndex[ttid].GetHourLimit()
 }
 
 func (s *service) CachedList() (res map[int]client.ITracker) {
-	return index
+	return s.trackerIndex
 }
 
 func (s *service) Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error) {
@@ -131,8 +121,8 @@ func (s *service) BuildCache(ctx context.Context) (err error) {
 	var (
 		wg sync.WaitGroup
 	)
-	wg.Add(len(index))
-	for i := range index {
+	wg.Add(len(s.trackerIndex))
+	for i := range s.trackerIndex {
 		go func(i int) {
 			var e error
 			defer wg.Done()
@@ -153,7 +143,7 @@ func (s *service) GetCachedClient(ctx context.Context, id int) (t IHttpClient, e
 func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err error) {
 	var ok bool
 
-	if ct, ok = s.clients[id]; ok && time.Since(ct.Created) < TTL {
+	if ct, ok = s.clientIndex[id]; ok && time.Since(ct.Created) < TTL {
 		if ct.IHttpClient == nil {
 			err = fmt.Errorf("tracker http error")
 			return
@@ -163,7 +153,7 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 	if err = s.cache(ctx, id); err != nil {
 		return
 	}
-	ct = s.clients[id]
+	ct = s.clientIndex[id]
 
 	return
 }
@@ -174,36 +164,33 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 		tr client.ITracker
 		tc IHttpClient
 	)
-	if tr, ok = index[tid]; !ok {
+	if tr, ok = s.trackerIndex[tid]; !ok {
 		s.mx.Lock()
-		s.clients[tid] = &CachedTracker{Created: time.Now()}
+		s.clientIndex[tid] = &CachedTracker{Created: time.Now()}
 		s.mx.Unlock()
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
 	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
-	logger.Info(fmt.Sprint("trying to cache ", tr.Name()))
+	logger.Info(fmt.Sprint("trying to cache ", tr.GetName()))
 	if err = s.store(ctx, tid, tc); err != nil {
 		return
 	}
 	s.mx.Lock()
-	s.clients[tid] = &CachedTracker{IHttpClient: tc, Created: time.Now()}
+	s.clientIndex[tid] = &CachedTracker{IHttpClient: tc, Created: time.Now()}
 	s.mx.Unlock()
 
 	if tc != nil {
-		logger.Info(fmt.Sprint("tracker cached: ", tr.Name()))
+		logger.Info(fmt.Sprint("tracker cached: ", tr.GetName()))
 	} else {
-		logger.Error(fmt.Sprint("tracker caching failed: ", tr.Name()))
+		logger.Error(fmt.Sprint("tracker caching failed: ", tr.GetName()))
 	}
 	return
 }
 
 func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error) {
-	var (
-		link  string
-		creds *url.Values
-		attrs *tracker.Tracker
-	)
+	var attrs *tracker.Tracker
+
 	if attrs, err = s.db.GetTracker(ctx, tid); err != nil {
 		return
 	}
@@ -214,16 +201,15 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error
 	if attrs != nil {
 		return
 	}
-	link, creds, _ = tc.LoginData()
 	attrs = &tracker.Tracker{
-		TypeID:      tid,
-		Name:        tc.Name(),
-		Host:        tc.Host(),
-		LoginURL:    link,
+		TypeID: tid,
+		Name:   tc.GetName(),
+		//Domain:        tc.Domain(),
+		LoginURL:    tc.LoginLink(),
 		DownloadURL: tc.DownloadLink(""),
-		Publicity:   tc.Publicity(),
+		Publicity:   tc.GetPublicity(),
 		Cookies:     tc.Cookies(),
-		Credentials: creds.Encode(),
+		Credentials: tc.GetCredentials(),
 	}
 	if err = s.db.SaveTracker(ctx, attrs); err != nil {
 		return
@@ -231,12 +217,19 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error
 	return
 }
 
-func New(hc *http.Client, px px, db db, cbCfg *helper.CircuitBreakerConfig) IService {
+func New(hc *http.Client, px px, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig) IService {
 	return &service{
-		hc:      hc,
-		px:      px,
-		db:      db,
-		cbCfg:   cbCfg,
-		clients: make(map[int]*CachedTracker),
+		hc:    hc,
+		px:    px,
+		db:    db,
+		cbCfg: cbCfg,
+		trackerIndex: map[int]client.ITracker{
+			RutrackerID: rutracker.New(conf.Rutracker),
+			KinozalID:   kinozal.New(conf.Kinozal),
+			RutorID:     rutor.New(conf.Rutor),
+			TeamhdID:    teamhd.New(conf.TeamHD),
+			NnmID:       nnm.New(conf.NNM),
+		},
+		clientIndex: make(map[int]*CachedTracker),
 	}
 }

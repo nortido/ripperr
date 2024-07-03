@@ -5,7 +5,7 @@ import "time"
 type Tracker struct {
 	TypeID      int    `pgx:"tracker_type_id"`
 	Name        string `pgx:"tracker_name"`
-	Host        string `pgx:"host"`
+	Domain      string `pgx:"domain"`
 	LoginURL    string `pgx:"login_url"`
 	DownloadURL string `pgx:"download_url"`
 	Credentials string `pgx:"credentials"`

@@ -1,10 +1,7 @@
 package helper
 
 import (
-	"bytes"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -16,20 +13,6 @@ func Substr(s string, pos, length int) string {
 		l = len(runes)
 	}
 	return string(runes[pos:l])
-}
-
-func GetTimestamp(buf *bytes.Buffer) (ts int64, err error) {
-	regex := regexp.MustCompile(`creation datei(\d{8,10})e`)
-	match := regex.FindString(Substr(buf.String(), 100, 1000))
-
-	if match == "" {
-		err = fmt.Errorf("timestamp not found")
-		return
-	}
-	var t int
-	t, err = strconv.Atoi(match)
-	ts = int64(t)
-	return
 }
 
 func TimeFromRusDate(t string, timeformat string) (result *time.Time) {

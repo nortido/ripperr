@@ -2,61 +2,32 @@ package kinozal
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"time"
 
 	"golang.org/x/text/encoding/charmap"
 
 	"trackerr/internal/helper"
-	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/tracker"
 )
 
-const (
-	Name        = "kinozal"
-	Domain      = "kinozal.tv"
-	Host        = "https://" + Domain
-	LoginURL    = Host + "/takelogin.php"
-	DownloadURL = Host + "/download.php?id="
-)
-
 type Tracker struct {
+	tracker.Tracker
 }
 
-func (t Tracker) Host() (host string) {
-	return Host
-}
-
-func (t Tracker) LoginData() (link string, credentials *url.Values, cookies []*http.Cookie) {
-	credentials = &url.Values{
-		"username": {"nortido"},
-		"password": {"dbhnejp1"},
-		"returnto": {""},
-	}
-	link = LoginURL
-
-	return
-}
-
-func (t Tracker) DownloadLink(topicID string) (url string) {
-	return fmt.Sprint(DownloadURL, topicID)
-}
-
-func (t Tracker) Header() (header *http.Header) {
+func (t *Tracker) Header() (header *http.Header) {
 	header = &http.Header{}
 
 	header.Add("Content-Type", "text/html; charset=windows-1251")
-	header.Add("Host", Host)
+	header.Add("Host", t.GetHost())
 	header.Add("Referer", "https://kinozal.tv/browse.php")
 	//header.Add("Cookie", "uid=PLACEHOLDER; pass=PLACEHOLDER")
 
 	return
 }
 
-func (t Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
+func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	var (
 		i       int
 		v       string
@@ -88,28 +59,8 @@ func (t Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	return
 }
 
-func (t Tracker) ProxyType() (proxyType proxy.ProxyType) {
-	return proxy.TypeFlare
-}
-
-func (t Tracker) HourLimit() (limit int) {
-	return 30
-}
-
-func (t Tracker) Publicity() (publicity string) {
-	return tracker.PublicityPrivate
-}
-
-func (t Tracker) Detect(url string) bool {
-	rx := regexp.MustCompile("(" + Domain + ")")
-
-	return rx.MatchString(url)
-}
-
-func (t Tracker) Name() (name string) {
-	return Name
-}
-
-func New() *Tracker {
-	return &Tracker{}
+func New(tracker tracker.Tracker) *Tracker {
+	return &Tracker{
+		Tracker: tracker,
+	}
 }
