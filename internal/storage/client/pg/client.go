@@ -75,8 +75,8 @@ func (c *client) AddItem(ctx context.Context, item *storage.Item) (err error) {
 
 func (c *client) UpdateItem(ctx context.Context, item *storage.Item) (err error) {
 	_, err = c.db.Exec(ctx,
-		"UPDATE trackerr.history SET category_name = $2, item_tag = $3, item_name = $4, created_at = $5, recheck_at = $6 WHERE url_hash = $1",
-		item.URLHash, item.Category, item.Tag, item.Name, item.CreatedAt, item.RecheckAt)
+		"UPDATE trackerr.history SET topic_id = $2, category_name = $3, item_tag = $4, item_name = $5, created_at = $6, recheck_at = $7 WHERE url_hash = $1",
+		item.URLHash, item.TopicID, item.Category, item.Tag, item.Name, item.CreatedAt, item.RecheckAt)
 	return
 }
 

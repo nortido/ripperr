@@ -47,6 +47,28 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	return
 }
 
+func (t *Tracker) ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string) {
+	var (
+		bb      []byte
+		rx      *regexp.Regexp
+		matches []string
+	)
+	if !encoded {
+		bb, _ = charmap.Windows1251.NewDecoder().Bytes(b.Bytes())
+	} else {
+		bb = b.Bytes()
+	}
+	rx = regexp.MustCompile(`<a href="download.php\?id=(\d+)" rel="nofollow">Скачать</a>`)
+	matches = rx.FindStringSubmatch(string(bb))
+
+	if len(matches) <= 1 {
+		return
+	}
+	downloadID = matches[1]
+
+	return
+}
+
 func New(tracker tracker.Tracker) *Tracker {
 	return &Tracker{
 		Tracker: tracker,

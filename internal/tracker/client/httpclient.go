@@ -27,6 +27,7 @@ type ITracker interface {
 	Detect(url string) bool
 	Headers() (header *http.Header)
 	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
+	ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string)
 }
 
 type proxyService interface {

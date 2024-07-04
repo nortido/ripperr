@@ -215,9 +215,21 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 }
 
 func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (res bool, err error) {
-	var cur *time.Time
+	var (
+		cur        *time.Time
+		b          *bytes.Buffer
+		downloadID string
+	)
+	if b, err = h.getPage(ctx, ttid, e.URL); err != nil {
+		return
+	}
+	downloadID = tc.ParseDownloadID(b, tc.GetProxyType() != proxy.TypeNone)
 
-	if cur, err = h.getPageDate(ctx, ttid, tc, e); err != nil {
+	if e.Update == true && downloadID != "" && e.TopicID != downloadID {
+		e.TopicID = downloadID
+		curPtr := time.Now()
+		cur = &curPtr
+	} else if cur, err = h.getDate(ctx, b, tc); err != nil {
 		return
 	}
 	// TODO: add check count of updates in DB
@@ -229,17 +241,18 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClien
 	return
 }
 
-func (h *handler) getPageDate(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (cur *time.Time, err error) {
-	var b *bytes.Buffer
+func (h *handler) getPage(ctx context.Context, ttid int, link string) (b *bytes.Buffer, err error) {
+	b, err = h.trackerService.Response(ctx, ttid, link, false)
 
-	// TODO: add check url for tracker domain
-	b, err = h.trackerService.Response(ctx, ttid, e.URL, false)
 	if err != nil {
 		return
 	} else if b == nil || b.Len() < 50 {
 		err = fmt.Errorf("no page data")
-		return
 	}
+	return
+}
+
+func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc tracker.IHttpClient) (cur *time.Time, err error) {
 	if cur = tc.ParseDate(b, tc.GetProxyType() != proxy.TypeNone); cur == nil {
 		err = fmt.Errorf("current time not found")
 	}

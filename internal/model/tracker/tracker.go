@@ -88,3 +88,6 @@ func (t *Tracker) Headers() (header *http.Header) {
 func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	return
 }
+func (t *Tracker) ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string) {
+	return
+}
