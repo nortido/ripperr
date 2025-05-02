@@ -61,25 +61,24 @@ type CachedTracker struct {
 }
 
 type service struct {
-	px           px
-	db           db
-	mx           sync.RWMutex
-	hc           *http.Client
-	clientIndex  map[int]*CachedTracker
-	trackerIndex map[int]client.ITracker
-	cbCfg        *helper.CircuitBreakerConfig
+	px              px
+	db              db
+	mx              sync.RWMutex
+	hc              *http.Client
+	clientIndex     map[int]*CachedTracker
+	handlerRegistry map[int]client.ITracker
+	cbCfg           *helper.CircuitBreakerConfig
 }
 
 func (s *service) GetID(link string) (id int) {
 	var (
-		i  int
-		ct *CachedTracker
+		i int
 	)
-	for i, ct = range s.clientIndex {
-		if ct.IHttpClient == nil {
+	for i = range s.clientIndex {
+		if s.clientIndex[i].IHttpClient == nil {
 			continue
 		}
-		if ct.IHttpClient.Detect(link) {
+		if s.clientIndex[i].IHttpClient.Detect(link) {
 			id = i
 			return
 		}
@@ -88,11 +87,11 @@ func (s *service) GetID(link string) (id int) {
 }
 
 func (s *service) GetHourLimit(ttid int) (limit int) {
-	return s.trackerIndex[ttid].GetHourLimit()
+	return s.handlerRegistry[ttid].GetHourLimit()
 }
 
 func (s *service) CachedList() (res map[int]client.ITracker) {
-	return s.trackerIndex
+	return s.handlerRegistry
 }
 
 func (s *service) Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error) {
@@ -121,8 +120,8 @@ func (s *service) BuildCache(ctx context.Context) (err error) {
 	var (
 		wg sync.WaitGroup
 	)
-	wg.Add(len(s.trackerIndex))
-	for i := range s.trackerIndex {
+	wg.Add(len(s.handlerRegistry))
+	for i := range s.handlerRegistry {
 		go func(i int) {
 			var e error
 			defer wg.Done()
@@ -164,7 +163,7 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 		tr client.ITracker
 		tc IHttpClient
 	)
-	if tr, ok = s.trackerIndex[tid]; !ok {
+	if tr, ok = s.handlerRegistry[tid]; !ok {
 		s.mx.Lock()
 		s.clientIndex[tid] = &CachedTracker{Created: time.Now()}
 		s.mx.Unlock()
@@ -172,7 +171,8 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 		return
 	}
 	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
-	logger.Info(fmt.Sprint("trying to cache ", tr.GetName()))
+	// TODO: add debug env
+	//logger.Info(fmt.Sprint("trying to cache ", tr.GetName()))
 	if err = s.store(ctx, tid, tc); err != nil {
 		return
 	}
@@ -181,7 +181,7 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 	s.mx.Unlock()
 
 	if tc != nil {
-		logger.Info(fmt.Sprint("tracker cached: ", tr.GetName()))
+		//logger.Info(fmt.Sprint("tracker cached: ", tr.GetName()))
 	} else {
 		logger.Error(fmt.Sprint("tracker caching failed: ", tr.GetName()))
 	}
@@ -198,13 +198,13 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error
 		tc = nil
 		return
 	}
-	if attrs != nil {
+	if attrs.Exists {
 		return
 	}
 	attrs = &tracker.Tracker{
-		TypeID: tid,
-		Name:   tc.GetName(),
-		//Domain:        tc.Domain(),
+		TypeID:      tid,
+		Name:        tc.GetName(),
+		Domain:      tc.GetDomain(),
 		LoginURL:    tc.LoginLink(),
 		DownloadURL: tc.DownloadLink(""),
 		Publicity:   tc.GetPublicity(),
@@ -218,18 +218,29 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error
 }
 
 func New(hc *http.Client, px px, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig) IService {
+	handlerRegistry := make(map[int]client.ITracker)
+	if conf.Rutracker.Enabled {
+		handlerRegistry[RutrackerID] = rutracker.New(conf.Rutracker)
+	}
+	if conf.Kinozal.Enabled {
+		handlerRegistry[KinozalID] = kinozal.New(conf.Kinozal)
+	}
+	if conf.Rutor.Enabled {
+		handlerRegistry[RutorID] = rutor.New(conf.Rutor)
+	}
+	}
+	if conf.TeamHD.Enabled {
+		handlerRegistry[TeamhdID] = teamhd.New(conf.TeamHD)
+	}
+	if conf.NNM.Enabled {
+		handlerRegistry[NnmID] = nnm.New(conf.NNM)
+	}
 	return &service{
-		hc:    hc,
-		px:    px,
-		db:    db,
-		cbCfg: cbCfg,
-		trackerIndex: map[int]client.ITracker{
-			RutrackerID: rutracker.New(conf.Rutracker),
-			KinozalID:   kinozal.New(conf.Kinozal),
-			RutorID:     rutor.New(conf.Rutor),
-			TeamhdID:    teamhd.New(conf.TeamHD),
-			NnmID:       nnm.New(conf.NNM),
-		},
-		clientIndex: make(map[int]*CachedTracker),
+		hc:              hc,
+		px:              px,
+		db:              db,
+		cbCfg:           cbCfg,
+		handlerRegistry: handlerRegistry,
+		clientIndex:     make(map[int]*CachedTracker),
 	}
 }

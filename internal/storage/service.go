@@ -95,6 +95,7 @@ func (s *service) GetItem(ctx context.Context, link string) (item *runner.Histor
 		Tag:           dbItem.Tag,
 		Name:          dbItem.Name,
 		URL:           dbItem.URL,
+		CreatedAt:     dbItem.CreatedAt,
 		RecheckAt:     dbItem.RecheckAt,
 		Exists:        dbItem.Exists,
 	}

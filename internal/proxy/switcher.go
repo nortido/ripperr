@@ -8,7 +8,6 @@ import (
 
 	"trackerr/internal/model/proxy"
 	fmapper "trackerr/internal/proxy/mapper/flaresolverr"
-	"trackerr/internal/system/logger"
 )
 
 type Config struct {
@@ -35,7 +34,7 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 	)
 	switch proxyType {
 	case proxy.TypeFlare:
-		logger.Info(fmt.Sprintf("getting \"%s\" by flaresolverr", r.URL.String()))
+		//logger.Info(fmt.Sprintf("getting \"%s\" by flaresolverr", r.URL.String()))
 		params = fmapper.PrepareParams(r, opts)
 		if err != nil {
 			return

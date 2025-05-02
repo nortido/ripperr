@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -46,6 +47,7 @@ func main() {
 		db     storage.IClient
 		err    error
 	)
+	// TODO: gracefull shutdown
 	ctx := context.Background()
 
 	if err = envconfig.Process(ctx, &cfg); err != nil {
@@ -55,20 +57,25 @@ func main() {
 
 	// Init manager client
 	// TODO: move creation to manager constructor
-	if qbc, err = qbittorrent.New(
-		model.ManagerConfig{
-			Host:               cfg.Manager.QbitTorrent.Host,
-			Username:           cfg.Manager.QbitTorrent.Username,
-			Password:           cfg.Manager.QbitTorrent.Password,
-			PausedMaxRatio:     cfg.Manager.PausedMaxRatio,
-			DeleteEnabled:      cfg.Manager.DeleteEnabled,
-			DeleteFilesEnabled: cfg.Manager.DeleteFilesEnabled,
-			DeleteCategories:   cfg.Manager.DeleteFilesCategories,
-		}); err != nil {
-		logger.Error(err.Error())
-		return
+	qbtcfg := model.ManagerConfig{
+		Host:               cfg.Manager.QbitTorrent.Host,
+		Username:           cfg.Manager.QbitTorrent.Username,
+		Password:           cfg.Manager.QbitTorrent.Password,
+		PausedMaxRatio:     cfg.Manager.PausedMaxRatio,
+		DeleteEnabled:      cfg.Manager.DeleteEnabled,
+		DeleteFilesEnabled: cfg.Manager.DeleteFilesEnabled,
+		DeleteCategories:   cfg.Manager.DeleteFilesCategories,
 	}
-
+	for {
+		if qbc, err = qbittorrent.New(qbtcfg); err != nil {
+			err = fmt.Errorf("failed to connect to qbittorrent: %w", err)
+			logger.Error(err.Error())
+			t := time.NewTimer(time.Duration(cfg.Manager.MinutesToReconnect) * time.Minute)
+			<-t.C
+			continue
+		}
+		break
+	}
 	// Init http client
 	if cj, err = cookiejar.New(nil); err != nil {
 		logger.Error(err.Error())
@@ -122,6 +129,7 @@ func main() {
 			LoginURL:    cfg.Tracker.Rutracker.LoginURL,
 			DownloadURL: cfg.Tracker.Rutracker.DownloadURL,
 			HourLimit:   cfg.Tracker.Rutracker.HourLimit,
+			Enabled:     cfg.Tracker.Rutracker.Enabled,
 		},
 		Kinozal: trackerModel.Tracker{
 			Name:        cfg.Tracker.Kinozal.Name,
@@ -133,6 +141,7 @@ func main() {
 			DownloadURL: cfg.Tracker.Kinozal.DownloadURL,
 			HourLimit:   cfg.Tracker.Kinozal.HourLimit,
 			Cookies:     helper.ParseCookies(cfg.Tracker.Kinozal.Cookies, ""),
+			Enabled:     cfg.Tracker.Kinozal.Enabled,
 		},
 		Rutor: trackerModel.Tracker{
 			Name:        cfg.Tracker.Rutor.Name,
@@ -140,6 +149,7 @@ func main() {
 			Publicity:   cfg.Tracker.Rutor.Publicity,
 			DownloadURL: cfg.Tracker.Rutor.DownloadURL,
 			HourLimit:   cfg.Tracker.Rutor.HourLimit,
+			Enabled:     cfg.Tracker.Rutor.Enabled,
 		},
 		},
 		TeamHD: trackerModel.Tracker{
@@ -149,6 +159,7 @@ func main() {
 			DownloadURL: cfg.Tracker.TeamHD.DownloadURL,
 			HourLimit:   cfg.Tracker.TeamHD.HourLimit,
 			Cookies:     helper.ParseCookies(cfg.Tracker.TeamHD.Cookies, ""),
+			Enabled:     cfg.Tracker.TeamHD.Enabled,
 		},
 		NNM: trackerModel.Tracker{
 			Name:        cfg.Tracker.NNM.Name,
@@ -160,6 +171,7 @@ func main() {
 			DownloadURL: cfg.Tracker.NNM.DownloadURL,
 			HourLimit:   cfg.Tracker.NNM.HourLimit,
 			Cookies:     helper.ParseCookies(cfg.Tracker.NNM.Cookies, ""),
+			Enabled:     cfg.Tracker.NNM.Enabled,
 		},
 	})
 	if err = tr.BuildCache(ctx); err != nil {
@@ -175,6 +187,8 @@ func main() {
 		ThresholdHalfYear: cfg.Runner.HalfYearThresholdDays,
 		ThresholdYear:     cfg.Runner.YearThresholdDays,
 		ThresholdOld:      cfg.Runner.YearThresholdDays,
+		ListRefreshPerDay: cfg.Runner.ListRefreshPerDay,
+		Categories:        cfg.Runner.AllowedCategories,
 	})
 	rn.Run(ctx)
 

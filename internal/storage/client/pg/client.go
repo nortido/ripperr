@@ -54,8 +54,8 @@ func (c *client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (e
 
 func (c *client) GetItem(ctx context.Context, urlHash string) (item *storage.Item, err error) {
 	item = &storage.Item{URLHash: urlHash}
-	err = c.db.QueryRow(ctx, "SELECT tracker_type_id, topic_id, category_name, item_url, recheck_at FROM trackerr.history WHERE url_hash = $1", urlHash).Scan(
-		&item.TrackerTypeID, &item.TopicID, &item.Category, &item.URL, &item.RecheckAt)
+	err = c.db.QueryRow(ctx, "SELECT tracker_type_id, topic_id, category_name, item_url, created_at, recheck_at FROM trackerr.history WHERE url_hash = $1", urlHash).Scan(
+		&item.TrackerTypeID, &item.TopicID, &item.Category, &item.URL, &item.CreatedAt, &item.RecheckAt)
 	if err == pgx.ErrNoRows {
 		err = nil
 		return

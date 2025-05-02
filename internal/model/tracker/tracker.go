@@ -35,11 +35,16 @@ type Tracker struct {
 	DownloadURL string
 	HourLimit   int
 	Cookies     []*http.Cookie
+	Enabled     bool
 	Exists      bool
 }
 
 func (t *Tracker) GetName() (name string) {
 	return t.Name
+}
+
+func (t *Tracker) GetDomain() (host string) {
+	return t.Domain
 }
 
 func (t *Tracker) GetHost() (host string) {

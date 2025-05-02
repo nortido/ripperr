@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"trackerr/internal/helper"
 	"trackerr/internal/model"
 	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/runner"
@@ -51,11 +52,11 @@ type IHandler interface {
 }
 
 type handler struct {
-	mx             *sync.RWMutex
-	i              map[int]chan *model.Entry
 	offset         int
+	mx             *sync.RWMutex
 	config         model.HandlerConfig
 	entries        []*model.Entry
+	idx            map[int]chan *model.Entry
 	manager        manager
 	storage        storage
 	trackerService trackerService
@@ -92,14 +93,14 @@ func (h *handler) Run(ctx context.Context) {
 				if err = h.push(ctx); err != nil {
 					cherr <- err
 				}
-				pt.Reset(durationDay / 4)
+				pt.Reset(time.Duration(24/h.config.ListRefreshPerDay) * time.Hour)
 				wt.Reset(0)
 			}()
 		case <-wt.C:
-			for ttid := range h.i {
+			for ttid := range h.idx {
 				go func(ttid int) {
 					for j := 0; j < h.chunkSize(ttid); j++ {
-						if err = h.worker(ctx, ttid, <-h.i[ttid]); err != nil {
+						if err = h.worker(ctx, ttid, <-h.idx[ttid]); err != nil {
 							cherr <- err
 						}
 					}
@@ -111,9 +112,9 @@ func (h *handler) Run(ctx context.Context) {
 }
 
 func (h *handler) initTrackerChannels() {
-	h.i = make(map[int]chan *model.Entry, len(h.trackerService.CachedList()))
+	h.idx = make(map[int]chan *model.Entry, len(h.trackerService.CachedList()))
 	for ttid := range h.trackerService.CachedList() {
-		h.i[ttid] = make(chan *model.Entry)
+		h.idx[ttid] = make(chan *model.Entry)
 	}
 }
 
@@ -128,6 +129,12 @@ func (h *handler) push(ctx context.Context) (err error) {
 		return
 	}
 	for i = range entries {
+		if entries[i].URL == "" {
+			continue
+		}
+		if len(h.config.Categories) > 0 && !helper.InArray(entries[i].Category, h.config.Categories) {
+			continue
+		}
 		if err = h.buildEntry(ctx, entries[i]); err == errSkipped {
 			err = nil
 			continue
@@ -138,7 +145,7 @@ func (h *handler) push(ctx context.Context) (err error) {
 			if t = h.trackerService.GetID(entries[i].URL); t == 0 {
 				return
 			}
-			h.i[t] <- entries[i]
+			h.idx[t] <- entries[i]
 		}(i)
 	}
 	return
@@ -147,19 +154,20 @@ func (h *handler) push(ctx context.Context) (err error) {
 func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 	var hi *runner.HistoryItem
 
-	if hi, err = h.checkHistory(ctx, e.URL); err != nil {
+	if hi, err = h.getHistory(ctx, e.URL); err != nil {
 		return
 	}
 	e.URLHash = hi.URLHash
 
 	if hi.Exists {
 		e.Update = true
-		e.Timestamp = hi.RecheckAt
+		e.TopicID = hi.TopicID
+		e.Timestamp = hi.CreatedAt
 	}
 	return
 }
 
-func (h *handler) checkHistory(ctx context.Context, link string) (hi *runner.HistoryItem, err error) {
+func (h *handler) getHistory(ctx context.Context, link string) (hi *runner.HistoryItem, err error) {
 	// TODO: cache history
 	if hi, err = h.storage.GetItem(ctx, link); err != nil {
 		return
@@ -192,7 +200,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 		updated bool
 		tc      tracker.IHttpClient
 	)
-	logger.Info(fmt.Sprint("processing: ", e.Name))
+	//logger.Info(fmt.Sprint("processing: ", e.Name))
 	h.mx.Lock()
 	defer h.mx.Unlock()
 
@@ -203,7 +211,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 		return
 	}
 	if !updated {
-		logger.Info(fmt.Sprint("skipped: ", e.Name))
+		//logger.Info(fmt.Sprint("skipped: ", e.Name))
 		return
 	}
 	if err = h.submit(ctx, ttid, tc, e); err != nil {
@@ -229,7 +237,7 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClien
 		e.TopicID = downloadID
 		curPtr := time.Now()
 		cur = &curPtr
-	} else if cur, err = h.getDate(ctx, b, tc); err != nil {
+	} else if cur, err = h.getDate(ctx, b, tc, e.Name); err != nil {
 		return
 	}
 	// TODO: add check count of updates in DB
@@ -252,9 +260,9 @@ func (h *handler) getPage(ctx context.Context, ttid int, link string) (b *bytes.
 	return
 }
 
-func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc tracker.IHttpClient) (cur *time.Time, err error) {
+func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc tracker.IHttpClient, name string) (cur *time.Time, err error) {
 	if cur = tc.ParseDate(b, tc.GetProxyType() != proxy.TypeNone); cur == nil {
-		err = fmt.Errorf("current time not found")
+		err = fmt.Errorf("current time not found for %s", name)
 	}
 	return
 }

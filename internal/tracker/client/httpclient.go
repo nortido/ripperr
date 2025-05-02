@@ -11,11 +11,11 @@ import (
 	"trackerr/internal/helper"
 	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/tracker"
-	"trackerr/internal/system/logger"
 )
 
 type ITracker interface {
 	GetName() (name string)
+	GetDomain() (host string)
 	GetHost() (host string)
 	GetProxyType() (proxyType proxy.ProxyType)
 	GetPublicity() (publicity string)
@@ -187,7 +187,7 @@ func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Opt
 	err = c.cb.Call(func() (err error) {
 		switch {
 		case proxyType == proxy.TypeNone:
-			logger.Info(fmt.Sprintf("getting \"%s\" by direct http", req.URL.String()))
+			//logger.Info(fmt.Sprintf("getting \"%s\" by direct http", req.URL.String()))
 			res, err = c.hc.Do(req)
 		case proxyExists:
 			res, err = c.px.Send(req, opts, proxyType)
@@ -216,7 +216,7 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 		if _, err = b.ReadFrom(res.Body); err != nil {
 			return
 		}
-		err = fmt.Errorf("unexpected status code: %d\n%s", res.StatusCode, b.String()[0:100])
+		err = fmt.Errorf("unexpected status code: %d\n%s", res.StatusCode, b.String()[:100])
 		return
 	}
 	return

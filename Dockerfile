@@ -1,4 +1,4 @@
-FROM golang:1.20 as builder
+FROM golang:1.21 AS builder
 RUN go install github.com/go-delve/delve/cmd/dlv@latest
 ENV GOOS=linux CGO_ENABLED=0
 COPY . /app
@@ -12,4 +12,4 @@ FROM alpine:3.16
 WORKDIR /app
 COPY --from=builder /app/main /app/
 EXPOSE 6410
-CMD /app/main
+CMD ["/app/main"]

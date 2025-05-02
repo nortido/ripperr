@@ -1,6 +1,6 @@
 module trackerr
 
-go 1.20
+go 1.21
 
 require (
 	github.com/autobrr/go-qbittorrent v1.9.0
