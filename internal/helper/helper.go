@@ -27,7 +27,10 @@ func TimeFromRusDate(t string, timeformat string) (result *time.Time) {
 	for i, v = range []string{"января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"} {
 		t = strings.Replace(t, v, fmt.Sprintf("%02d", i+1), 1)
 	}
-	r, _ := time.Parse(timeformat, t)
+	r, err := time.Parse(timeformat, t)
+	if err != nil {
+		return nil
+	}
 	result = &r
 
 	return

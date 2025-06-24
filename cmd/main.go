@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 	"github.com/sethvargo/go-envconfig"
 
 	"trackerr/internal/config"
@@ -47,6 +48,11 @@ func main() {
 		db     storage.IClient
 		err    error
 	)
+	// Load .env file if it exists
+	if err = godotenv.Load(); err != nil {
+		//logger.Info("No .env file found, using system environment variables")
+	}
+
 	// TODO: gracefull shutdown
 	ctx := context.Background()
 

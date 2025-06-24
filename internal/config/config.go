@@ -30,8 +30,8 @@ type Tracker struct {
 		Domain      string `env:"TRACKER_KINOZAL_DOMAIN, default=kinozal.tv"`
 		Credentials string `env:"TRACKER_KINOZAL_CREDENTIALS, default="`
 		Publicity   string `env:"TRACKER_KINOZAL_PUBLICITY, default=private"`
-		LoginURL    string `env:"TRACKER_KINOZAL_LOGIN_URL, default=https://kinozal.org/takelogin.php"`
-		DownloadURL string `env:"TRACKER_KINOZAL_DOWNLOAD_URL, default=https://kinozal.org/download.php?id="`
+		LoginURL    string `env:"TRACKER_KINOZAL_LOGIN_URL, default=https://kinozal.tv/takelogin.php"`
+		DownloadURL string `env:"TRACKER_KINOZAL_DOWNLOAD_URL, default=https://kinozal.tv/download.php?id="`
 		HourLimit   int    `env:"TRACKER_KINOZAL_HOUR_LIMIT, default=30"`
 		ProxyType   int    `env:"TRACKER_KINOZAL_PROXY_TYPE, default=1"`
 		Cookies     string `env:"TRACKER_KINOZAL_COOKIES, default="`

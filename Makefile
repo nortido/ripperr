@@ -16,3 +16,9 @@ lint:
 vendor:
 	go mod tidy
 	go mod vendor
+
+build:
+	@docker buildx build --platform linux/amd64 -t nortido/trackerr:latest .
+
+build-arm:
+	@docker buildx build --platform linux/arm64 -t trackerr:arm .
