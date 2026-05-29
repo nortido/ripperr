@@ -1,5 +1,5 @@
-FROM golang:1.21 AS builder
-RUN go install github.com/go-delve/delve/cmd/dlv@latest
+FROM golang:1.25 AS builder
+#RUN go install github.com/go-delve/delve/cmd/dlv@latest
 ENV GOOS=linux CGO_ENABLED=0
 COPY . /app
 WORKDIR /app

@@ -121,8 +121,8 @@ func (c *client) setDefaultHeaders() {
 	c.header.Add("Sec-Fetch-Site", "same-origin")
 	c.header.Add("Sec-Fetch-User", "?1")
 	c.header.Add("Upgrade-Insecure-Requests", "1")
-	c.header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-	c.header.Add("sec-ch-ua", `"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"`)
+	c.header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
+	c.header.Add("sec-ch-ua", `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`)
 	c.header.Add("sec-ch-ua-mobile", "?0")
 	c.header.Add("sec-ch-ua-platform", `"macOS"`)
 

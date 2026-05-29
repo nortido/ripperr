@@ -21,7 +21,7 @@ type Tracker struct {
 		Publicity   string `env:"TRACKER_RUTRACKER_PUBLICITY, default=private"`
 		LoginURL    string `env:"TRACKER_RUTRACKER_LOGIN_URL, default=https://rutracker.org/forum/login.php"`
 		DownloadURL string `env:"TRACKER_RUTRACKER_DOWNLOAD_URL, default=https://rutracker.org/forum/dl.php?t="`
-		HourLimit   int    `env:"TRACKER_RUTRACKER_HOUR_LIMIT, default=40"`
+		HourLimit   int    `env:"TRACKER_RUTRACKER_HOUR_LIMIT, default=20"`
 		ProxyType   int    `env:"TRACKER_RUTRACKER_PROXY_TYPE, default=1"`
 		Enabled     bool   `env:"TRACKER_RUTRACKER_ENABLED, default=true"`
 	}
@@ -75,7 +75,6 @@ type Runner struct {
 	MonthThresholdDays    int      `env:"RUNNER_FIRST_MONTH_UPDATE_THRESHOLD, default=1"`
 	HalfYearThresholdDays int      `env:"RUNNER_HALF_YEAR_UPDATE_THRESHOLD, default=7"`
 	YearThresholdDays     int      `env:"RUNNER_YEAR_UPDATE_THRESHOLD, default=30"`
-	OldThresholdDays      int      `env:"RUNNER_OLD_UPDATE_THRESHOLD, default=180"`
 	ListRefreshPerDay     int      `env:"RUNNER_LIST_REFRESH_PER_DAY, default=2"`
 	HttpTimeout           int64    `env:"RUNNER_HTTP_TIMEOUT, default=30"`
 	CBRetries             int      `env:"RUNNER_CB_RETRIES, default=2"`

@@ -215,6 +215,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 		return
 	}
 	if err = h.submit(ctx, ttid, tc, e); err != nil {
+		err = fmt.Errorf("%s %w", tc.DownloadLink(e.TopicID), err)
 		return
 	}
 	logger.Info(fmt.Sprint("updated: ", e.Name))
