@@ -211,7 +211,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 		return
 	}
 	if !updated {
-		//logger.Info(fmt.Sprint("skipped: ", e.Name))
+		logger.Info(fmt.Sprint("skipped: ", e.Name))
 		return
 	}
 	if err = h.submit(ctx, ttid, tc, e); err != nil {

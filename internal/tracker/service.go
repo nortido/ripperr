@@ -37,12 +37,13 @@ type db interface {
 
 type px interface {
 	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
+	DestroyFlareSession(sessionID string) error
 }
 
 type IHttpClient interface {
 	client.ITracker
 	Cookies() (res []*http.Cookie)
-	InitClient(ctx context.Context, payload *tracker.Tracker) (err error)
+	InitClient(ctx context.Context, payload *tracker.Tracker, forceLogin bool) (err error)
 	GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error)
 }
 
@@ -64,6 +65,7 @@ type service struct {
 	px              px
 	db              db
 	mx              sync.RWMutex
+	cacheMx         sync.Map
 	hc              *http.Client
 	clientIndex     map[int]*CachedTracker
 	handlerRegistry map[int]client.ITracker
@@ -117,17 +119,14 @@ func (s *service) Response(ctx context.Context, ttid int, link string, download 
 }
 
 func (s *service) BuildCache(ctx context.Context) (err error) {
-	var (
-		wg sync.WaitGroup
-	)
+	var wg sync.WaitGroup
+
 	wg.Add(len(s.handlerRegistry))
 	for i := range s.handlerRegistry {
 		go func(i int) {
-			var e error
 			defer wg.Done()
-			if e = s.cache(ctx, i); e != nil {
-				err = e
-				return
+			if e := s.cache(ctx, i, false); e != nil {
+				logger.Error(fmt.Sprintf("%s: %s", s.handlerRegistry[i].GetName(), e))
 			}
 		}(i)
 	}
@@ -140,7 +139,11 @@ func (s *service) GetCachedClient(ctx context.Context, id int) (t IHttpClient, e
 }
 
 func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err error) {
-	var ok bool
+	var (
+		ok         bool
+		forceLogin bool
+		prev       *CachedTracker
+	)
 
 	if ct, ok = s.clientIndex[id]; ok && time.Since(ct.Created) < TTL {
 		if ct.IHttpClient == nil {
@@ -149,7 +152,14 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 		}
 		return
 	}
-	if err = s.cache(ctx, id); err != nil {
+	prev = ct
+	forceLogin = ok
+	if err = s.cache(ctx, id, forceLogin); err != nil {
+		if prev != nil && prev.IHttpClient != nil {
+			logger.Warn(fmt.Sprintf("%s: refresh failed, using stale cache: %s", s.handlerRegistry[id].GetName(), err))
+			prev.Created = time.Now()
+			return prev, nil
+		}
 		return
 	}
 	ct = s.clientIndex[id]
@@ -157,12 +167,20 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 	return
 }
 
-func (s *service) cache(ctx context.Context, tid int) (err error) {
+func (s *service) cacheLock(tid int) *sync.Mutex {
+	v, _ := s.cacheMx.LoadOrStore(tid, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err error) {
 	var (
 		ok bool
 		tr client.ITracker
 		tc IHttpClient
 	)
+	mu := s.cacheLock(tid)
+	mu.Lock()
+	defer mu.Unlock()
 	if tr, ok = s.handlerRegistry[tid]; !ok {
 		s.mx.Lock()
 		s.clientIndex[tid] = &CachedTracker{Created: time.Now()}
@@ -173,7 +191,12 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
 	// TODO: add debug env
 	//logger.Info(fmt.Sprint("trying to cache ", tr.GetName()))
-	if err = s.store(ctx, tid, tc); err != nil {
+	if err = s.store(ctx, tid, tc, forceLogin); err != nil {
+		if forceLogin {
+			logger.Warn(fmt.Sprintf("%s cache refresh failed: %s", tr.GetName(), err))
+		} else {
+			logger.Error(fmt.Sprintf("%s store error: %s", tr.GetName(), err))
+		}
 		return
 	}
 	s.mx.Lock()
@@ -188,17 +211,28 @@ func (s *service) cache(ctx context.Context, tid int) (err error) {
 	return
 }
 
-func (s *service) store(ctx context.Context, tid int, tc IHttpClient) (err error) {
-	var attrs *tracker.Tracker
+func (s *service) store(ctx context.Context, tid int, tc IHttpClient, forceLogin bool) (err error) {
+	var (
+		attrs      *tracker.Tracker
+		hadCookies bool
+	)
 
 	if attrs, err = s.db.GetTracker(ctx, tid); err != nil {
 		return
 	}
-	if err = tc.InitClient(ctx, attrs); err != nil {
+	hadCookies = attrs.Exists && len(attrs.Cookies) > 0
+	if err = tc.InitClient(ctx, attrs, forceLogin); err != nil {
 		tc = nil
 		return
 	}
 	if attrs.Exists {
+		if len(tc.Cookies()) > 0 && (forceLogin || !hadCookies || helper.CookiesString(attrs.Cookies) != helper.CookiesString(tc.Cookies())) {
+			attrs.Cookies = tc.Cookies()
+			attrs.Exists = true
+			if err = s.db.SaveTracker(ctx, attrs); err != nil {
+				return
+			}
+		}
 		return
 	}
 	attrs = &tracker.Tracker{

@@ -9,7 +9,32 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
-func ParseCookies(line string, filter string) (cookies []*http.Cookie) {
+func CookieDomain(domain string) string {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return ""
+	}
+	if !strings.HasPrefix(domain, ".") {
+		return "." + domain
+	}
+	return domain
+}
+
+func EnrichCookies(cookies []*http.Cookie, domain string, ttl time.Duration) {
+	d := CookieDomain(domain)
+	expires := time.Now().Add(ttl)
+	for _, c := range cookies {
+		if c == nil {
+			continue
+		}
+		if d != "" {
+			c.Domain = d
+		}
+		c.Expires = expires
+	}
+}
+
+func ParseCookies(line string) (cookies []*http.Cookie) {
 	var part string
 
 	if len(line) == 0 {
@@ -28,16 +53,39 @@ func ParseCookies(line string, filter string) (cookies []*http.Cookie) {
 		if !isCookieNameValid(name) {
 			continue
 		}
-		if filter != "" && filter != name {
-			continue
-		}
 		val, ok := parseCookieValue(val, true)
 		if !ok {
 			continue
 		}
-		cookies = append(cookies, &http.Cookie{Name: name, Value: val, Expires: time.Now().AddDate(0, 0, 30)})
+		cookies = append(cookies, &http.Cookie{Name: name, Value: val})
 	}
 	return
+}
+
+// MergeCookies merges cookie lists; later values override earlier ones by name.
+func MergeCookies(base, extra []*http.Cookie) []*http.Cookie {
+	var (
+		order []string
+		index = make(map[string]*http.Cookie, len(base)+len(extra))
+	)
+	add := func(list []*http.Cookie) {
+		for _, c := range list {
+			if c == nil || c.Name == "" {
+				continue
+			}
+			if _, seen := index[c.Name]; !seen {
+				order = append(order, c.Name)
+			}
+			index[c.Name] = c
+		}
+	}
+	add(base)
+	add(extra)
+	out := make([]*http.Cookie, 0, len(order))
+	for _, name := range order {
+		out = append(out, index[name])
+	}
+	return out
 }
 
 func CookiesString(ck []*http.Cookie) (res string) {

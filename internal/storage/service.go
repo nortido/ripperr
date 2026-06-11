@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -12,7 +13,10 @@ import (
 	"trackerr/internal/model/storage"
 	"trackerr/internal/model/tracker"
 	"trackerr/internal/storage/client/pg"
+	"trackerr/internal/tracker/client/rutracker"
 )
+
+const rutrackerTypeID = 0
 
 type postgres interface {
 	GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error)
@@ -45,10 +49,15 @@ func (s *service) GetTracker(ctx context.Context, trackerID int) (res *tracker.T
 	res = &tracker.Tracker{
 		TypeID:      sttr.TypeID,
 		Name:        sttr.Name,
-		Cookies:     helper.ParseCookies(sttr.Cookies, ""),
+		Domain:      sttr.Domain,
+		Cookies:     helper.ParseCookies(sttr.Cookies),
 		Credentials: sttr.Credentials,
 		Publicity:   sttr.Publicity,
 		Exists:      sttr.Exists,
+	}
+	if trackerID == rutrackerTypeID && len(res.Cookies) > 0 {
+		helper.EnrichCookies(res.Cookies, res.Domain, time.Hour)
+		(&rutracker.Tracker{}).EnhanceCookies(res.Cookies)
 	}
 	return
 }

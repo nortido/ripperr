@@ -29,6 +29,7 @@ import (
 )
 
 type configuration struct {
+	Log          *config.Log
 	Runner       *config.Runner
 	Tracker      *config.Tracker
 	Manager      *config.Manager
@@ -60,6 +61,7 @@ func main() {
 		logger.Error(err.Error())
 		return
 	}
+	logger.SetLevel(cfg.Log.Level)
 
 	// Init manager client
 	// TODO: move creation to manager constructor
@@ -100,7 +102,7 @@ func main() {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Timeout: time.Duration(cfg.Flaresolverr.MaxTimeout) * time.Second,
+		Timeout: time.Duration(cfg.Flaresolverr.MaxTimeout)*time.Millisecond + 30*time.Second,
 	}, &proxyModel.Config{
 		None: proxyModel.ItemConfig{},
 		Flaresolverr: proxyModel.ItemConfig{
@@ -146,7 +148,7 @@ func main() {
 			LoginURL:    cfg.Tracker.Kinozal.LoginURL,
 			DownloadURL: cfg.Tracker.Kinozal.DownloadURL,
 			HourLimit:   cfg.Tracker.Kinozal.HourLimit,
-			Cookies:     helper.ParseCookies(cfg.Tracker.Kinozal.Cookies, ""),
+			Cookies:     helper.ParseCookies(cfg.Tracker.Kinozal.Cookies),
 			Enabled:     cfg.Tracker.Kinozal.Enabled,
 		},
 		Rutor: trackerModel.Tracker{
@@ -164,7 +166,7 @@ func main() {
 			Publicity:   cfg.Tracker.TeamHD.Publicity,
 			DownloadURL: cfg.Tracker.TeamHD.DownloadURL,
 			HourLimit:   cfg.Tracker.TeamHD.HourLimit,
-			Cookies:     helper.ParseCookies(cfg.Tracker.TeamHD.Cookies, ""),
+			Cookies:     helper.ParseCookies(cfg.Tracker.TeamHD.Cookies),
 			Enabled:     cfg.Tracker.TeamHD.Enabled,
 		},
 		NNM: trackerModel.Tracker{
@@ -176,14 +178,11 @@ func main() {
 			LoginURL:    cfg.Tracker.NNM.LoginURL,
 			DownloadURL: cfg.Tracker.NNM.DownloadURL,
 			HourLimit:   cfg.Tracker.NNM.HourLimit,
-			Cookies:     helper.ParseCookies(cfg.Tracker.NNM.Cookies, ""),
+			Cookies:     helper.ParseCookies(cfg.Tracker.NNM.Cookies),
 			Enabled:     cfg.Tracker.NNM.Enabled,
 		},
 	})
-	if err = tr.BuildCache(ctx); err != nil {
-		logger.Error(err.Error())
-		return
-	}
+	_ = tr.BuildCache(ctx)
 
 	// Init handler client
 	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, model.HandlerConfig{

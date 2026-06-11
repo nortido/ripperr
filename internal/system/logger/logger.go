@@ -2,21 +2,55 @@ package logger
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
+type Level int
+
+const (
+	LevelDebug Level = iota
+	LevelInfo
+	LevelWarn
+	LevelError
+)
+
+var minLevel = LevelInfo
+
+func SetLevel(level string) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		minLevel = LevelDebug
+	case "info":
+		minLevel = LevelInfo
+	case "warn", "warning":
+		minLevel = LevelWarn
+	case "error":
+		minLevel = LevelError
+	default:
+		minLevel = LevelInfo
+	}
+}
+
+func log(level Level, label, msg string) {
+	if level < minLevel {
+		return
+	}
+	fmt.Println(time.Now().Format(time.DateTime), label, msg)
+}
+
 func Debug(msg string) {
-	fmt.Println(time.Now().Format(time.DateTime), "DEBUG: ", msg)
+	log(LevelDebug, "DEBUG:", msg)
 }
 
 func Info(msg string) {
-	fmt.Println(time.Now().Format(time.DateTime), "INFO: ", msg)
+	log(LevelInfo, "INFO:", msg)
 }
 
 func Warn(msg string) {
-	fmt.Println(time.Now().Format(time.DateTime), "WARN: ", msg)
+	log(LevelWarn, "WARN:", msg)
 }
 
 func Error(msg string) {
-	fmt.Println(time.Now().Format(time.DateTime), "ERROR: ", msg)
+	log(LevelError, "ERROR:", msg)
 }

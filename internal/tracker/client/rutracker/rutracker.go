@@ -52,6 +52,14 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	return
 }
 
+func (t *Tracker) FlareSession() string {
+	return t.GetName()
+}
+
+func (t *Tracker) PostLoginURL() string {
+	return t.GetHost() + "/forum/index.php"
+}
+
 func New(tracker tracker.Tracker) *Tracker {
 	return &Tracker{
 		Tracker: tracker,

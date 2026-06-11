@@ -17,6 +17,7 @@ type Config struct {
 
 type IClient interface {
 	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
+	DestroyFlareSession(sessionID string) error
 }
 
 type client struct {
@@ -34,11 +35,12 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 	)
 	switch proxyType {
 	case proxy.TypeFlare:
-		//logger.Info(fmt.Sprintf("getting \"%s\" by flaresolverr", r.URL.String()))
-		params = fmapper.PrepareParams(r, opts)
-		if err != nil {
-			return
+		if opts != nil && opts.Session != "" {
+			mu := flareSessionLock(opts.Session)
+			mu.Lock()
+			defer mu.Unlock()
 		}
+		params = fmapper.PrepareParams(r, opts)
 		if fres, err = f.cache.fl.Send(r, params); err != nil {
 			return
 		}

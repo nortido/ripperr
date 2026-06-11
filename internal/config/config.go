@@ -1,5 +1,9 @@
 package config
 
+type Log struct {
+	Level string `env:"LOG_LEVEL, default=error"`
+}
+
 type Manager struct {
 	QbitTorrent struct {
 		Host     string `env:"QBIT_URL, default=localhost:8068"`
