@@ -3,14 +3,15 @@ package tracker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
 	"trackerr/internal/helper"
-	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/tracker"
+	"trackerr/internal/proxy"
 	"trackerr/internal/system/logger"
 	"trackerr/internal/tracker/client"
 	"trackerr/internal/tracker/client/kinozal"
@@ -35,11 +36,6 @@ type db interface {
 	SaveTracker(ctx context.Context, source *tracker.Tracker) (err error)
 }
 
-type px interface {
-	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
-	DestroyFlareSession(sessionID string) error
-}
-
 type IHttpClient interface {
 	client.ITracker
 	Cookies() (res []*http.Cookie)
@@ -62,14 +58,17 @@ type CachedTracker struct {
 }
 
 type service struct {
-	px              px
-	db              db
-	mx              sync.RWMutex
-	cacheMx         sync.Map
-	hc              *http.Client
-	clientIndex     map[int]*CachedTracker
-	handlerRegistry map[int]client.ITracker
-	cbCfg           *helper.CircuitBreakerConfig
+	px                 proxy.IClient
+	db                 db
+	mx                 sync.RWMutex
+	flareMx            sync.Mutex
+	flareTimeoutCounts map[int]int
+	cacheLocks         helper.KeyedMutex
+	hc                 *http.Client
+	downloadHC         helper.HTTPDoer
+	clientIndex        map[int]*CachedTracker
+	handlerRegistry    map[int]client.ITracker
+	cbCfg              *helper.CircuitBreakerConfig
 }
 
 func (s *service) GetID(link string) (id int) {
@@ -97,40 +96,105 @@ func (s *service) CachedList() (res map[int]client.ITracker) {
 }
 
 func (s *service) Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error) {
-	var (
-		res *http.Response
-		ct  *CachedTracker
-		b   = bytes.Buffer{}
-	)
-	if ct, err = s.getCached(ctx, ttid); err != nil {
+	ct, err := s.getCached(ctx, ttid)
+	if err != nil {
 		return
 	}
-	if res, err = ct.GetResponse(ctx, link, download); err != nil {
+	buf, err = s.readResponseBody(ctx, ttid, ct, link, download)
+	if err == nil || !download {
+		return
+	}
+	name := s.handlerRegistry[ttid].GetName()
+	logger.Warn(fmt.Sprintf("%s: download failed, relogin: %s", name, err))
+	if ct, err = s.relogin(ctx, ttid); err != nil {
+		return
+	}
+	return s.readResponseBody(ctx, ttid, ct, link, download)
+}
+
+func (s *service) readResponseBody(ctx context.Context, ttid int, ct *CachedTracker, link string, download bool) (buf *bytes.Buffer, err error) {
+	res, err := s.fetchResponse(ctx, ttid, ct, link, download)
+	if err != nil {
 		return
 	}
 	defer res.Body.Close()
 
+	var b bytes.Buffer
 	if _, err = b.ReadFrom(res.Body); err != nil {
 		return
 	}
+	if download {
+		if err = validateDownloadBody(res, &b); err != nil {
+			return
+		}
+	}
 	buf = &b
+	return
+}
 
+func (s *service) fetchResponse(ctx context.Context, ttid int, ct *CachedTracker, link string, download bool) (res *http.Response, err error) {
+	if res, err = ct.GetResponse(ctx, link, download); err != nil {
+		if s.shouldReloginAfterFlare(ttid, err) {
+			name := s.handlerRegistry[ttid].GetName()
+			logger.Warn(fmt.Sprintf("%s: flare timeout limit reached, relogin", name))
+			if ct, err = s.relogin(ctx, ttid); err == nil {
+				res, err = ct.GetResponse(ctx, link, download)
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+	s.resetFlareTimeouts(ttid)
+	return
+}
+
+func validateDownloadBody(res *http.Response, buf *bytes.Buffer) (err error) {
+	status, contentType := 0, ""
+	if res != nil {
+		status = res.StatusCode
+		contentType = res.Header.Get("Content-Type")
+	}
+	if buf.Len() < 50 {
+		err = fmt.Errorf("no file data (status=%d, type=%s, bytes=%d): %s",
+			status, contentType, buf.Len(), helper.Substr(buf.String(), 0, 100))
+		return
+	}
+	sample := buf.Bytes()
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+	if bytes.Contains(sample, []byte("<html")) {
+		err = fmt.Errorf("unexpected html response on download (status=%d, type=%s)", status, contentType)
+	}
 	return
 }
 
 func (s *service) BuildCache(ctx context.Context) (err error) {
-	var wg sync.WaitGroup
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
 
 	wg.Add(len(s.handlerRegistry))
 	for i := range s.handlerRegistry {
 		go func(i int) {
 			defer wg.Done()
+			s.destroyFlareSession(i)
 			if e := s.cache(ctx, i, false); e != nil {
-				logger.Error(fmt.Sprintf("%s: %s", s.handlerRegistry[i].GetName(), e))
+				name := s.handlerRegistry[i].GetName()
+				logger.Error(fmt.Sprintf("%s: %s", name, e))
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("%s: %w", name, e))
+				mu.Unlock()
 			}
 		}(i)
 	}
 	wg.Wait()
+	if len(errs) > 0 {
+		err = errors.Join(errs...)
+	}
 	return
 }
 
@@ -145,31 +209,94 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 		prev       *CachedTracker
 	)
 
-	if ct, ok = s.clientIndex[id]; ok && time.Since(ct.Created) < TTL {
+	s.mx.RLock()
+	ct, ok = s.clientIndex[id]
+	if ok && time.Since(ct.Created) < TTL {
 		if ct.IHttpClient == nil {
+			s.mx.RUnlock()
 			err = fmt.Errorf("tracker http error")
 			return
 		}
+		s.mx.RUnlock()
 		return
 	}
 	prev = ct
 	forceLogin = ok
-	if err = s.cache(ctx, id, forceLogin); err != nil {
-		if prev != nil && prev.IHttpClient != nil {
-			logger.Warn(fmt.Sprintf("%s: refresh failed, using stale cache: %s", s.handlerRegistry[id].GetName(), err))
-			prev.Created = time.Now()
-			return prev, nil
-		}
-		return
+	s.mx.RUnlock()
+
+	if forceLogin {
+		s.destroyFlareSession(id)
 	}
+
+	if err = s.cache(ctx, id, forceLogin); err != nil {
+		return s.staleOnError(prev, s.handlerRegistry[id].GetName(), err)
+	}
+	s.mx.RLock()
 	ct = s.clientIndex[id]
+	s.mx.RUnlock()
 
 	return
 }
 
-func (s *service) cacheLock(tid int) *sync.Mutex {
-	v, _ := s.cacheMx.LoadOrStore(tid, &sync.Mutex{})
-	return v.(*sync.Mutex)
+func (s *service) staleOnError(prev *CachedTracker, name string, err error) (ct *CachedTracker, out error) {
+	if prev != nil && prev.IHttpClient != nil {
+		logger.Warn(fmt.Sprintf("%s: using stale cache: %s", name, err))
+		return prev, nil
+	}
+	return nil, err
+}
+
+func (s *service) destroyFlareSession(id int) {
+	tr, ok := s.handlerRegistry[id]
+	if !ok {
+		return
+	}
+	p, ok := tr.(client.FlareSessionProvider)
+	if !ok {
+		return
+	}
+	sessionID := p.FlareSession()
+	if sessionID == "" {
+		return
+	}
+	if err := s.px.DestroyFlareSession(sessionID); err != nil {
+		logger.Warn(fmt.Sprintf("%s: flare session destroy: %s", tr.GetName(), err))
+	}
+}
+
+func (s *service) shouldReloginAfterFlare(ttid int, err error) bool {
+	if !helper.IsFlareTimeout(err) || s.cbCfg == nil || s.cbCfg.MaxFailures <= 0 {
+		return false
+	}
+	s.flareMx.Lock()
+	defer s.flareMx.Unlock()
+	s.flareTimeoutCounts[ttid]++
+	return s.flareTimeoutCounts[ttid] >= s.cbCfg.MaxFailures
+}
+
+func (s *service) resetFlareTimeouts(ttid int) {
+	s.flareMx.Lock()
+	delete(s.flareTimeoutCounts, ttid)
+	s.flareMx.Unlock()
+}
+
+func (s *service) relogin(ctx context.Context, ttid int) (ct *CachedTracker, err error) {
+	var prev *CachedTracker
+
+	s.resetFlareTimeouts(ttid)
+	s.destroyFlareSession(ttid)
+
+	s.mx.RLock()
+	prev = s.clientIndex[ttid]
+	s.mx.RUnlock()
+
+	if err = s.cache(ctx, ttid, true); err != nil {
+		return s.staleOnError(prev, s.handlerRegistry[ttid].GetName(), err)
+	}
+	s.mx.RLock()
+	ct = s.clientIndex[ttid]
+	s.mx.RUnlock()
+	return
 }
 
 func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err error) {
@@ -178,7 +305,7 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 		tr client.ITracker
 		tc IHttpClient
 	)
-	mu := s.cacheLock(tid)
+	mu := s.cacheLocks.Mutex(tid)
 	mu.Lock()
 	defer mu.Unlock()
 	if tr, ok = s.handlerRegistry[tid]; !ok {
@@ -188,9 +315,7 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
-	tc = client.New(s.hc, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
-	// TODO: add debug env
-	//logger.Info(fmt.Sprint("trying to cache ", tr.GetName()))
+	tc = client.New(s.hc, s.downloadHC, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
 	if err = s.store(ctx, tid, tc, forceLogin); err != nil {
 		if forceLogin {
 			logger.Warn(fmt.Sprintf("%s cache refresh failed: %s", tr.GetName(), err))
@@ -202,12 +327,6 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 	s.mx.Lock()
 	s.clientIndex[tid] = &CachedTracker{IHttpClient: tc, Created: time.Now()}
 	s.mx.Unlock()
-
-	if tc != nil {
-		//logger.Info(fmt.Sprint("tracker cached: ", tr.GetName()))
-	} else {
-		logger.Error(fmt.Sprint("tracker caching failed: ", tr.GetName()))
-	}
 	return
 }
 
@@ -251,7 +370,7 @@ func (s *service) store(ctx context.Context, tid int, tc IHttpClient, forceLogin
 	return
 }
 
-func New(hc *http.Client, px px, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig) IService {
+func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig) IService {
 	handlerRegistry := make(map[int]client.ITracker)
 	if conf.Rutracker.Enabled {
 		handlerRegistry[RutrackerID] = rutracker.New(conf.Rutracker)
@@ -270,11 +389,13 @@ func New(hc *http.Client, px px, db db, cbCfg *helper.CircuitBreakerConfig, conf
 		handlerRegistry[NnmID] = nnm.New(conf.NNM)
 	}
 	return &service{
-		hc:              hc,
-		px:              px,
-		db:              db,
-		cbCfg:           cbCfg,
-		handlerRegistry: handlerRegistry,
-		clientIndex:     make(map[int]*CachedTracker),
+		hc:                 hc,
+		downloadHC:         downloadHC,
+		px:                 px,
+		db:                 db,
+		cbCfg:              cbCfg,
+		handlerRegistry:    handlerRegistry,
+		clientIndex:        make(map[int]*CachedTracker),
+		flareTimeoutCounts: make(map[int]int),
 	}
 }

@@ -1,7 +1,7 @@
 package config
 
 type Log struct {
-	Level string `env:"LOG_LEVEL, default=error"`
+	Level string `env:"LOG_LEVEL, default=info"`
 }
 
 type Manager struct {
@@ -74,13 +74,15 @@ type Tracker struct {
 }
 
 type Runner struct {
-	WorkerDelay           int      `env:"RUNNER_WORKER_DELAY, default=20"`
 	WatchTag              string   `env:"RUNNER_TAG, default=watch"`
 	MonthThresholdDays    int      `env:"RUNNER_FIRST_MONTH_UPDATE_THRESHOLD, default=1"`
 	HalfYearThresholdDays int      `env:"RUNNER_HALF_YEAR_UPDATE_THRESHOLD, default=7"`
 	YearThresholdDays     int      `env:"RUNNER_YEAR_UPDATE_THRESHOLD, default=30"`
 	ListRefreshPerDay     int      `env:"RUNNER_LIST_REFRESH_PER_DAY, default=2"`
 	HttpTimeout           int64    `env:"RUNNER_HTTP_TIMEOUT, default=30"`
+	DownloadTimeout       int64    `env:"RUNNER_DOWNLOAD_TIMEOUT, default=240"`
+	DownloadProxy         string   `env:"RUNNER_DOWNLOAD_PROXY, default="`
+	TLSProfile            string   `env:"RUNNER_TLS_PROFILE, default=chrome_131"`
 	CBRetries             int      `env:"RUNNER_CB_RETRIES, default=2"`
 	CBMinutesToRetry      int      `env:"RUNNER_CB_MINUTES_TO_RETRY, default=60"`
 	AllowedCategories     []string `env:"RUNNER_ALLOWED_CATEGORIES, default="`

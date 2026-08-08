@@ -15,4 +15,5 @@ type Entry struct {
 	MaxSeedingTime int64
 	URLHash        string
 	Update         bool
+	Magnet         string
 }

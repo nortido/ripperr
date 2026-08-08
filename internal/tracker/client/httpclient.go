@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"trackerr/internal/helper"
-	"trackerr/internal/model/proxy"
+	proxyModel "trackerr/internal/model/proxy"
 	"trackerr/internal/model/tracker"
+	"trackerr/internal/proxy"
 	"trackerr/internal/system/logger"
 )
 
@@ -18,22 +21,19 @@ type ITracker interface {
 	GetName() (name string)
 	GetDomain() (host string)
 	GetHost() (host string)
-	GetProxyType() (proxyType proxy.ProxyType)
+	GetProxyType() (proxyType proxyModel.ProxyType)
 	GetPublicity() (publicity string)
 	GetHourLimit() (limit int)
 	GetCookies() (cookies []*http.Cookie)
 	GetCredentials() (credentials string)
 	LoginLink() (url string)
 	DownloadLink(topicID string) (url string)
+	TopicLink(topicID string) (url string)
 	Detect(url string) bool
 	Headers() (header *http.Header)
 	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
 	ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string)
-}
-
-type proxyService interface {
-	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
-	DestroyFlareSession(sessionID string) error
+	ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string)
 }
 
 type IClient interface {
@@ -45,18 +45,19 @@ type IClient interface {
 
 type client struct {
 	ITracker
-	hc      *http.Client
-	px      proxyService
-	cb      *helper.CircuitBreaker
-	header  *http.Header
-	cookies []*http.Cookie
+	hc         *http.Client
+	downloadHC helper.HTTPDoer
+	px         proxy.IClient
+	cb         *helper.CircuitBreaker
+	header     *http.Header
+	cookies    []*http.Cookie
 }
 
 type cookieEnhancer interface {
 	EnhanceCookies(cookies []*http.Cookie)
 }
 
-type flareSessionProvider interface {
+type FlareSessionProvider interface {
 	FlareSession() string
 }
 
@@ -66,6 +67,14 @@ type postLoginFetcher interface {
 
 type cookieCompletenessChecker interface {
 	CookiesIncomplete(cookies []*http.Cookie) bool
+}
+
+func (c *client) flareSessionID() (string, bool) {
+	p, ok := c.ITracker.(FlareSessionProvider)
+	if !ok {
+		return "", false
+	}
+	return p.FlareSession(), true
 }
 
 func (c *client) finalizeCookies(cookies []*http.Cookie) []*http.Cookie {
@@ -89,7 +98,7 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 	if payload.Exists {
 		c.cookies = payload.Cookies
 		creds = payload.Credentials
-		savedCookies = helper.ParseCookies(helper.CookiesString(payload.Cookies))
+		savedCookies = helper.CloneCookies(payload.Cookies)
 	}
 	if forceLogin {
 		c.resetFlareSession()
@@ -112,9 +121,10 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 	}
 	// TODO: make public/private param
 	if len(c.cookies) == 0 {
-		c.resetFlareSession()
-		if res, err = c.loginFromPage(ctx, req); err != nil {
+		if !forceLogin {
 			c.resetFlareSession()
+		}
+		if res, err = c.loginFromPage(ctx, req); err != nil {
 			if len(savedCookies) > 0 {
 				logger.Warn(fmt.Sprintf("%s login failed, using cookies from db: %s", c.ITracker.GetName(), err))
 				c.cookies = savedCookies
@@ -125,19 +135,7 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 			return
 		}
 		c.cookies = res.Cookies()
-		if fetcher, ok := c.ITracker.(postLoginFetcher); ok {
-			if pageURL := fetcher.PostLoginURL(); pageURL != "" {
-				var (
-					extra    []*http.Cookie
-					fetchErr error
-				)
-				if extra, fetchErr = c.fetchPageCookies(ctx, pageURL); fetchErr != nil {
-					logger.Warn(fmt.Sprintf("%s post-login fetch failed: %s", c.ITracker.GetName(), fetchErr))
-				} else {
-					c.cookies = helper.MergeCookies(c.cookies, extra)
-				}
-			}
-		}
+		c.cookies = c.syncFlarePageCookies(ctx, c.cookies)
 	}
 	c.cookies = c.finalizeCookies(c.cookies)
 	c.hc.Jar.SetCookies(req.URL, c.cookies)
@@ -154,22 +152,26 @@ func (c *client) Cookies() (res []*http.Cookie) {
 func (c *client) GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error) {
 	var req *http.Request
 
-	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil); err != nil {
-		return
-	}
-	req.Header = *c.header
-
 	if c.header == nil {
 		err = fmt.Errorf("no header")
 		return
 	}
-	if res, err = c.tryHttp(ctx, req, c.flareOptions(c.finalizeCookies(c.cookies), false), download); err != nil {
+	if download {
+		if err = c.ensureFlareCookiesForDownload(ctx, link); err != nil {
+			return
+		}
+	}
+	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, link, nil); err != nil {
 		return
 	}
-	//if !download {
-	//	c.hc.Jar.SetCookies(res.Request.URL, res.Cookies())
-	//	c.cookies = c.hc.Jar.Cookies(res.Request.URL)
-	//}
+	if download {
+		c.applyDownloadHeaders(req)
+	} else {
+		req.Header = c.header.Clone()
+	}
+	if res, err = c.tryHttp(ctx, req, c.flareOptions(c.cookies, false), download); err != nil {
+		return
+	}
 	return
 }
 
@@ -192,12 +194,73 @@ func (c *client) setDefaultHeaders() {
 	return
 }
 
-func (c *client) flareOptions(cookies []*http.Cookie, onlyCookies bool) *proxy.Options {
-	opts := &proxy.Options{
+func (c *client) flarePageURL() string {
+	if fetcher, ok := c.ITracker.(postLoginFetcher); ok {
+		if pageURL := fetcher.PostLoginURL(); pageURL != "" {
+			return pageURL
+		}
+	}
+	return c.ITracker.GetHost()
+}
+
+func (c *client) syncFlarePageCookies(ctx context.Context, base []*http.Cookie) []*http.Cookie {
+	if _, ok := c.flareSessionID(); !ok {
+		return base
+	}
+	extra, err := c.fetchPageCookies(ctx, c.flarePageURL())
+	if err != nil {
+		logger.Warn(fmt.Sprintf("%s flare cookie sync failed: %s", c.ITracker.GetName(), err))
+		return base
+	}
+	return helper.MergeCookies(base, extra)
+}
+
+func (c *client) ensureFlareCookiesForDownload(ctx context.Context, link string) (err error) {
+	c.cookies = c.finalizeCookies(c.syncFlarePageCookies(ctx, c.cookies))
+	var u *url.URL
+	if u, err = url.Parse(link); err != nil {
+		return
+	}
+	c.hc.Jar.SetCookies(u, c.cookies)
+	return
+}
+
+func (c *client) applyDownloadHeaders(req *http.Request) {
+	src := c.header
+	if src == nil {
+		return
+	}
+	for _, key := range []string{
+		"User-Agent",
+		"Accept-Language",
+		"sec-ch-ua",
+		"sec-ch-ua-mobile",
+		"sec-ch-ua-platform",
+	} {
+		if v := src.Get(key); v != "" {
+			req.Header.Set(key, v)
+		}
+	}
+	if len(c.cookies) > 0 {
+		req.Header.Set("Cookie", helper.CookiesString(c.cookies))
+	}
+	req.Header.Set("Accept", "application/x-bittorrent,application/octet-stream,*/*;q=0.9")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	if topicID := req.URL.Query().Get("t"); topicID != "" {
+		if link := c.ITracker.TopicLink(topicID); link != "" {
+			req.Header.Set("Referer", link)
+		}
+	}
+}
+
+func (c *client) flareOptions(cookies []*http.Cookie, onlyCookies bool) *proxyModel.Options {
+	opts := &proxyModel.Options{
 		OnlyCookies: onlyCookies,
 	}
-	if p, ok := c.ITracker.(flareSessionProvider); ok {
-		opts.Session = p.FlareSession()
+	if sessionID, ok := c.flareSessionID(); ok {
+		opts.Session = sessionID
 		return opts
 	}
 	opts.Cookies = cookies
@@ -205,11 +268,11 @@ func (c *client) flareOptions(cookies []*http.Cookie, onlyCookies bool) *proxy.O
 }
 
 func (c *client) resetFlareSession() {
-	p, ok := c.ITracker.(flareSessionProvider)
+	sessionID, ok := c.flareSessionID()
 	if !ok {
 		return
 	}
-	if err := c.px.DestroyFlareSession(p.FlareSession()); err != nil {
+	if err := c.px.DestroyFlareSession(sessionID); err != nil {
 		logger.Warn(fmt.Sprintf("%s: flare session reset: %s", c.ITracker.GetName(), err))
 	}
 }
@@ -222,14 +285,14 @@ func (c *client) fetchPageCookies(ctx context.Context, pageURL string) (cookies 
 	if req, err = http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil); err != nil {
 		return
 	}
-	req.Header = *c.header
+	req.Header = c.header.Clone()
 	if res, err = c.doHttp(ctx, req, c.flareOptions(c.cookies, true), false); err != nil {
 		return
 	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, res.Body)
 	cookies = res.Cookies()
-	if res.Header.Get("User-Agent") != "" {
-		c.header.Set("User-Agent", res.Header.Get("User-Agent"))
-	}
+	c.syncUserAgent(res)
 	return
 }
 
@@ -240,11 +303,15 @@ func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *htt
 		err = fmt.Errorf("%s login error: %w", c.ITracker.GetName(), err)
 		return
 	}
-	if res.Header.Get("User-Agent") != "" {
-		c.header.Set("User-Agent", res.Header.Get("User-Agent"))
-	}
+	c.syncUserAgent(res)
 
 	return
+}
+
+func (c *client) syncUserAgent(res *http.Response) {
+	if res != nil && res.Header.Get("User-Agent") != "" {
+		c.header.Set("User-Agent", res.Header.Get("User-Agent"))
+	}
 }
 
 func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.Request, err error) {
@@ -271,15 +338,15 @@ func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.
 	if err != nil {
 		return
 	}
-	req.Header = *c.header
+	req.Header = c.header.Clone()
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	req.Header.Set("Host", c.ITracker.GetHost())
+	req.Header.Set("Host", c.ITracker.GetDomain())
 
 	return
 }
 
-func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Options, download bool) (res *http.Response, err error) {
+func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxyModel.Options, download bool) (res *http.Response, err error) {
 	err = c.cb.Call(func() (err error) {
 		res, err = c.doHttp(ctx, req, opts, download)
 		return
@@ -290,19 +357,19 @@ func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxy.Opt
 	return
 }
 
-func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxy.Options, download bool) (res *http.Response, err error) {
-	var (
-		_, proxyExists = c.px.(proxyService)
-		proxyType      = c.ITracker.GetProxyType()
-	)
-
-	if download {
-		proxyType = proxy.TypeNone
+func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxyModel.Options, download bool) (res *http.Response, err error) {
+	var doer helper.HTTPDoer = c.hc
+	if download && c.downloadHC != nil {
+		doer = c.downloadHC
 	}
-	switch {
-	case proxyType == proxy.TypeNone:
-		res, err = c.hc.Do(req)
-	case proxyExists:
+	proxyType := c.ITracker.GetProxyType()
+	if download {
+		proxyType = proxyModel.TypeNone
+	}
+	switch proxyType {
+	case proxyModel.TypeNone:
+		res, err = doer.Do(req)
+	case proxyModel.TypeFlare:
 		res, err = c.px.Send(req, opts, proxyType)
 	default:
 		err = fmt.Errorf("proxy is not set: %d", proxyType)
@@ -314,8 +381,13 @@ func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxy.Opti
 }
 
 func (c *client) checkResponse(req *http.Request, res *http.Response, download bool) (err error) {
-	if res.Request != nil && res.Request.URL.String() != req.URL.String() {
+	if !download && res.Request != nil && res.Request.URL.String() != req.URL.String() {
 		err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
+		return
+	}
+	if download && res.StatusCode >= http.StatusMultipleChoices && res.StatusCode < http.StatusBadRequest {
+		err = fmt.Errorf("download redirect not followed (status %d, location %s)", res.StatusCode, res.Header.Get("Location"))
+		return
 	}
 	if res.StatusCode >= http.StatusBadRequest {
 		b := new(bytes.Buffer)
@@ -324,17 +396,19 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 		if _, err = b.ReadFrom(res.Body); err != nil {
 			return
 		}
-		err = fmt.Errorf("unexpected status code: %d\n%s", res.StatusCode, b.String()[:100])
+		body := helper.Substr(b.String(), 0, 100)
+		err = fmt.Errorf("unexpected status code: %d\n%s", res.StatusCode, body)
 		return
 	}
 	return
 }
 
-func New(hc *http.Client, t ITracker, px proxyService, cb *helper.CircuitBreaker) IClient {
+func New(hc *http.Client, downloadHC helper.HTTPDoer, t ITracker, px proxy.IClient, cb *helper.CircuitBreaker) IClient {
 	return &client{
-		hc:       hc,
-		ITracker: t,
-		px:       px,
-		cb:       cb,
+		hc:         hc,
+		downloadHC: downloadHC,
+		ITracker:   t,
+		px:         px,
+		cb:         cb,
 	}
 }

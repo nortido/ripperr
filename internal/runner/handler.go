@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +17,6 @@ import (
 )
 
 const (
-	durationDay   = time.Hour * 24
 	durationMonth = time.Hour * 24 * 30
 	durationYear  = time.Hour * 24 * 365
 )
@@ -40,6 +37,7 @@ type trackerService interface {
 type manager interface {
 	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
+	SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 }
 
 type storage interface {
@@ -65,15 +63,9 @@ type handler struct {
 func (h *handler) Run(ctx context.Context) {
 	var err error
 
-	ch := make(chan *model.Entry)
 	cherr := make(chan error)
-	delay := time.Duration(h.config.WorkerDelay) * time.Minute
 	pt := time.NewTimer(0)
-	wt := time.NewTimer(0)
 
-	wt.Stop()
-
-	defer close(ch)
 	defer close(cherr)
 
 	if h.config.ThresholdMonth == 0 || h.config.ThresholdHalfYear == 0 || h.config.ThresholdYear == 0 || h.config.ThresholdOld == 0 {
@@ -82,6 +74,9 @@ func (h *handler) Run(ctx context.Context) {
 	}
 	h.mx = &sync.RWMutex{}
 	h.initTrackerChannels()
+	for ttid := range h.idx {
+		go h.trackerWorker(ctx, ttid, cherr)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -94,41 +89,64 @@ func (h *handler) Run(ctx context.Context) {
 					cherr <- err
 				}
 				pt.Reset(time.Duration(24/h.config.ListRefreshPerDay) * time.Hour)
-				wt.Reset(0)
 			}()
-		case <-wt.C:
-			for ttid := range h.idx {
-				go func(ttid int) {
-					for j := 0; j < h.chunkSize(ttid); j++ {
-						if err = h.worker(ctx, ttid, <-h.idx[ttid]); err != nil {
-							cherr <- err
-						}
-					}
-				}(ttid)
-			}
-			wt.Reset(delay)
 		}
 	}
+}
+
+func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error) {
+	interval := h.requestInterval(ttid)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-h.idx[ttid]:
+			if err := h.worker(ctx, ttid, e); err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case cherr <- err:
+				}
+			}
+			if interval <= 0 {
+				continue
+			}
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}
+}
+
+func (h *handler) requestInterval(ttid int) time.Duration {
+	limit := h.trackerService.GetHourLimit(ttid)
+	if limit <= 0 {
+		limit = 1
+	}
+	return time.Hour / time.Duration(limit)
 }
 
 func (h *handler) initTrackerChannels() {
 	h.idx = make(map[int]chan *model.Entry, len(h.trackerService.CachedList()))
 	for ttid := range h.trackerService.CachedList() {
-		h.idx[ttid] = make(chan *model.Entry)
+		h.idx[ttid] = make(chan *model.Entry, 4096)
 	}
 }
 
 func (h *handler) push(ctx context.Context) (err error) {
 	var (
-		i       int
-		t       int
 		entries []*model.Entry
+		t       int
 	)
 	if entries, err = h.manager.GetEntries(ctx, model.FilterOptions{Tag: h.config.WatchTag}); err != nil {
 		err = fmt.Errorf("get entries error: %w", err)
 		return
 	}
-	for i = range entries {
+	for i := range entries {
 		if entries[i].URL == "" {
 			continue
 		}
@@ -141,12 +159,14 @@ func (h *handler) push(ctx context.Context) (err error) {
 		} else if err != nil {
 			return
 		}
-		go func(i int) {
-			if t = h.trackerService.GetID(entries[i].URL); t == 0 {
-				return
-			}
-			h.idx[t] <- entries[i]
-		}(i)
+		if t = h.trackerService.GetID(entries[i].URL); t == 0 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case h.idx[t] <- entries[i]:
+		}
 	}
 	return
 }
@@ -184,17 +204,6 @@ func (h *handler) getHistory(ctx context.Context, link string) (hi *runner.Histo
 	return
 }
 
-func (h *handler) chunkSize(ttid int) (cs int) {
-	hourLimit := h.trackerService.GetHourLimit(ttid)
-	freq := h.config.WorkerDelay
-	cs = int(math.Floor(float64(hourLimit*freq) / 60))
-
-	if cs == 0 {
-		cs = 1
-	}
-	return
-}
-
 func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err error) {
 	var (
 		updated bool
@@ -215,7 +224,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 		return
 	}
 	if err = h.submit(ctx, ttid, tc, e); err != nil {
-		err = fmt.Errorf("%s %w", tc.DownloadLink(e.TopicID), err)
+		err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
 		return
 	}
 	logger.Info(fmt.Sprint("updated: ", e.Name))
@@ -228,17 +237,20 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClien
 		cur        *time.Time
 		b          *bytes.Buffer
 		downloadID string
+		encoded    = tc.GetProxyType() != proxy.TypeNone
 	)
 	if b, err = h.getPage(ctx, ttid, e.URL); err != nil {
 		return
 	}
-	downloadID = tc.ParseDownloadID(b, tc.GetProxyType() != proxy.TypeNone)
+	downloadID = tc.ParseDownloadID(b, encoded)
 
-	if e.Update == true && downloadID != "" && e.TopicID != downloadID {
+	if e.Update && downloadID != "" && e.TopicID != downloadID {
 		e.TopicID = downloadID
 		curPtr := time.Now()
 		cur = &curPtr
 	} else if cur, err = h.getDate(ctx, b, tc, e.Name); err != nil {
+		return
+	} else if cur == nil {
 		return
 	}
 	// TODO: add check count of updates in DB
@@ -246,6 +258,9 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClien
 		return
 	}
 	res = e.Timestamp.Before(*cur)
+	if res {
+		e.Magnet = tc.ParseMagnet(b, encoded)
+	}
 
 	return
 }
@@ -263,26 +278,13 @@ func (h *handler) getPage(ctx context.Context, ttid int, link string) (b *bytes.
 
 func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc tracker.IHttpClient, name string) (cur *time.Time, err error) {
 	if cur = tc.ParseDate(b, tc.GetProxyType() != proxy.TypeNone); cur == nil {
-		err = fmt.Errorf("current time not found for %s", name)
+		logger.Warn(fmt.Sprintf("current time not found for %s", name))
 	}
 	return
 }
 
 func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (err error) {
-	var b *bytes.Buffer
-
-	b, err = h.trackerService.Response(ctx, ttid, tc.DownloadLink(e.TopicID), true)
-	if err != nil {
-		return
-	} else if b == nil || b.Len() < 50 {
-		err = fmt.Errorf("no file data")
-		return
-	}
-	if strings.Contains(b.String(), "<html") {
-		err = fmt.Errorf("unexpected html response on download")
-		return
-	}
-	if err = h.manager.Submit(ctx, b, model.ManagerAddFileOptions{
+	opts := model.ManagerAddFileOptions{
 		Name:           e.Name,
 		Hash:           e.Hash,
 		Category:       e.Category,
@@ -290,10 +292,31 @@ func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, 
 		AutoManaged:    e.AutoManaged,
 		MaxRatio:       e.MaxRatio,
 		MaxSeedingTime: e.MaxSeedingTime,
-	}); err != nil {
+		Comment:        entryTopicURL(tc, e),
+	}
+	if e.Magnet != "" {
+		if err = h.manager.SubmitMagnet(ctx, e.Magnet, opts); err != nil {
+			err = fmt.Errorf("submit magnet error: %w", err)
+		}
+		return
+	}
+
+	var b *bytes.Buffer
+	b, err = h.trackerService.Response(ctx, ttid, tc.DownloadLink(e.TopicID), true)
+	if err != nil {
+		return
+	}
+	if err = h.manager.Submit(ctx, b, opts); err != nil {
 		err = fmt.Errorf("submit error: %w", err)
 	}
 	return
+}
+
+func entryTopicURL(tc tracker.IHttpClient, e *model.Entry) string {
+	if e.URL != "" {
+		return e.URL
+	}
+	return tc.TopicLink(e.TopicID)
 }
 
 func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur *time.Time) (err error) {

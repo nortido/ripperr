@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +21,9 @@ var (
 
 type IClient interface {
 	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
+	GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
+	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
 }
 
@@ -90,16 +93,55 @@ func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []
 }
 
 func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
-	op := qbt.TorrentAddOptions{
+	return c.client.AddTorrentFromMemoryCtx(ctx, buf.Bytes(), torrentAddOptions(opts).Prepare())
+}
+
+func (c *client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
+	if opts.Comment != "" {
+		return c.addMagnetWithComment(ctx, magnet, opts)
+	}
+	return c.client.AddTorrentFromUrlCtx(ctx, magnet, torrentAddOptions(opts).Prepare())
+}
+
+func torrentAddOptions(opts model.ManagerAddFileOptions) *qbt.TorrentAddOptions {
+	op := &qbt.TorrentAddOptions{
 		Tags:          opts.Tag,
 		Category:      opts.Category,
 		AutoTMM:       opts.AutoManaged,
 		LimitRatio:    opts.MaxRatio,
 		LimitSeedTime: opts.MaxSeedingTime,
+		Rename:        opts.Name,
 	}
-	err = c.client.AddTorrentFromMemoryCtx(ctx, buf.Bytes(), op.Prepare())
+	return op
+}
 
+func (c *client) GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error) {
+	if hash == "" {
+		return
+	}
+	var torrents []qbt.Torrent
+	if torrents, err = c.client.GetTorrentsCtx(ctx, qbt.TorrentFilterOptions{Hashes: []string{hash}}); err != nil {
+		return
+	}
+	if len(torrents) == 0 {
+		return
+	}
+	name = torrents[0].Name
+
+	var props qbt.TorrentProperties
+	if props, err = c.client.GetTorrentPropertiesCtx(ctx, hash); err != nil {
+		return
+	}
+	comment = props.Comment
 	return
+}
+
+func (c *client) apiURL(endpoint string) string {
+	host := strings.TrimRight(c.config.Host, "/")
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		return fmt.Sprintf("%s/api/v2/%s", host, endpoint)
+	}
+	return fmt.Sprintf("http://%s/api/v2/%s", host, endpoint)
 }
 
 func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {

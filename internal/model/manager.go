@@ -12,6 +12,7 @@ type ManagerAddFileOptions struct {
 	AutoManaged    bool
 	MaxRatio       float64
 	MaxSeedingTime int64
+	Comment        string
 }
 
 type ManagerDeleteOptions struct {

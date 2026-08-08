@@ -10,11 +10,6 @@ import (
 	fmapper "trackerr/internal/proxy/mapper/flaresolverr"
 )
 
-type Config struct {
-	Host       string
-	MaxTimeout int
-}
-
 type IClient interface {
 	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
 	DestroyFlareSession(sessionID string) error
@@ -36,7 +31,7 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 	switch proxyType {
 	case proxy.TypeFlare:
 		if opts != nil && opts.Session != "" {
-			mu := flareSessionLock(opts.Session)
+			mu := sessionLocks.Mutex(opts.Session)
 			mu.Lock()
 			defer mu.Unlock()
 		}

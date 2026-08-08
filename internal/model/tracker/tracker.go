@@ -80,6 +80,10 @@ func (t *Tracker) DownloadLink(topicID string) (url string) {
 	return fmt.Sprint(t.DownloadURL, topicID)
 }
 
+func (t *Tracker) TopicLink(topicID string) (url string) {
+	return
+}
+
 func (t *Tracker) Detect(url string) bool {
 	rx := regexp.MustCompile("(" + t.Domain + ")")
 	return rx.MatchString(url)
@@ -94,5 +98,9 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	return
 }
 func (t *Tracker) ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string) {
+	return
+}
+
+func (t *Tracker) ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string) {
 	return
 }

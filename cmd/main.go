@@ -16,6 +16,7 @@ import (
 
 	"trackerr/internal/config"
 	"trackerr/internal/helper"
+	"trackerr/internal/helper/tlsclient"
 	"trackerr/internal/manager"
 	"trackerr/internal/manager/client/qbittorrent"
 	"trackerr/internal/model"
@@ -39,15 +40,15 @@ type configuration struct {
 
 func main() {
 	var (
-		cfg    configuration
-		qbc    qbittorrent.IClient
-		px     proxy.IClient
-		ht     *http.Client
-		cj     *cookiejar.Jar
-		dbConn *pgxpool.Pool
-		dbCfg  *pgxpool.Config
-		db     storage.IClient
-		err    error
+		cfg        configuration
+		qbc        qbittorrent.IClient
+		px         proxy.IClient
+		ht         *http.Client
+		downloadHt helper.HTTPDoer
+		dbConn     *pgxpool.Pool
+		dbCfg      *pgxpool.Config
+		db         storage.IClient
+		err        error
 	)
 	// Load .env file if it exists
 	if err = godotenv.Load(); err != nil {
@@ -85,16 +86,27 @@ func main() {
 		break
 	}
 	// Init http client
+	var cj *cookiejar.Jar
 	if cj, err = cookiejar.New(nil); err != nil {
 		logger.Error(err.Error())
 		return
 	}
+	redirectPolicy := func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	ht = &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Jar:     cj,
-		Timeout: time.Duration(cfg.Runner.HttpTimeout) * time.Second,
+		CheckRedirect: redirectPolicy,
+		Jar:           cj,
+		Timeout:       time.Duration(cfg.Runner.HttpTimeout) * time.Second,
+	}
+	downloadHt, err = tlsclient.New(tlsclient.Config{
+		Timeout:  time.Duration(cfg.Runner.DownloadTimeout) * time.Second,
+		ProxyURL: cfg.Runner.DownloadProxy,
+		Profile:  cfg.Runner.TLSProfile,
+	})
+	if err != nil {
+		logger.Error(err.Error())
+		return
 	}
 
 	// Init proxy client
@@ -124,7 +136,7 @@ func main() {
 	db = storage.New(dbConn)
 
 	// Init trackers client
-	tr := tracker.New(ht, px, db, &helper.CircuitBreakerConfig{
+	tr := tracker.New(ht, downloadHt, px, db, &helper.CircuitBreakerConfig{
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	}, &trackerModel.TrackerConfig{
@@ -182,12 +194,14 @@ func main() {
 			Enabled:     cfg.Tracker.NNM.Enabled,
 		},
 	})
-	_ = tr.BuildCache(ctx)
+	if err = tr.BuildCache(ctx); err != nil {
+		logger.Error(err.Error())
+		return
+	}
 
 	// Init handler client
 	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, model.HandlerConfig{
 		WatchTag:          cfg.Runner.WatchTag,
-		WorkerDelay:       cfg.Runner.WorkerDelay,
 		ThresholdMonth:    cfg.Runner.MonthThresholdDays,
 		ThresholdHalfYear: cfg.Runner.HalfYearThresholdDays,
 		ThresholdYear:     cfg.Runner.YearThresholdDays,

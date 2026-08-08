@@ -2,14 +2,20 @@ package rutracker
 
 import (
 	"bytes"
+	"fmt"
+	"html"
 	"net/http"
 	"regexp"
 	"time"
 
-	"golang.org/x/text/encoding/charmap"
-
 	"trackerr/internal/helper"
 	"trackerr/internal/model/tracker"
+)
+
+var (
+	rxPostedSince = regexp.MustCompile(`<span class="posted_since hide-for-print">\(.+, ред\. (.+)\)</span>`)
+	rxPLink       = regexp.MustCompile(`<a class="p-link small" href="viewtopic\.php\?t=\d+">(.+)</a>`)
+	rxMagnet      = regexp.MustCompile(`href="(magnet:\?[^"]+)"`)
 )
 
 type Tracker struct {
@@ -21,28 +27,15 @@ func (t *Tracker) Headers() (header *http.Header) {
 
 	header.Add("Content-Type", "text/html; charset=cp1251")
 	header.Add("Host", t.GetHost())
-	//header.Add("Cookie", "bb_ssl=1; bb_guid=PLACEHOLDER; bb_t=PLACEHOLDER; bb_session=PLACEHOLDER; cf_clearance=PLACEHOLDER")
 
 	return
 }
 
 func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
-	var (
-		bb      []byte
-		rx      *regexp.Regexp
-		matches []string
-	)
-	if !encoded {
-		bb, _ = charmap.Windows1251.NewDecoder().Bytes(b.Bytes())
-	} else {
-		bb = b.Bytes()
-	}
-	rx = regexp.MustCompile(`<span class="posted_since hide-for-print">\(.+, ред\. (.+)\)</span>`)
-	matches = rx.FindStringSubmatch(string(bb))
-
+	text := pageText(b, encoded)
+	matches := rxPostedSince.FindStringSubmatch(text)
 	if len(matches) <= 1 {
-		rx = regexp.MustCompile(`<a class="p-link small" href="viewtopic\.php\?t=\d+">(.+)</a>`)
-		matches = rx.FindStringSubmatch(string(bb))
+		matches = rxPLink.FindStringSubmatch(text)
 	}
 	if len(matches) <= 1 {
 		return
@@ -58,6 +51,21 @@ func (t *Tracker) FlareSession() string {
 
 func (t *Tracker) PostLoginURL() string {
 	return t.GetHost() + "/forum/index.php"
+}
+
+func (t *Tracker) TopicLink(topicID string) (url string) {
+	if topicID == "" {
+		return
+	}
+	return fmt.Sprintf("%s/forum/viewtopic.php?t=%s", t.GetHost(), topicID)
+}
+
+func (t *Tracker) ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string) {
+	matches := rxMagnet.FindStringSubmatch(pageText(b, encoded))
+	if len(matches) < 2 {
+		return
+	}
+	return html.UnescapeString(matches[1])
 }
 
 func New(tracker tracker.Tracker) *Tracker {

@@ -1,7 +1,6 @@
 package model
 
 type HandlerConfig struct {
-	WorkerDelay       int
 	WatchTag          string
 	ThresholdMonth    int
 	ThresholdHalfYear int

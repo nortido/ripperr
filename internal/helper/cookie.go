@@ -62,6 +62,21 @@ func ParseCookies(line string) (cookies []*http.Cookie) {
 	return
 }
 
+func CloneCookies(cookies []*http.Cookie) []*http.Cookie {
+	if len(cookies) == 0 {
+		return nil
+	}
+	out := make([]*http.Cookie, 0, len(cookies))
+	for _, c := range cookies {
+		if c == nil {
+			continue
+		}
+		clone := *c
+		out = append(out, &clone)
+	}
+	return out
+}
+
 // MergeCookies merges cookie lists; later values override earlier ones by name.
 func MergeCookies(base, extra []*http.Cookie) []*http.Cookie {
 	var (
@@ -88,11 +103,22 @@ func MergeCookies(base, extra []*http.Cookie) []*http.Cookie {
 	return out
 }
 
-func CookiesString(ck []*http.Cookie) (res string) {
+func CookiesString(ck []*http.Cookie) string {
+	var b strings.Builder
+	first := true
 	for _, c := range ck {
-		res += c.Name + "=" + c.Value + "; "
+		if c == nil || c.Name == "" {
+			continue
+		}
+		if !first {
+			b.WriteString("; ")
+		}
+		first = false
+		b.WriteString(c.Name)
+		b.WriteString("=")
+		b.WriteString(c.Value)
 	}
-	return
+	return b.String()
 }
 
 func isCookieNameValid(raw string) bool {
