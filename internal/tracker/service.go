@@ -21,14 +21,14 @@ import (
 	"trackerr/internal/tracker/client/teamhd"
 )
 
-const (
-	TTL = time.Hour
+const TTL = time.Hour
 
-	RutrackerID = iota
-	KinozalID
-	RutorID
-	TeamhdID
-	NnmID
+const (
+	RutrackerID = 1
+	KinozalID   = 2
+	RutorID     = 3
+	TeamhdID    = 5
+	NnmID       = 6
 )
 
 type db interface {
@@ -36,24 +36,17 @@ type db interface {
 	SaveTracker(ctx context.Context, source *tracker.Tracker) (err error)
 }
 
-type IHttpClient interface {
-	client.ITracker
-	Cookies() (res []*http.Cookie)
-	InitClient(ctx context.Context, payload *tracker.Tracker, forceLogin bool) (err error)
-	GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error)
-}
-
 type IService interface {
 	BuildCache(ctx context.Context) (err error)
 	CachedList() (res map[int]client.ITracker)
 	GetID(url string) (id int)
 	GetHourLimit(ttid int) (limit int)
-	GetCachedClient(ctx context.Context, ttid int) (tc IHttpClient, err error)
+	GetCachedClient(ctx context.Context, ttid int) (tc client.IClient, err error)
 	Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error)
 }
 
 type CachedTracker struct {
-	IHttpClient
+	client.IClient
 	Created time.Time
 }
 
@@ -76,10 +69,10 @@ func (s *service) GetID(link string) (id int) {
 		i int
 	)
 	for i = range s.clientIndex {
-		if s.clientIndex[i].IHttpClient == nil {
+		if s.clientIndex[i].IClient == nil {
 			continue
 		}
-		if s.clientIndex[i].IHttpClient.Detect(link) {
+		if s.clientIndex[i].IClient.Detect(link) {
 			id = i
 			return
 		}
@@ -198,7 +191,7 @@ func (s *service) BuildCache(ctx context.Context) (err error) {
 	return
 }
 
-func (s *service) GetCachedClient(ctx context.Context, id int) (t IHttpClient, err error) {
+func (s *service) GetCachedClient(ctx context.Context, id int) (t client.IClient, err error) {
 	return s.getCached(ctx, id)
 }
 
@@ -212,7 +205,7 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 	s.mx.RLock()
 	ct, ok = s.clientIndex[id]
 	if ok && time.Since(ct.Created) < TTL {
-		if ct.IHttpClient == nil {
+		if ct.IClient == nil {
 			s.mx.RUnlock()
 			err = fmt.Errorf("tracker http error")
 			return
@@ -239,7 +232,7 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 }
 
 func (s *service) staleOnError(prev *CachedTracker, name string, err error) (ct *CachedTracker, out error) {
-	if prev != nil && prev.IHttpClient != nil {
+	if prev != nil && prev.IClient != nil {
 		logger.Warn(fmt.Sprintf("%s: using stale cache: %s", name, err))
 		return prev, nil
 	}
@@ -303,7 +296,7 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 	var (
 		ok bool
 		tr client.ITracker
-		tc IHttpClient
+		tc client.IClient
 	)
 	mu := s.cacheLocks.Mutex(tid)
 	mu.Lock()
@@ -325,12 +318,12 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 		return
 	}
 	s.mx.Lock()
-	s.clientIndex[tid] = &CachedTracker{IHttpClient: tc, Created: time.Now()}
+	s.clientIndex[tid] = &CachedTracker{IClient: tc, Created: time.Now()}
 	s.mx.Unlock()
 	return
 }
 
-func (s *service) store(ctx context.Context, tid int, tc IHttpClient, forceLogin bool) (err error) {
+func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLogin bool) (err error) {
 	var (
 		attrs      *tracker.Tracker
 		hadCookies bool

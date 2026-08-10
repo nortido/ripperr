@@ -22,9 +22,7 @@ type IManager interface {
 }
 
 type manager struct {
-	offset int
 	client client
-	index  chan *model.Entry
 }
 
 func (m *manager) GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error) {
@@ -38,7 +36,7 @@ func (m *manager) Submit(ctx context.Context, buf *bytes.Buffer, opts model.Mana
 	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	return m.replaceTorrent(ctx, opts, func() error {
+	return m.replaceTorrent(ctx, opts, func(opts model.ManagerAddFileOptions) error {
 		return m.client.AddFromBuffer(ctx, buf, opts)
 	})
 }
@@ -47,12 +45,15 @@ func (m *manager) SubmitMagnet(ctx context.Context, magnet string, opts model.Ma
 	if magnet == "" {
 		return
 	}
-	return m.replaceTorrent(ctx, opts, func() error {
+	return m.replaceTorrent(ctx, opts, func(opts model.ManagerAddFileOptions) error {
 		return m.client.AddFromMagnet(ctx, magnet, opts)
 	})
 }
 
-func (m *manager) replaceTorrent(ctx context.Context, opts model.ManagerAddFileOptions, add func() error) (err error) {
+// replaceTorrent resolves the current name/comment of an existing torrent (by
+// hash) before deleting and re-adding it, so add receives the resolved opts
+// rather than the caller's original values.
+func (m *manager) replaceTorrent(ctx context.Context, opts model.ManagerAddFileOptions, add func(model.ManagerAddFileOptions) error) (err error) {
 	if opts.Hash != "" {
 		if name, comment, detailErr := m.client.GetTorrentDetails(ctx, opts.Hash); detailErr == nil {
 			if name != "" {
@@ -66,7 +67,7 @@ func (m *manager) replaceTorrent(ctx context.Context, opts model.ManagerAddFileO
 	if err = m.client.Delete(ctx, model.ManagerDeleteOptions{Hash: opts.Hash, Category: opts.Category, Name: opts.Name}); err != nil {
 		return
 	}
-	return add()
+	return add(opts)
 }
 
 func NewManager(client client) IManager {

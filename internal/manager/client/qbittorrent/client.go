@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	qbt "github.com/autobrr/go-qbittorrent"
+	"golang.org/x/sync/errgroup"
 
 	"trackerr/internal/model"
 	"trackerr/internal/system/logger"
@@ -33,61 +33,33 @@ type client struct {
 }
 
 func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error) {
-	var (
-		i     int
-		qts   []qbt.Torrent
-		wg    sync.WaitGroup
-		ch    chan *model.Entry
-		to    qbt.TorrentFilterOptions
-		cherr = make(chan error)
-	)
-
-	to = qbt.TorrentFilterOptions{
+	to := qbt.TorrentFilterOptions{
 		Filter: qbt.TorrentFilterAll,
 		Sort:   "added_on",
 	}
 	if opts.Tag != "" {
 		to.Tag = opts.Tag
 	}
-	if qts, err = c.client.GetTorrents(to); err != nil {
+	qts, err := c.client.GetTorrents(to)
+	if err != nil {
 		return
 	}
-	ch = make(chan *model.Entry, len(qts))
 
-	for _, t := range qts {
-		select {
-		case <-ctx.Done():
-			cherr <- ctx.Err()
-			return
-		case err = <-cherr:
-			return
-		default:
-			wg.Add(1)
-			go func(t qbt.Torrent) {
-				defer wg.Done()
-				p, err := c.getProperties(&t)
-				if err != nil {
-					cherr <- err
-					return
-				}
-				e := c.mapEntry(&t, p)
-				ch <- e
-			}(t)
-		}
-	}
-	go func() {
-		wg.Wait()
-		close(ch)
-		close(cherr)
-	}()
-	if err = <-cherr; err != nil {
-		return
-	}
 	entries = make([]*model.Entry, len(qts))
-
-	for t := range ch {
-		entries[i] = t
-		i++
+	g, gctx := errgroup.WithContext(ctx)
+	for i := range qts {
+		i, t := i, qts[i]
+		g.Go(func() error {
+			p, err := c.getProperties(gctx, &t)
+			if err != nil {
+				return err
+			}
+			entries[i] = c.mapEntry(&t, p)
+			return nil
+		})
+	}
+	if err = g.Wait(); err != nil {
+		entries = nil
 	}
 	return
 }
@@ -158,9 +130,9 @@ func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (e
 	return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, false)
 }
 
-func (c *client) getProperties(t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
+func (c *client) getProperties(ctx context.Context, t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
 	var tp qbt.TorrentProperties
-	if tp, err = c.client.GetTorrentProperties(t.Hash); err != nil {
+	if tp, err = c.client.GetTorrentPropertiesCtx(ctx, t.Hash); err != nil {
 		return
 	}
 	p = &tp

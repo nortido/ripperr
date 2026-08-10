@@ -12,7 +12,6 @@ import (
 	"trackerr/internal/model/proxy"
 	"trackerr/internal/model/runner"
 	"trackerr/internal/system/logger"
-	"trackerr/internal/tracker"
 	"trackerr/internal/tracker/client"
 )
 
@@ -30,7 +29,7 @@ type trackerService interface {
 	CachedList() (res map[int]client.ITracker)
 	GetID(url string) (id int)
 	GetHourLimit(ttid int) (limit int)
-	GetCachedClient(ctx context.Context, ttid int) (tc tracker.IHttpClient, err error)
+	GetCachedClient(ctx context.Context, ttid int) (tc client.IClient, err error)
 	Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error)
 }
 
@@ -50,10 +49,8 @@ type IHandler interface {
 }
 
 type handler struct {
-	offset         int
 	mx             *sync.RWMutex
 	config         model.HandlerConfig
-	entries        []*model.Entry
 	idx            map[int]chan *model.Entry
 	manager        manager
 	storage        storage
@@ -85,13 +82,24 @@ func (h *handler) Run(ctx context.Context) {
 			logger.Error(err.Error())
 		case <-pt.C:
 			go func() {
-				if err = h.push(ctx); err != nil {
-					cherr <- err
+				if pushErr := h.push(ctx); pushErr != nil {
+					cherr <- pushErr
 				}
-				pt.Reset(time.Duration(24/h.config.ListRefreshPerDay) * time.Hour)
+				pt.Reset(time.Until(h.nextRun(time.Now())))
 			}()
 		}
 	}
+}
+
+func (h *handler) nextRun(now time.Time) time.Time {
+	interval := time.Duration(24/h.config.ListRefreshPerDay) * time.Hour
+	anchor := time.Date(now.Year(), now.Month(), now.Day(), h.config.StartHour, 0, 0, 0, now.Location())
+	t := anchor
+	if !t.After(now) {
+		k := int64(now.Sub(anchor))/int64(interval) + 1
+		t = anchor.Add(time.Duration(k) * interval)
+	}
+	return t
 }
 
 func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error) {
@@ -207,7 +215,7 @@ func (h *handler) getHistory(ctx context.Context, link string) (hi *runner.Histo
 func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err error) {
 	var (
 		updated bool
-		tc      tracker.IHttpClient
+		tc      client.IClient
 	)
 	//logger.Info(fmt.Sprint("processing: ", e.Name))
 	h.mx.Lock()
@@ -232,7 +240,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 	return
 }
 
-func (h *handler) checkPage(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (res bool, err error) {
+func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry) (res bool, err error) {
 	var (
 		cur        *time.Time
 		b          *bytes.Buffer
@@ -276,14 +284,14 @@ func (h *handler) getPage(ctx context.Context, ttid int, link string) (b *bytes.
 	return
 }
 
-func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc tracker.IHttpClient, name string) (cur *time.Time, err error) {
+func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc client.IClient, name string) (cur *time.Time, err error) {
 	if cur = tc.ParseDate(b, tc.GetProxyType() != proxy.TypeNone); cur == nil {
 		logger.Warn(fmt.Sprintf("current time not found for %s", name))
 	}
 	return
 }
 
-func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, e *model.Entry) (err error) {
+func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *model.Entry) (err error) {
 	opts := model.ManagerAddFileOptions{
 		Name:           e.Name,
 		Hash:           e.Hash,
@@ -312,7 +320,7 @@ func (h *handler) submit(ctx context.Context, ttid int, tc tracker.IHttpClient, 
 	return
 }
 
-func entryTopicURL(tc tracker.IHttpClient, e *model.Entry) string {
+func entryTopicURL(tc client.IClient, e *model.Entry) string {
 	if e.URL != "" {
 		return e.URL
 	}
@@ -338,12 +346,14 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur
 }
 
 func (h *handler) getRecheckAt(tm *time.Time) (result *time.Time) {
-	var (
-		tt = time.Now()
-		d  = time.Since(*tm)
-	)
+	tt := time.Now()
+	if tm == nil {
+		tt = tt.AddDate(0, 0, h.config.ThresholdMonth)
+		return &tt
+	}
+	d := time.Since(*tm)
 	switch {
-	case tm == nil, tm.Year() == 1, d < durationMonth:
+	case tm.Year() == 1, d < durationMonth:
 		tt = tt.AddDate(0, 0, h.config.ThresholdMonth)
 	case d < durationYear/2:
 		tt = tt.AddDate(0, 0, h.config.ThresholdHalfYear)

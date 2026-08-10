@@ -12,7 +12,7 @@ type Tracker struct {
 	tracker.Tracker
 }
 
-func (t *Tracker) Header() (header *http.Header) {
+func (t *Tracker) Headers() (header *http.Header) {
 	header = &http.Header{}
 
 	header.Add("Host", t.GetHost())

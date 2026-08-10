@@ -35,9 +35,7 @@ type service struct {
 }
 
 func (s *service) GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error) {
-	var sttr = &storage.Tracker{}
-
-	res = &tracker.Tracker{}
+	var sttr *storage.Tracker
 
 	if sttr, err = s.pg.GetTracker(ctx, trackerID); err != nil {
 		return
@@ -74,16 +72,13 @@ func (s *service) SaveTracker(ctx context.Context, source *tracker.Tracker) (err
 }
 
 func (s *service) GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error) {
-	var (
-		urlHash    string
-		dbItem     *storage.Item
-		hashBuffer = fnv.New32()
-	)
+	var dbItem *storage.Item
+
+	hashBuffer := fnv.New32()
 	if _, err = hashBuffer.Write([]byte(link)); err != nil {
 		return
 	}
-	urlHash = fmt.Sprint(hashBuffer.Sum32())
-	item = &runner.HistoryItem{URLHash: urlHash}
+	urlHash := fmt.Sprint(hashBuffer.Sum32())
 
 	if dbItem, err = s.pg.GetItem(ctx, urlHash); err != nil {
 		return

@@ -19,6 +19,9 @@ const (
 	StateHalfOpen
 )
 
+// ErrCircuitOpen is returned by Call while the circuit is open and blocking calls.
+var ErrCircuitOpen = errors.New("circuit breaker: circuit is open")
+
 type CircuitBreaker struct {
 	MaxFailures     int
 	Timeout         time.Duration
@@ -33,24 +36,23 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 	defer cb.mx.Unlock()
 
 	switch cb.state {
-	case StateOpen:
+	case StateClosed:
 		if err = fn(); err != nil {
 			cb.recordFailure()
 			return err
 		}
-	case StateClosed:
+		cb.reset()
+	case StateOpen:
 		if time.Since(cb.lastFailureTime) > cb.Timeout {
 			cb.state = StateHalfOpen
 		}
-		err = errors.New("failed to call")
-		return
+		err = ErrCircuitOpen
 	case StateHalfOpen:
 		if err = fn(); err != nil {
 			cb.recordFailure()
 			return err
 		}
 		cb.reset()
-		return
 	}
 	return
 }
@@ -59,18 +61,18 @@ func (cb *CircuitBreaker) recordFailure() {
 	cb.failures++
 	cb.lastFailureTime = time.Now()
 	if cb.failures >= cb.MaxFailures {
-		cb.state = StateClosed
+		cb.state = StateOpen
 	}
 }
 
 func (cb *CircuitBreaker) reset() {
-	cb.state = StateOpen
+	cb.state = StateClosed
 	cb.failures = 0
 }
 
 func NewCircuitBreaker(cfg *CircuitBreakerConfig) *CircuitBreaker {
 	return &CircuitBreaker{
-		state:       StateOpen,
+		state:       StateClosed,
 		MaxFailures: cfg.MaxFailures,
 		Timeout:     cfg.Timeout,
 	}

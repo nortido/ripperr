@@ -6,8 +6,6 @@ import (
 	"regexp"
 	"time"
 
-	"golang.org/x/text/encoding/charmap"
-
 	"trackerr/internal/helper"
 	"trackerr/internal/model/tracker"
 )
@@ -16,7 +14,7 @@ type Tracker struct {
 	tracker.Tracker
 }
 
-func (t *Tracker) Header() (header *http.Header) {
+func (t *Tracker) Headers() (header *http.Header) {
 	header = &http.Header{}
 
 	header.Add("Content-Type", "text/html; charset=windows-1251")
@@ -31,20 +29,15 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	var (
 		i       int
 		v       string
-		bb      []byte
 		rx      *regexp.Regexp
 		matches []string
 	)
-	if !encoded {
-		bb, _ = charmap.Windows1251.NewDecoder().Bytes(b.Bytes())
-	} else {
-		bb = b.Bytes()
-	}
+	text := helper.PageText(b, encoded)
 	rx = regexp.MustCompile(`<div class="bx1 justify"><b>Торрент-файл обновлен ([^<]+?) в (\d{1,2}:\d{2})</b>`)
-	matches = rx.FindStringSubmatch(string(bb))
+	matches = rx.FindStringSubmatch(text)
 	if len(matches) <= 1 {
 		rx = regexp.MustCompile(`<li>Залит<span class="floatright green n">([^<]+?) в (\d{1,2}:\d{2})</span>`)
-		matches = rx.FindStringSubmatch(string(bb))
+		matches = rx.FindStringSubmatch(text)
 	}
 	if len(matches) <= 1 {
 		return

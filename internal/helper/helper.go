@@ -1,10 +1,24 @@
 package helper
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/charmap"
 )
+
+// PageText decodes a tracker response body. Responses fetched directly are
+// windows-1251 encoded; responses proxied through FlareSolverr arrive already
+// decoded (encoded=true), so they're returned as-is.
+func PageText(b *bytes.Buffer, encoded bool) string {
+	if encoded {
+		return b.String()
+	}
+	bb, _ := charmap.Windows1251.NewDecoder().Bytes(b.Bytes())
+	return string(bb)
+}
 
 func Substr(s string, pos, length int) string {
 	runes := []rune(s)

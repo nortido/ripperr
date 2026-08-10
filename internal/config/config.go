@@ -79,6 +79,7 @@ type Runner struct {
 	HalfYearThresholdDays int      `env:"RUNNER_HALF_YEAR_UPDATE_THRESHOLD, default=7"`
 	YearThresholdDays     int      `env:"RUNNER_YEAR_UPDATE_THRESHOLD, default=30"`
 	ListRefreshPerDay     int      `env:"RUNNER_LIST_REFRESH_PER_DAY, default=2"`
+	StartHour             int      `env:"RUNNER_START_HOUR, default=7"`
 	HttpTimeout           int64    `env:"RUNNER_HTTP_TIMEOUT, default=30"`
 	DownloadTimeout       int64    `env:"RUNNER_DOWNLOAD_TIMEOUT, default=240"`
 	DownloadProxy         string   `env:"RUNNER_DOWNLOAD_PROXY, default="`

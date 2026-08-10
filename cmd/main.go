@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -51,12 +50,10 @@ func main() {
 		err        error
 	)
 	// Load .env file if it exists
-	if err = godotenv.Load(); err != nil {
-		//logger.Info("No .env file found, using system environment variables")
-	}
+	_ = godotenv.Load()
 
-	// TODO: gracefull shutdown
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
 
 	if err = envconfig.Process(ctx, &cfg); err != nil {
 		logger.Error(err.Error())
@@ -116,12 +113,10 @@ func main() {
 		},
 		Timeout: time.Duration(cfg.Flaresolverr.MaxTimeout)*time.Millisecond + 30*time.Second,
 	}, &proxyModel.Config{
-		None: proxyModel.ItemConfig{},
 		Flaresolverr: proxyModel.ItemConfig{
 			URL:        cfg.Flaresolverr.Host,
 			MaxTimeout: cfg.Flaresolverr.MaxTimeout,
 		},
-		Http: proxyModel.ItemConfig{},
 	})
 
 	// Init db client
@@ -207,14 +202,9 @@ func main() {
 		ThresholdYear:     cfg.Runner.YearThresholdDays,
 		ThresholdOld:      cfg.Runner.YearThresholdDays,
 		ListRefreshPerDay: cfg.Runner.ListRefreshPerDay,
+		StartHour:         cfg.Runner.StartHour,
 		Categories:        cfg.Runner.AllowedCategories,
 	})
 	rn.Run(ctx)
-
-	// Graceful shutdown
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
-	defer func(sig os.Signal) {
-		logger.Info("goodbye")
-	}(<-c)
+	logger.Info("goodbye")
 }

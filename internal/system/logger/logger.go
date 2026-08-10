@@ -39,10 +39,6 @@ func log(level Level, label, msg string) {
 	fmt.Println(time.Now().Format(time.DateTime), label, msg)
 }
 
-func Debug(msg string) {
-	log(LevelDebug, "DEBUG:", msg)
-}
-
 func Info(msg string) {
 	log(LevelInfo, "INFO:", msg)
 }

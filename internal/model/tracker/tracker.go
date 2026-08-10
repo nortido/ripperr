@@ -11,9 +11,7 @@ import (
 )
 
 const (
-	PublicityPrivate = "private"
-	PublicitySemi    = "semi"
-	PublicityPublic  = "public"
+	PublicityPublic = "public"
 )
 
 type TrackerConfig struct {

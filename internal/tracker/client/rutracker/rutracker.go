@@ -32,7 +32,7 @@ func (t *Tracker) Headers() (header *http.Header) {
 }
 
 func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
-	text := pageText(b, encoded)
+	text := helper.PageText(b, encoded)
 	matches := rxPostedSince.FindStringSubmatch(text)
 	if len(matches) <= 1 {
 		matches = rxPLink.FindStringSubmatch(text)
@@ -61,7 +61,7 @@ func (t *Tracker) TopicLink(topicID string) (url string) {
 }
 
 func (t *Tracker) ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string) {
-	matches := rxMagnet.FindStringSubmatch(pageText(b, encoded))
+	matches := rxMagnet.FindStringSubmatch(helper.PageText(b, encoded))
 	if len(matches) < 2 {
 		return
 	}

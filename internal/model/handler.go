@@ -7,5 +7,6 @@ type HandlerConfig struct {
 	ThresholdYear     int
 	ThresholdOld      int
 	ListRefreshPerDay int
+	StartHour         int
 	Categories        []string
 }

@@ -11,10 +11,7 @@ import (
 	"trackerr/internal/model/proxy"
 )
 
-const (
-	responseOK    = "ok"
-	responseError = "error"
-)
+const responseOK = "ok"
 
 func PrepareParams(r *http.Request, opts *proxy.Options) (params *flaresolverr.Payload) {
 	params = &flaresolverr.Payload{
