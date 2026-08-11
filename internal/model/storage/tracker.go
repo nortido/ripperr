@@ -24,5 +24,6 @@ type Item struct {
 	URL           string     `pgx:"item_url"`
 	CreatedAt     *time.Time `pgx:"created_at"`
 	RecheckAt     *time.Time `pgx:"recheck_at"`
+	ForceCheck    bool       `pgx:"force_check"`
 	Exists        bool
 }

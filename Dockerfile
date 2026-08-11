@@ -3,7 +3,7 @@ FROM golang:1.25 AS builder
 ENV GOOS=linux CGO_ENABLED=0
 COPY . /app
 WORKDIR /app
-RUN go build ./cmd/main.go && ls -la
+RUN go build -o main ./cmd && ls -la
 EXPOSE 6410 2345
 #CMD ["/go/bin/dlv", "--listen=:2345", "--headless=true", "--api-version=2", "--accept-multiclient", "exec", "/app/main"]
 #CMD /app/main

@@ -109,7 +109,7 @@ func (c *client) addTorrentWithComment(ctx context.Context, data []byte, opts mo
 	if data, err = torrentmeta.SetComment(data, opts.Comment); err != nil {
 		return fmt.Errorf("set torrent comment: %w", err)
 	}
-	return c.client.AddTorrentFromMemoryCtx(ctx, data, torrentAddOptions(opts).Prepare())
+	return c.addTorrentVerified(ctx, data, opts)
 }
 
 func (c *client) addMagnetWithComment(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
@@ -122,9 +122,9 @@ func (c *client) addMagnetWithComment(ctx context.Context, magnet string, opts m
 		data, err = torrentmeta.TorrentFromMagnet(ctx, magnet, opts.Comment)
 		if err != nil {
 			logger.Warn(fmt.Sprintf("local torrent build: %s, adding without comment", err))
-			return c.client.AddTorrentFromUrlCtx(ctx, magnet, torrentAddOptions(opts).Prepare())
+			return c.addMagnetURLVerified(ctx, magnet, opts)
 		}
-		return c.client.AddTorrentFromMemoryCtx(ctx, data, torrentAddOptions(opts).Prepare())
+		return c.addTorrentVerified(ctx, data, opts)
 	}
 	return c.addTorrentWithComment(ctx, data, opts)
 }

@@ -1,7 +1,9 @@
 package model
 
+import "time"
+
 type HandlerConfig struct {
-	WatchTag          string
+	WatchTags         []string
 	ThresholdMonth    int
 	ThresholdHalfYear int
 	ThresholdYear     int
@@ -9,4 +11,6 @@ type HandlerConfig struct {
 	ListRefreshPerDay int
 	StartHour         int
 	Categories        []string
+	Location          *time.Location // nil = time.Local
+	Immediate         bool
 }

@@ -10,7 +10,6 @@ require (
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/jackc/pgx/v5 v5.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/nortido/go-flaresolverr v0.1.1
 	github.com/sethvargo/go-envconfig v1.3.0
 	golang.org/x/net v0.52.0
 	golang.org/x/sync v0.20.0

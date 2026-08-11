@@ -1,8 +1,10 @@
 package model
 
-type FilterOptions struct {
-	Tag string
-}
+import "errors"
+
+var ErrAlreadyAdded = errors.New("torrent already added")
+
+type FilterOptions struct{}
 
 type ManagerAddFileOptions struct {
 	Hash           string

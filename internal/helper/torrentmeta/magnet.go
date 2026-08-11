@@ -3,8 +3,12 @@ package torrentmeta
 import (
 	"bytes"
 	"context"
+	"encoding/base32"
+	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/anacrolix/log"
@@ -55,4 +59,36 @@ func TorrentFromMagnet(ctx context.Context, magnetURI, comment string) ([]byte, 
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func BtihFromMagnet(magnet string) (hash string, ok bool) {
+	u, err := url.Parse(magnet)
+	if err != nil {
+		return "", false
+	}
+	xt := u.Query().Get("xt")
+	const prefix = "urn:btih:"
+	if len(xt) < len(prefix) || !strings.EqualFold(xt[:len(prefix)], prefix) {
+		return "", false
+	}
+	btih := xt[len(prefix):]
+	if i := strings.IndexAny(btih, "&?"); i >= 0 {
+		btih = btih[:i]
+	}
+	btih = strings.ToLower(btih)
+	switch len(btih) {
+	case 40:
+		if _, err := hex.DecodeString(btih); err != nil {
+			return "", false
+		}
+		return btih, true
+	case 32:
+		decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(btih))
+		if err != nil || len(decoded) != 20 {
+			return "", false
+		}
+		return hex.EncodeToString(decoded), true
+	default:
+		return "", false
+	}
 }

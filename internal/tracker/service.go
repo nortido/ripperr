@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"trackerr/internal/helper"
+	"trackerr/internal/helper/breakeralerts"
 	"trackerr/internal/model/tracker"
 	"trackerr/internal/proxy"
 	"trackerr/internal/system/logger"
@@ -43,6 +44,7 @@ type IService interface {
 	GetHourLimit(ttid int) (limit int)
 	GetCachedClient(ctx context.Context, ttid int) (tc client.IClient, err error)
 	Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error)
+	DestroyFlareSessions()
 }
 
 type CachedTracker struct {
@@ -62,19 +64,14 @@ type service struct {
 	clientIndex        map[int]*CachedTracker
 	handlerRegistry    map[int]client.ITracker
 	cbCfg              *helper.CircuitBreakerConfig
+	alerts             *breakeralerts.Registry
+	domainAlive        domainAliveFunc
 }
 
 func (s *service) GetID(link string) (id int) {
-	var (
-		i int
-	)
-	for i = range s.clientIndex {
-		if s.clientIndex[i].IClient == nil {
-			continue
-		}
-		if s.clientIndex[i].IClient.Detect(link) {
-			id = i
-			return
+	for i, tr := range s.handlerRegistry {
+		if tr.Detect(link) {
+			return i
 		}
 	}
 	return
@@ -176,6 +173,9 @@ func (s *service) BuildCache(ctx context.Context) (err error) {
 			defer wg.Done()
 			s.destroyFlareSession(i)
 			if e := s.cache(ctx, i, false); e != nil {
+				if errors.Is(e, context.Canceled) {
+					return
+				}
 				name := s.handlerRegistry[i].GetName()
 				logger.Error(fmt.Sprintf("%s: %s", name, e))
 				mu.Lock()
@@ -257,6 +257,14 @@ func (s *service) destroyFlareSession(id int) {
 	}
 }
 
+// DestroyFlareSessions removes flare sessions of all trackers; called on shutdown
+// so FlareSolverr is not left with orphaned browser sessions.
+func (s *service) DestroyFlareSessions() {
+	for id := range s.handlerRegistry {
+		s.destroyFlareSession(id)
+	}
+}
+
 func (s *service) shouldReloginAfterFlare(ttid int, err error) bool {
 	if !helper.IsFlareTimeout(err) || s.cbCfg == nil || s.cbCfg.MaxFailures <= 0 {
 		return false
@@ -308,8 +316,22 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
-	tc = client.New(s.hc, s.downloadHC, tr, s.px, helper.NewCircuitBreaker(s.cbCfg))
+	active := trackerActiveDomain(tr)
+	if active == "" {
+		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), s.domainAlive)
+	}
+	if active != tr.GetDomain() {
+		logger.Info(fmt.Sprintf("tracker %s: using mirror %s", tr.GetName(), active))
+		tr = withActiveDomain(tr, active)
+	}
+	if s.alerts != nil {
+		s.alerts.Close(tr.GetName())
+	}
+	tc = client.New(s.hc, s.downloadHC, tr, s.px, s.newBreaker(tr.GetName()))
 	if err = s.store(ctx, tid, tc, forceLogin); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		if forceLogin {
 			logger.Warn(fmt.Sprintf("%s cache refresh failed: %s", tr.GetName(), err))
 		} else {
@@ -363,7 +385,7 @@ func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLo
 	return
 }
 
-func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig) IService {
+func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig, alerts *breakeralerts.Registry) IService {
 	handlerRegistry := make(map[int]client.ITracker)
 	if conf.Rutracker.Enabled {
 		handlerRegistry[RutrackerID] = rutracker.New(conf.Rutracker)
@@ -387,8 +409,17 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, c
 		px:                 px,
 		db:                 db,
 		cbCfg:              cbCfg,
+		alerts:             alerts,
 		handlerRegistry:    handlerRegistry,
 		clientIndex:        make(map[int]*CachedTracker),
 		flareTimeoutCounts: make(map[int]int),
+		domainAlive:        defaultDomainAlive,
 	}
+}
+
+func (s *service) newBreaker(name string) *helper.CircuitBreaker {
+	cb := helper.NewCircuitBreaker(s.cbCfg)
+	cb.TrackerName = name
+	cb.Alerts = s.alerts
+	return cb
 }

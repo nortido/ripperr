@@ -26,6 +26,7 @@ type ITracker interface {
 	GetHourLimit() (limit int)
 	GetCookies() (cookies []*http.Cookie)
 	GetCredentials() (credentials string)
+	GetMirrors() []string
 	LoginLink() (url string)
 	DownloadLink(topicID string) (url string)
 	TopicLink(topicID string) (url string)
@@ -69,6 +70,14 @@ type cookieCompletenessChecker interface {
 	CookiesIncomplete(cookies []*http.Cookie) bool
 }
 
+// loginAuthValidator is implemented only by trackers that must have auth cookies
+// in the client after Flare login (e.g. kinozal uid/pass). Session-based trackers
+// (rutracker) do not implement it.
+type loginAuthValidator interface {
+	LoginAuthIncomplete(cookies []*http.Cookie) bool
+	LoginAuthHint() string
+}
+
 func (c *client) flareSessionID() (string, bool) {
 	p, ok := c.ITracker.(FlareSessionProvider)
 	if !ok {
@@ -105,7 +114,9 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 		c.cookies = nil
 	}
 	if !forceLogin && len(c.cookies) > 0 {
-		if checker, ok := c.ITracker.(cookieCompletenessChecker); ok && checker.CookiesIncomplete(c.cookies) {
+		if validator, ok := c.ITracker.(loginAuthValidator); ok && validator.LoginAuthIncomplete(c.cookies) {
+			c.cookies = nil
+		} else if checker, ok := c.ITracker.(cookieCompletenessChecker); ok && checker.CookiesIncomplete(c.cookies) {
 			c.cookies = nil
 		}
 	}
@@ -124,23 +135,42 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 		if !forceLogin {
 			c.resetFlareSession()
 		}
+		if err = c.preflightFlareLogin(ctx); err != nil {
+			return
+		}
 		if res, err = c.loginFromPage(ctx, req); err != nil {
-			if len(savedCookies) > 0 {
+			if !forceLogin && len(savedCookies) > 0 {
 				logger.Warn(fmt.Sprintf("%s login failed, using cookies from db: %s", c.ITracker.GetName(), err))
 				c.cookies = savedCookies
 				c.cookies = c.finalizeCookies(c.cookies)
 				c.hc.Jar.SetCookies(req.URL, c.cookies)
-				return
+				return c.validateLoginAuth()
 			}
 			return
 		}
-		c.cookies = res.Cookies()
+		c.cookies = helper.MergeCookies(c.cookies, res.Cookies())
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
 		c.cookies = c.syncFlarePageCookies(ctx, c.cookies)
 	}
 	c.cookies = c.finalizeCookies(c.cookies)
+	if err = c.validateLoginAuth(); err != nil {
+		return
+	}
 	c.hc.Jar.SetCookies(req.URL, c.cookies)
-
 	return
+}
+
+func (c *client) validateLoginAuth() error {
+	v, ok := c.ITracker.(loginAuthValidator)
+	if !ok || !v.LoginAuthIncomplete(c.cookies) {
+		return nil
+	}
+	msg := "login failed: no auth cookies (uid/pass)"
+	if hint := v.LoginAuthHint(); hint != "" {
+		msg += " — " + hint
+	}
+	return fmt.Errorf("%s: %s", c.ITracker.GetName(), msg)
 }
 
 func (c *client) Cookies() (res []*http.Cookie) {
@@ -156,6 +186,7 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 		err = fmt.Errorf("no header")
 		return
 	}
+	link = c.pageRequestURL(link)
 	if download {
 		if err = c.ensureFlareCookiesForDownload(ctx, link); err != nil {
 			return
@@ -173,6 +204,18 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 		return
 	}
 	return
+}
+
+// pageRequestURL rewrites tracker-owned links to the active domain (GetDomain).
+func (c *client) pageRequestURL(link string) string {
+	if link == "" || !c.ITracker.Detect(link) {
+		return link
+	}
+	active := c.ITracker.GetDomain()
+	if active == "" {
+		return link
+	}
+	return tracker.ReplaceURLHost(link, active)
 }
 
 func (c *client) setDefaultHeaders() {
@@ -204,8 +247,13 @@ func (c *client) flarePageURL() string {
 }
 
 func (c *client) syncFlarePageCookies(ctx context.Context, base []*http.Cookie) []*http.Cookie {
-	if _, ok := c.flareSessionID(); !ok {
+	if c.ITracker.GetProxyType() != proxyModel.TypeFlare {
 		return base
+	}
+	if _, ok := c.flareSessionID(); !ok {
+		if _, ok := c.ITracker.(postLoginFetcher); !ok {
+			return base
+		}
 	}
 	extra, err := c.fetchPageCookies(ctx, c.flarePageURL())
 	if err != nil {
@@ -213,6 +261,21 @@ func (c *client) syncFlarePageCookies(ctx context.Context, base []*http.Cookie) 
 		return base
 	}
 	return helper.MergeCookies(base, extra)
+}
+
+func (c *client) preflightFlareLogin(ctx context.Context) (err error) {
+	if c.ITracker.GetProxyType() != proxyModel.TypeFlare || len(c.cookies) > 0 {
+		return nil
+	}
+	if _, ok := c.flareSessionID(); ok {
+		return nil
+	}
+	extra, err := c.fetchPageCookies(ctx, c.ITracker.GetHost()+"/")
+	if err != nil {
+		return fmt.Errorf("%s login preflight: %w", c.ITracker.GetName(), err)
+	}
+	c.cookies = c.finalizeCookies(helper.MergeCookies(c.cookies, extra))
+	return nil
 }
 
 func (c *client) ensureFlareCookiesForDownload(ctx context.Context, link string) (err error) {
@@ -259,11 +322,12 @@ func (c *client) flareOptions(cookies []*http.Cookie, onlyCookies bool) *proxyMo
 	opts := &proxyModel.Options{
 		OnlyCookies: onlyCookies,
 	}
-	if sessionID, ok := c.flareSessionID(); ok {
-		opts.Session = sessionID
-		return opts
+	if len(cookies) > 0 {
+		opts.Cookies = cookies
 	}
-	opts.Cookies = cookies
+	if sessionID, ok := c.flareSessionID(); ok && sessionID != "" {
+		opts.Session = sessionID
+	}
 	return opts
 }
 
@@ -297,7 +361,8 @@ func (c *client) fetchPageCookies(ctx context.Context, pageURL string) (cookies 
 }
 
 func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *http.Response, err error) {
-	res, err = c.doHttp(ctx, req, c.flareOptions(c.cookies, true), false)
+	onlyCookies := c.useFlareSessionLogin()
+	res, err = c.doHttp(ctx, req, c.flareOptions(c.cookies, onlyCookies), false)
 
 	if err != nil || res.StatusCode >= http.StatusBadRequest {
 		err = fmt.Errorf("%s login error: %w", c.ITracker.GetName(), err)
@@ -316,13 +381,9 @@ func (c *client) syncUserAgent(res *http.Response) {
 
 func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.Request, err error) {
 	var (
-		link    = c.ITracker.LoginLink()
-		creds   = c.ITracker.GetCredentials()
-		cookies = c.ITracker.GetCookies()
+		link  = c.ITracker.LoginLink()
+		creds = c.ITracker.GetCredentials()
 	)
-	if len(cookies) > 0 {
-		c.cookies = cookies
-	}
 	if body == "" && creds != "" {
 		body = creds
 	}
@@ -371,6 +432,9 @@ func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxyModel
 		res, err = doer.Do(req)
 	case proxyModel.TypeFlare:
 		res, err = c.px.Send(req, opts, proxyType)
+		if err == nil {
+			c.absorbFlareCookies(res)
+		}
 	default:
 		err = fmt.Errorf("proxy is not set: %d", proxyType)
 	}
@@ -401,6 +465,20 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 		return
 	}
 	return
+}
+
+func (c *client) useFlareSessionLogin() bool {
+	_, ok := c.flareSessionID()
+	return ok
+}
+
+func (c *client) absorbFlareCookies(res *http.Response) {
+	if res == nil {
+		return
+	}
+	if fresh := res.Cookies(); len(fresh) > 0 {
+		c.cookies = c.finalizeCookies(helper.MergeCookies(c.cookies, fresh))
+	}
 }
 
 func New(hc *http.Client, downloadHC helper.HTTPDoer, t ITracker, px proxy.IClient, cb *helper.CircuitBreaker) IClient {

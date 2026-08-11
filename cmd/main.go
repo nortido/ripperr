@@ -2,209 +2,176 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/cookiejar"
+	"errors"
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/sethvargo/go-envconfig"
 
+	"trackerr/internal/app"
 	"trackerr/internal/config"
-	"trackerr/internal/helper"
-	"trackerr/internal/helper/tlsclient"
-	"trackerr/internal/manager"
-	"trackerr/internal/manager/client/qbittorrent"
+	"trackerr/internal/helper/breakeralerts"
 	"trackerr/internal/model"
-	proxyModel "trackerr/internal/model/proxy"
-	trackerModel "trackerr/internal/model/tracker"
-	"trackerr/internal/proxy"
 	"trackerr/internal/runner"
+	"trackerr/internal/settings"
 	"trackerr/internal/storage"
 	"trackerr/internal/system/logger"
-	"trackerr/internal/tracker"
+	webpkg "trackerr/internal/web"
 )
 
-type configuration struct {
-	Log          *config.Log
-	Runner       *config.Runner
-	Tracker      *config.Tracker
-	Manager      *config.Manager
-	Flaresolverr *config.Flaresolverr
-	DB           *config.Storage
-}
-
 func main() {
-	var (
-		cfg        configuration
-		qbc        qbittorrent.IClient
-		px         proxy.IClient
-		ht         *http.Client
-		downloadHt helper.HTTPDoer
-		dbConn     *pgxpool.Pool
-		dbCfg      *pgxpool.Config
-		db         storage.IClient
-		err        error
-	)
-	// Load .env file if it exists
 	_ = godotenv.Load()
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	ctx, stop := signalNotify()
 	defer stop()
 
-	if err = envconfig.Process(ctx, &cfg); err != nil {
+	var baseCfg config.App
+	if err := envconfig.Process(ctx, &baseCfg); err != nil {
 		logger.Error(err.Error())
 		return
 	}
-	logger.SetLevel(cfg.Log.Level)
+	if baseCfg.Runner != nil {
+		baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
+	}
+	logger.SetLevel(baseCfg.Log.Level)
 
-	// Init manager client
-	// TODO: move creation to manager constructor
-	qbtcfg := model.ManagerConfig{
-		Host:               cfg.Manager.QbitTorrent.Host,
-		Username:           cfg.Manager.QbitTorrent.Username,
-		Password:           cfg.Manager.QbitTorrent.Password,
-		PausedMaxRatio:     cfg.Manager.PausedMaxRatio,
-		DeleteEnabled:      cfg.Manager.DeleteEnabled,
-		DeleteFilesEnabled: cfg.Manager.DeleteFilesEnabled,
-		DeleteCategories:   cfg.Manager.DeleteFilesCategories,
-	}
-	for {
-		if qbc, err = qbittorrent.New(qbtcfg); err != nil {
-			err = fmt.Errorf("failed to connect to qbittorrent: %w", err)
-			logger.Error(err.Error())
-			t := time.NewTimer(time.Duration(cfg.Manager.MinutesToReconnect) * time.Minute)
-			<-t.C
-			continue
-		}
-		break
-	}
-	// Init http client
-	var cj *cookiejar.Jar
-	if cj, err = cookiejar.New(nil); err != nil {
-		logger.Error(err.Error())
-		return
-	}
-	redirectPolicy := func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-	ht = &http.Client{
-		CheckRedirect: redirectPolicy,
-		Jar:           cj,
-		Timeout:       time.Duration(cfg.Runner.HttpTimeout) * time.Second,
-	}
-	downloadHt, err = tlsclient.New(tlsclient.Config{
-		Timeout:  time.Duration(cfg.Runner.DownloadTimeout) * time.Second,
-		ProxyURL: cfg.Runner.DownloadProxy,
-		Profile:  cfg.Runner.TLSProfile,
-	})
+	dbConn, db, err := connectDB(ctx, baseCfg)
 	if err != nil {
 		logger.Error(err.Error())
 		return
 	}
-
-	// Init proxy client
-	px = proxy.New(&http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Timeout: time.Duration(cfg.Flaresolverr.MaxTimeout)*time.Millisecond + 30*time.Second,
-	}, &proxyModel.Config{
-		Flaresolverr: proxyModel.ItemConfig{
-			URL:        cfg.Flaresolverr.Host,
-			MaxTimeout: cfg.Flaresolverr.MaxTimeout,
-		},
-	})
-
-	// Init db client
-	dbCfg, _ = pgxpool.ParseConfig(cfg.DB.MasterURL)
-	dbCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DB.ConnectTimeout) * time.Second
-	if dbConn, err = pgxpool.NewWithConfig(ctx, dbCfg); err != nil {
-		logger.Error(err.Error())
-		return
-	}
 	defer dbConn.Close()
-	// TODO: catch db conn errors
-	db = storage.New(dbConn)
 
-	// Init trackers client
-	tr := tracker.New(ht, downloadHt, px, db, &helper.CircuitBreakerConfig{
-		MaxFailures: cfg.Runner.CBRetries,
-		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
-	}, &trackerModel.TrackerConfig{
-		Rutracker: trackerModel.Tracker{
-			Name:        cfg.Tracker.Rutracker.Name,
-			Domain:      cfg.Tracker.Rutracker.Domain,
-			Credentials: cfg.Tracker.Rutracker.Credentials,
-			ProxyType:   proxyModel.ProxyType(cfg.Tracker.Rutracker.ProxyType),
-			Publicity:   cfg.Tracker.Rutracker.Publicity,
-			LoginURL:    cfg.Tracker.Rutracker.LoginURL,
-			DownloadURL: cfg.Tracker.Rutracker.DownloadURL,
-			HourLimit:   cfg.Tracker.Rutracker.HourLimit,
-			Enabled:     cfg.Tracker.Rutracker.Enabled,
-		},
-		Kinozal: trackerModel.Tracker{
-			Name:        cfg.Tracker.Kinozal.Name,
-			Domain:      cfg.Tracker.Kinozal.Domain,
-			Credentials: cfg.Tracker.Kinozal.Credentials,
-			ProxyType:   proxyModel.ProxyType(cfg.Tracker.Kinozal.ProxyType),
-			Publicity:   cfg.Tracker.Kinozal.Publicity,
-			LoginURL:    cfg.Tracker.Kinozal.LoginURL,
-			DownloadURL: cfg.Tracker.Kinozal.DownloadURL,
-			HourLimit:   cfg.Tracker.Kinozal.HourLimit,
-			Cookies:     helper.ParseCookies(cfg.Tracker.Kinozal.Cookies),
-			Enabled:     cfg.Tracker.Kinozal.Enabled,
-		},
-		Rutor: trackerModel.Tracker{
-			Name:        cfg.Tracker.Rutor.Name,
-			Domain:      cfg.Tracker.Rutor.Domain,
-			Publicity:   cfg.Tracker.Rutor.Publicity,
-			DownloadURL: cfg.Tracker.Rutor.DownloadURL,
-			HourLimit:   cfg.Tracker.Rutor.HourLimit,
-			Enabled:     cfg.Tracker.Rutor.Enabled,
-		},
-		},
-		TeamHD: trackerModel.Tracker{
-			Name:        cfg.Tracker.TeamHD.Name,
-			Domain:      cfg.Tracker.TeamHD.Domain,
-			Publicity:   cfg.Tracker.TeamHD.Publicity,
-			DownloadURL: cfg.Tracker.TeamHD.DownloadURL,
-			HourLimit:   cfg.Tracker.TeamHD.HourLimit,
-			Cookies:     helper.ParseCookies(cfg.Tracker.TeamHD.Cookies),
-			Enabled:     cfg.Tracker.TeamHD.Enabled,
-		},
-		NNM: trackerModel.Tracker{
-			Name:        cfg.Tracker.NNM.Name,
-			Domain:      cfg.Tracker.NNM.Domain,
-			Credentials: cfg.Tracker.NNM.Credentials,
-			ProxyType:   proxyModel.ProxyType(cfg.Tracker.NNM.ProxyType),
-			Publicity:   cfg.Tracker.NNM.Publicity,
-			LoginURL:    cfg.Tracker.NNM.LoginURL,
-			DownloadURL: cfg.Tracker.NNM.DownloadURL,
-			HourLimit:   cfg.Tracker.NNM.HourLimit,
-			Cookies:     helper.ParseCookies(cfg.Tracker.NNM.Cookies),
-			Enabled:     cfg.Tracker.NNM.Enabled,
-		},
-	})
-	if err = tr.BuildCache(ctx); err != nil {
+	if err = db.Bootstrap(ctx); err != nil {
 		logger.Error(err.Error())
 		return
 	}
 
-	// Init handler client
-	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, model.HandlerConfig{
-		WatchTag:          cfg.Runner.WatchTag,
-		ThresholdMonth:    cfg.Runner.MonthThresholdDays,
-		ThresholdHalfYear: cfg.Runner.HalfYearThresholdDays,
-		ThresholdYear:     cfg.Runner.YearThresholdDays,
-		ThresholdOld:      cfg.Runner.YearThresholdDays,
-		ListRefreshPerDay: cfg.Runner.ListRefreshPerDay,
-		StartHour:         cfg.Runner.StartHour,
-		Categories:        cfg.Runner.AllowedCategories,
-	})
-	rn.Run(ctx)
-	logger.Info("goodbye")
+	reloadCh := make(chan struct{}, 1)
+	runnerState := runner.NewState()
+	breakerAlerts := breakeralerts.New()
+
+	reload := func() {
+		select {
+		case reloadCh <- struct{}{}:
+		default:
+		}
+	}
+
+	effective := func() config.App {
+		cfg := baseCfg.Clone()
+		if err := settings.ApplyOverrides(context.Background(), &cfg, db); err != nil {
+			logger.Error(err.Error())
+		}
+		return cfg
+	}
+
+	var webSrv *webpkg.Server
+	if baseCfg.Web.Enabled {
+		webSrv = webpkg.New(db, reload, effective, baseCfg.Web.Listen, runnerState, breakerAlerts)
+		go func() {
+			if err := webSrv.Start(); err != nil && ctx.Err() == nil {
+				logger.Error(err.Error())
+			}
+		}()
+		defer func() {
+			shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = webSrv.Shutdown(shCtx)
+		}()
+	}
+
+	first := true
+	for {
+		cfg := baseCfg.Clone()
+		if err := settings.ApplyOverrides(ctx, &cfg, db); err != nil {
+			logger.Error(err.Error())
+		}
+
+		appCtx, cancel := context.WithCancel(ctx)
+
+		var scheduleLoc *time.Location
+		if cfg.Runner.Timezone != "" {
+			if l, err := time.LoadLocation(cfg.Runner.Timezone); err != nil {
+				logger.Error("invalid timezone " + cfg.Runner.Timezone + ": " + err.Error())
+			} else {
+				scheduleLoc = l
+			}
+		}
+
+		handlerCfg := model.HandlerConfig{
+			WatchTags:         cfg.Runner.WatchTags,
+			ThresholdMonth:    cfg.Runner.MonthThresholdDays,
+			ThresholdHalfYear: cfg.Runner.HalfYearThresholdDays,
+			ThresholdYear:     cfg.Runner.YearThresholdDays,
+			ThresholdOld:      cfg.Runner.YearThresholdDays,
+			ListRefreshPerDay: cfg.Runner.ListRefreshPerDay,
+			StartHour:         cfg.Runner.StartHour,
+			Categories:        cfg.Runner.AllowedCategories,
+			Location:          scheduleLoc,
+			Immediate:         first,
+		}
+
+		done := make(chan struct{})
+		var runErr error
+		go func() {
+			runErr = app.Run(appCtx, cfg, db, handlerCfg, runnerState, breakerAlerts)
+			close(done)
+		}()
+
+		select {
+		case <-ctx.Done():
+			cancel()
+			<-done
+			first = false
+			logger.Info("goodbye")
+			return
+		case <-reloadCh:
+			cancel()
+			<-done
+			first = false
+		case <-done:
+			if ctx.Err() != nil {
+				logger.Info("goodbye")
+				return
+			}
+			if runErr == nil || errors.Is(runErr, context.Canceled) {
+				first = false
+			}
+			if runErr != nil && !errors.Is(runErr, context.Canceled) {
+				logger.Error(runErr.Error())
+			}
+			backoff := time.NewTimer(time.Duration(cfg.Manager.MinutesToReconnect) * time.Minute)
+			select {
+			case <-ctx.Done():
+				backoff.Stop()
+				logger.Info("goodbye")
+				return
+			case <-reloadCh:
+				backoff.Stop()
+			case <-backoff.C:
+			}
+		}
+	}
+}
+
+func connectDB(ctx context.Context, cfg config.App) (*pgxpool.Pool, storage.IClient, error) {
+	dbCfg, err := pgxpool.ParseConfig(cfg.DB.MasterURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	dbCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DB.ConnectTimeout) * time.Second
+	dbConn, err := pgxpool.NewWithConfig(ctx, dbCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dbConn, storage.New(dbConn), nil
+}
+
+func signalNotify() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 }

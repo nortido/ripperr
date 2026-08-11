@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
-	"regexp"
+	"net/url"
+	"strings"
 	"time"
 
 	"trackerr/internal/model/proxy"
@@ -23,18 +24,20 @@ type TrackerConfig struct {
 }
 
 type Tracker struct {
-	TypeID      int
-	Name        string
-	Domain      string
-	Credentials string
-	ProxyType   proxy.ProxyType
-	Publicity   string
-	LoginURL    string
-	DownloadURL string
-	HourLimit   int
-	Cookies     []*http.Cookie
-	Enabled     bool
-	Exists      bool
+	TypeID       int
+	Name         string
+	Domain       string
+	ActiveDomain string
+	Mirrors      []string
+	Credentials  string
+	ProxyType    proxy.ProxyType
+	Publicity    string
+	LoginURL     string
+	DownloadURL  string
+	HourLimit    int
+	Cookies      []*http.Cookie
+	Enabled      bool
+	Exists       bool
 }
 
 func (t *Tracker) GetName() (name string) {
@@ -82,9 +85,49 @@ func (t *Tracker) TopicLink(topicID string) (url string) {
 	return
 }
 
-func (t *Tracker) Detect(url string) bool {
-	rx := regexp.MustCompile("(" + t.Domain + ")")
-	return rx.MatchString(url)
+func (t *Tracker) GetMirrors() []string {
+	return t.Mirrors
+}
+
+func (t *Tracker) GetActiveDomain() string {
+	return t.ActiveDomain
+}
+
+func (t *Tracker) Detect(link string) bool {
+	for _, d := range t.matchDomains() {
+		if strings.Contains(link, d) {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *Tracker) matchDomains() []string {
+	out := make([]string, 0, 1+len(t.Mirrors))
+	if d := strings.TrimSpace(t.Domain); d != "" {
+		out = append(out, d)
+	}
+	for _, m := range t.Mirrors {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, m)
+		}
+	}
+	if ad := strings.TrimSpace(t.ActiveDomain); ad != "" {
+		out = append(out, ad)
+	}
+	return out
+}
+
+func ReplaceURLHost(rawURL, newHost string) string {
+	if rawURL == "" || newHost == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	u.Host = newHost
+	return u.String()
 }
 
 func (t *Tracker) Headers() (header *http.Header) {

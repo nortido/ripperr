@@ -36,7 +36,9 @@ func log(level Level, label, msg string) {
 	if level < minLevel {
 		return
 	}
-	fmt.Println(time.Now().Format(time.DateTime), label, msg)
+	now := time.Now()
+	fmt.Println(now.Format(time.DateTime), label, msg)
+	globalBuffer.add(Entry{Time: now, Level: strings.TrimSuffix(label, ":"), Message: msg})
 }
 
 func Info(msg string) {

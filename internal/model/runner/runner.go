@@ -13,4 +13,5 @@ type HistoryItem struct {
 	Exists        bool
 	CreatedAt     *time.Time
 	RecheckAt     *time.Time
+	ForceCheck    bool
 }

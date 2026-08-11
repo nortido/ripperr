@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/http"
 
-	fclient "github.com/nortido/go-flaresolverr"
-
 	"trackerr/internal/model/proxy"
 	fmapper "trackerr/internal/proxy/mapper/flaresolverr"
 )
@@ -19,14 +17,14 @@ type client struct {
 	hc    *http.Client
 	conf  *proxy.Config
 	cache struct {
-		fl fclient.IClient
+		fl fmapper.IClient
 	}
 }
 
 func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (res *http.Response, err error) {
 	var (
-		params *fclient.Payload
-		fres   *fclient.Response
+		params *fmapper.Payload
+		fres   *fmapper.Response
 	)
 	switch proxyType {
 	case proxy.TypeFlare:
@@ -51,7 +49,7 @@ func New(hc *http.Client, conf *proxy.Config) (sw IClient) {
 		hc:   hc,
 		conf: conf,
 	}
-	px.cache.fl = fclient.New(hc, &fclient.Config{
+	px.cache.fl = fmapper.New(hc, &fmapper.Config{
 		Host:       conf.Flaresolverr.URL,
 		MaxTimeout: conf.Flaresolverr.MaxTimeout,
 	})

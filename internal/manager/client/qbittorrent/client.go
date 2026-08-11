@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ type IClient interface {
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
+	GetCategories(ctx context.Context) ([]string, error)
 }
 
 type client struct {
@@ -32,15 +34,11 @@ type client struct {
 	config model.ManagerConfig
 }
 
-func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error) {
-	to := qbt.TorrentFilterOptions{
+func (c *client) List(ctx context.Context, _ model.FilterOptions) (entries []*model.Entry, err error) {
+	qts, err := c.client.GetTorrents(qbt.TorrentFilterOptions{
 		Filter: qbt.TorrentFilterAll,
 		Sort:   "added_on",
-	}
-	if opts.Tag != "" {
-		to.Tag = opts.Tag
-	}
-	qts, err := c.client.GetTorrents(to)
+	})
 	if err != nil {
 		return
 	}
@@ -65,14 +63,14 @@ func (c *client) List(ctx context.Context, opts model.FilterOptions) (entries []
 }
 
 func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
-	return c.client.AddTorrentFromMemoryCtx(ctx, buf.Bytes(), torrentAddOptions(opts).Prepare())
+	return c.addTorrentVerified(ctx, buf.Bytes(), opts)
 }
 
 func (c *client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
 	if opts.Comment != "" {
 		return c.addMagnetWithComment(ctx, magnet, opts)
 	}
-	return c.client.AddTorrentFromUrlCtx(ctx, magnet, torrentAddOptions(opts).Prepare())
+	return c.addMagnetURLVerified(ctx, magnet, opts)
 }
 
 func torrentAddOptions(opts model.ManagerAddFileOptions) *qbt.TorrentAddOptions {
@@ -114,6 +112,19 @@ func (c *client) apiURL(endpoint string) string {
 		return fmt.Sprintf("%s/api/v2/%s", host, endpoint)
 	}
 	return fmt.Sprintf("http://%s/api/v2/%s", host, endpoint)
+}
+
+func (c *client) GetCategories(ctx context.Context) ([]string, error) {
+	cats, err := c.client.GetCategoriesCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(cats))
+	for name := range cats {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
 func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {

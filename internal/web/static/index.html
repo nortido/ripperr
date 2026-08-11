@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <script>
+    (function () {
+      var lang = 'ru';
+      try {
+        var l = localStorage.getItem('trackerr-lang');
+        if (l === 'ru' || l === 'en') lang = l;
+      } catch (_) {}
+      document.documentElement.setAttribute('lang', lang);
+
+      var t = 'dark';
+      try {
+        var s = localStorage.getItem('trackerr-theme');
+        if (s === 'light' || s === 'dark') t = s;
+      } catch (_) {}
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>trackerr</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="mobile-header">
+      <button type="button" class="btn btn-ghost btn-icon mobile-menu-btn" id="mobile-menu-btn" data-i18n-aria="nav.menu" aria-expanded="false">
+        <span data-icon="menu"></span>
+      </button>
+      <a class="mobile-header-brand" href="#dashboard">trackerr</a>
+    </header>
+
+    <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+
+    <aside class="sidebar" id="sidebar">
+      <a class="sidebar-brand" href="#dashboard" id="sidebar-brand">trackerr</a>
+      <nav class="sidebar-nav">
+        <a class="nav-link active" href="#dashboard" data-view="dashboard">
+          <span class="nav-icon" data-icon="dashboard"></span>
+          <span class="nav-label" data-i18n="nav.dashboard"></span>
+        </a>
+        <a class="nav-link" href="#trackers" data-view="trackers">
+          <span class="nav-icon" data-icon="server"></span>
+          <span class="nav-label" data-i18n="nav.trackers"></span>
+        </a>
+        <a class="nav-link" href="#integrations" data-view="integrations">
+          <span class="nav-icon" data-icon="plug"></span>
+          <span class="nav-label" data-i18n="nav.integrations"></span>
+        </a>
+        <a class="nav-link" href="#settings" data-view="schedule">
+          <span class="nav-icon" data-icon="wrench"></span>
+          <span class="nav-label" data-i18n="nav.settings"></span>
+        </a>
+        <a class="nav-link" href="#logs" data-view="logs">
+          <span class="nav-icon" data-icon="logs"></span>
+          <span class="nav-label" data-i18n="nav.logs"></span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <button type="button" class="nav-link theme-toggle" id="theme-toggle" data-i18n-aria="nav.theme" aria-pressed="true">
+          <span class="nav-icon theme-icon-light" data-icon="sun"></span>
+          <span class="nav-icon theme-icon-dark" data-icon="moon"></span>
+          <span class="nav-label" data-i18n="nav.theme"></span>
+        </button>
+        <button type="button" class="sidebar-collapse-btn" id="sidebar-collapse-btn" data-i18n-aria="nav.sidebarCollapse" aria-pressed="false">
+          <span class="nav-icon" data-icon="chevronLeft"></span>
+          <span class="nav-label" data-i18n="nav.sidebarCollapse"></span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="content">
+        <div id="view-dashboard" class="view"></div>
+        <div id="view-schedule" class="view hidden"></div>
+        <div id="view-trackers" class="view hidden"></div>
+        <div id="view-integrations" class="view hidden"></div>
+        <div id="view-logs" class="view hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-stack"></div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

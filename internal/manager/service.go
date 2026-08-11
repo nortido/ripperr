@@ -59,7 +59,7 @@ func (m *manager) replaceTorrent(ctx context.Context, opts model.ManagerAddFileO
 			if name != "" {
 				opts.Name = name
 			}
-			if comment != "" {
+			if comment != "" && opts.Comment == "" {
 				opts.Comment = comment
 			}
 		}
