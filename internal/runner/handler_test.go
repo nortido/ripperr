@@ -73,19 +73,24 @@ func (f *fakeStorage) SetForceCheck(_ context.Context, urlHash string, force boo
 }
 
 type fakeManager struct {
-	tagged []*model.Entry
-	all    []*model.Entry
-	allErr error
+	tagged      []*model.Entry
+	all         []*model.Entry
+	allErr      error
+	partialList bool
 }
 
 func (f *fakeManager) GetEntries(_ context.Context, _ model.FilterOptions) ([]*model.Entry, error) {
 	if f.allErr != nil {
 		return nil, f.allErr
 	}
-	if len(f.all) > 0 {
-		return f.all, nil
+	entries := f.all
+	if len(entries) == 0 {
+		entries = f.tagged
 	}
-	return f.tagged, nil
+	if f.partialList && len(entries) > 0 {
+		return entries, fmt.Errorf("%w: test", model.ErrPartialList)
+	}
+	return entries, nil
 }
 
 func (f *fakeManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
@@ -278,6 +283,51 @@ func TestGetRecheckAt(t *testing.T) {
 				t.Errorf("getRecheckAt(%v) = %v, want ~%v (+%d days)", c.tm, got, want, c.wantDays)
 			}
 		})
+	}
+}
+
+func TestPurgeStaleHistorySkipsOnPartialList(t *testing.T) {
+	const gone = "https://rutracker.org/forum/viewtopic.php?t=1"
+	const alive = "https://rutracker.org/forum/viewtopic.php?t=2"
+	goneHash := storagePkg.URLHash(gone)
+	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: goneHash, ItemName: "gone"}}}
+	h := &handler{
+		manager: &fakeManager{
+			all:         []*model.Entry{{URL: alive}},
+			partialList: true,
+		},
+		storage: store,
+	}
+	h.purgeStaleHistory(context.Background())
+	if len(store.deleted) != 0 {
+		t.Fatalf("expected no deletions on partial list, got %v", store.deleted)
+	}
+}
+
+func TestPushContinuesOnPartialList(t *testing.T) {
+	const matched = "https://example.com/t/1"
+	h := &handler{
+		config: model.HandlerConfig{WatchTags: []string{"watch"}},
+		manager: &fakeManager{
+			all:         []*model.Entry{{URL: matched, Name: "matched", Tag: "watch"}},
+			partialList: true,
+		},
+		storage:        &fakeStorage{},
+		trackerService: &fakeTracker{id: 1},
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx); err != nil {
+		t.Fatalf("push err = %v, want nil", err)
+	}
+	select {
+	case e := <-h.idx[1]:
+		if e.URL != matched {
+			t.Fatalf("queued %q, want %q", e.URL, matched)
+		}
+	default:
+		t.Fatal("expected matched entry to be queued")
 	}
 }
 
@@ -628,6 +678,63 @@ func (c *canceledTracker) GetCachedClient(context.Context, int) (client.IClient,
 	return nil, context.Canceled
 }
 
+func TestTrackerWorkerRecoversFromPanic(t *testing.T) {
+	page := bytes.NewBufferString(strings.Repeat("x", 60))
+	store := &loggingStorage{}
+	state := NewState()
+	gen := state.Reset()
+	h := &handler{
+		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:        store,
+		trackerService: &panicPageTracker{pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page}},
+		state:          state,
+		mx:             &sync.RWMutex{},
+		gen:            gen,
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cherr := make(chan error, 1)
+	go h.trackerWorker(ctx, 1, cherr)
+
+	h.state.Begin(h.gen)
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "panic-test", URLHash: "abc", Timestamp: timePtr(time.Now().Add(-time.Hour))}
+	h.idx[1] <- e
+
+	deadline := time.Now().Add(2 * time.Second)
+	for state.Running() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if state.Running() {
+		t.Fatal("expected active counter back to zero")
+	}
+	if len(store.logs) != 1 {
+		t.Fatalf("logs = %d, want 1", len(store.logs))
+	}
+	if store.logs[0].Status != "error" {
+		t.Fatalf("status = %q, want error", store.logs[0].Status)
+	}
+	if !strings.Contains(store.logs[0].Error, "panic:") {
+		t.Fatalf("error = %q, want panic message", store.logs[0].Error)
+	}
+}
+
+type panicClient struct {
+	mockPageClient
+}
+
+func (panicClient) ParseDate(*bytes.Buffer, bool) *time.Time {
+	panic("parse date boom")
+}
+
+type panicPageTracker struct {
+	pageTracker
+}
+
+func (p *panicPageTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	return panicClient{}, nil
+}
+
 func TestWorkerSkipsCheckLogOnContextCanceled(t *testing.T) {
 	store := &loggingStorage{}
 	h := &handler{
@@ -893,5 +1000,85 @@ func TestWorkerUnchangedWithoutForceCheckSameDates(t *testing.T) {
 	}
 	if submitted {
 		t.Fatal("expected SubmitMagnet not to be called")
+	}
+}
+
+type forceTrackingStorage struct {
+	loggingStorage
+	saveCalls int
+}
+
+func (f *forceTrackingStorage) SaveItem(_ context.Context, item *runnerModel.HistoryItem) error {
+	f.saveCalls++
+	for _, it := range f.items {
+		if it.URLHash == item.URLHash {
+			it.ForceCheck = false
+			it.CreatedAt = item.CreatedAt
+			it.RecheckAt = item.RecheckAt
+		}
+	}
+	return nil
+}
+
+type failingSubmitManager struct {
+	submitTrackingManager
+}
+
+func (m *failingSubmitManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
+	return fmt.Errorf("submit failed")
+}
+
+func TestWorkerForceCheckPreservedOnSubmitError(t *testing.T) {
+	const url = "https://example.com/t/force-submit-fail"
+	oldAddition := time.Now().Add(-48 * time.Hour)
+	historyCreatedAt := time.Now().Add(-2 * time.Hour)
+	pageDate := historyCreatedAt
+
+	page := bytes.NewBufferString(strings.Repeat("x", 60))
+	store := &forceTrackingStorage{
+		loggingStorage: loggingStorage{
+			fakeStorage: fakeStorage{
+				items: map[string]*runnerModel.HistoryItem{
+					url: {
+						URLHash:       storagePkg.URLHash(url),
+						TrackerTypeID: 1,
+						TopicID:       "123",
+						Exists:        true,
+						CreatedAt:     &historyCreatedAt,
+						ForceCheck:    true,
+					},
+				},
+			},
+		},
+	}
+	h := &handler{
+		config:  model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage: store,
+		manager: &failingSubmitManager{},
+		trackerService: &fixedDatePageTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
+			date:        pageDate,
+		},
+		mx: &sync.RWMutex{},
+	}
+	e := &model.Entry{
+		URL:       url,
+		Name:      "test",
+		Timestamp: &oldAddition,
+	}
+	if err := h.buildEntry(context.Background(), e); err != nil {
+		t.Fatalf("buildEntry err = %v", err)
+	}
+	if err := h.worker(context.Background(), 1, e); err == nil {
+		t.Fatal("expected worker error")
+	}
+	if store.saveCalls != 0 {
+		t.Fatalf("SaveItem calls = %d, want 0", store.saveCalls)
+	}
+	if !store.items[url].ForceCheck {
+		t.Fatal("expected force_check to remain true after submit error")
+	}
+	if store.logs[0].Status != "error" {
+		t.Fatalf("status = %q, want error", store.logs[0].Status)
 	}
 }

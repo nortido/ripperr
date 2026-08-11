@@ -3,9 +3,11 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"trackerr/internal/config"
 	"trackerr/internal/storage/client/pg"
+	"trackerr/internal/system/logger"
 )
 
 type settingsDB interface {
@@ -62,7 +64,9 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 		return err
 	} else if ok {
 		var o scheduleOverlay
-		if err = json.Unmarshal(raw, &o); err == nil {
+		if err = json.Unmarshal(raw, &o); err != nil {
+			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", pg.SettingSchedule, err))
+		} else {
 			applySchedule(cfg, o)
 		}
 	}
@@ -70,7 +74,9 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 		return err
 	} else if ok {
 		var m map[string]trackerItemOverlay
-		if err = json.Unmarshal(raw, &m); err == nil {
+		if err = json.Unmarshal(raw, &m); err != nil {
+			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", pg.SettingTrackers, err))
+		} else {
 			applyTrackers(cfg, m)
 		}
 	}
@@ -78,7 +84,9 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 		return err
 	} else if ok {
 		var o integrationsOverlay
-		if err = json.Unmarshal(raw, &o); err == nil {
+		if err = json.Unmarshal(raw, &o); err != nil {
+			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", pg.SettingIntegrations, err))
+		} else {
 			applyIntegrations(cfg, o)
 		}
 	}

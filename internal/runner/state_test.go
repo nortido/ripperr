@@ -32,13 +32,14 @@ func TestStateRequestRun(t *testing.T) {
 		t.Fatal("expected trigger in channel")
 	}
 	if !s.RequestRun() {
-		t.Fatal("expected second RequestRun to succeed while trigger pending")
+		t.Fatal("expected second RequestRun to fail while trigger buffer full")
 	}
 	s.Begin(gen)
 	if s.RequestRun() {
 		t.Fatal("expected RequestRun to fail while active")
 	}
 	s.End(gen)
+	s.DrainTrigger()
 	if !s.RequestRun() {
 		t.Fatal("expected RequestRun after idle")
 	}

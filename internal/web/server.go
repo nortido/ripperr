@@ -239,8 +239,9 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "check already running")
 		return
 	}
-	if s.runnerState != nil {
-		s.runnerState.RequestRun()
+	if s.runnerState != nil && !s.runnerState.RequestRun() {
+		writeError(w, http.StatusConflict, "check already queued")
+		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"started": true})
 }

@@ -2,7 +2,10 @@ package model
 
 import "errors"
 
-var ErrAlreadyAdded = errors.New("torrent already added")
+var (
+	ErrAlreadyAdded = errors.New("torrent already added")
+	ErrPartialList  = errors.New("partial torrent list")
+)
 
 type FilterOptions struct{}
 

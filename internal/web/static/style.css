@@ -551,11 +551,6 @@ body:has(.app.page-scaled) {
   letter-spacing: -0.02em;
 }
 
-.page-subtitle {
-  color: var(--text-muted);
-  font-size: 15px;
-}
-
 .stack {
   display: flex;
   flex-direction: column;
@@ -753,10 +748,6 @@ body:has(.app.page-scaled) {
   pointer-events: none;
 }
 
-.hist-filter-trigger-label {
-  display: none;
-}
-
 .hist-filter-trigger.btn-icon {
   position: relative;
 }
@@ -901,10 +892,6 @@ body:has(.app.page-scaled) {
   line-height: 1.2;
 }
 
-.dash-sort-segment {
-  display: inline-flex;
-}
-
 .seg-ctrl {
   position: relative;
   display: inline-grid;
@@ -963,25 +950,6 @@ body:has(.app.page-scaled) {
 }
 
 .seg-ctrl-btn.active {
-  color: var(--text);
-}
-
-.dash-sort-segment .seg-ctrl-btn.active {
-  color: var(--hue-green);
-}
-
-.dash-sort-btn {
-  border-radius: 0;
-  border: none;
-  min-width: 34px;
-}
-
-.dash-sort-btn + .dash-sort-btn {
-  border-left: 1px solid var(--border-subtle);
-}
-
-.dash-sort-btn.active {
-  background: var(--bg-muted);
   color: var(--text);
 }
 
@@ -1314,44 +1282,6 @@ body:has(.app.page-scaled) {
   .table-dash-releases .col-tracker {
     display: none;
   }
-}
-
-.segment-tabs {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--input-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 20px;
-}
-
-.segment-tab {
-  padding: 10px 18px;
-  font-size: 14px;
-  font-weight: 500;
-  font-family: inherit;
-  border: none;
-  border-radius: calc(var(--radius) - 2px);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
-}
-
-.segment-tab:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.segment-tab.active {
-  background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
-  color: #fff;
-  box-shadow: var(--shadow-primary);
-}
-
-.dash-panel.hidden {
-  display: none;
 }
 
 /* cards */
@@ -2459,11 +2389,6 @@ td.plan-recheck-cell {
   }
 }
 
-.textarea {
-  resize: vertical;
-  min-height: 72px;
-}
-
 .form-hint {
   font-size: 13px;
   color: var(--text-empty);
@@ -2660,50 +2585,6 @@ td.plan-recheck-cell {
   color: var(--hue-pink);
 }
 
-/* badges */
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-
-.badge svg {
-  width: 14px;
-  height: 14px;
-}
-
-.badge-success {
-  background: var(--success-bg);
-  color: var(--success);
-}
-
-.badge-muted {
-  background: var(--tint-warm-bg);
-  color: var(--tint-warm);
-}
-
-.badge-accent {
-  background: var(--accent-subtle);
-  color: var(--link);
-}
-
-.badge-danger {
-  background: var(--danger-bg);
-  color: var(--danger);
-  cursor: pointer;
-}
-
-.badge-unknown {
-  background: var(--warning-bg);
-  color: var(--warning);
-}
-
 /* theme toggle */
 
 .theme-toggle .theme-icon-dark {
@@ -2750,31 +2631,6 @@ td.plan-recheck-cell {
   border-color: var(--danger);
   background: var(--danger-bg);
   color: var(--danger);
-}
-
-.slot-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.tracker-card + .tracker-card {
-  margin-top: 20px;
-}
-
-.tracker-card-disabled .card-body,
-.tracker-card-disabled .card-body > .btn-primary {
-  opacity: 0.6;
-  filter: saturate(0.65);
-}
-
-.tracker-card-disabled .card-header {
-  opacity: 1;
-  filter: none;
-}
-
-.tracker-card .form-row {
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .test-result {
@@ -3198,10 +3054,6 @@ td.plan-recheck-cell {
     flex: 0 0 auto;
   }
 
-  .hist-filter-trigger-label {
-    max-width: 9rem;
-  }
-
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
@@ -3224,19 +3076,6 @@ td.plan-recheck-cell {
 
   .stat-value {
     font-size: 22px;
-  }
-
-  .segment-tabs {
-    display: flex;
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .segment-tab {
-    flex: 1;
-    padding: 8px 10px;
-    font-size: 13px;
-    text-align: center;
   }
 
   .table th,

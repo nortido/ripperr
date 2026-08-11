@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -155,7 +156,18 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 		case <-ctx.Done():
 			return
 		case e := <-h.idx[ttid]:
-			if err := h.worker(ctx, ttid, e); err != nil {
+			var err error
+			func() {
+				defer h.state.End(h.gen)
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error(fmt.Sprintf("panic processing %q: %v\n%s", e.Name, r, debug.Stack()))
+						h.logCheck(ctx, e, ttid, "error", fmt.Sprintf("panic: %v", r))
+					}
+				}()
+				err = h.worker(ctx, ttid, e)
+			}()
+			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					logger.Info("processing interrupted")
 				} else {
@@ -166,7 +178,6 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 					}
 				}
 			}
-			h.state.End(h.gen)
 			if interval <= 0 {
 				continue
 			}
@@ -206,8 +217,12 @@ func (h *handler) push(ctx context.Context) (err error) {
 		ignoreSet map[string]struct{}
 	)
 	if entries, err = h.manager.GetEntries(ctx, model.FilterOptions{}); err != nil {
-		err = fmt.Errorf("get entries error: %w", err)
-		return
+		if errors.Is(err, model.ErrPartialList) {
+			logger.Warn(fmt.Sprintf("partial torrent list: %v", err))
+		} else {
+			err = fmt.Errorf("get entries error: %w", err)
+			return
+		}
 	}
 	if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
 		return
@@ -262,7 +277,11 @@ func entryMatchesWatchTags(entryTags string, watchTags []string) bool {
 func (h *handler) purgeStaleHistory(ctx context.Context) {
 	allEntries, err := h.manager.GetEntries(ctx, model.FilterOptions{})
 	if err != nil {
-		logger.Warn(fmt.Sprintf("history purge skipped: %v", err))
+		if errors.Is(err, model.ErrPartialList) {
+			logger.Warn("history purge skipped: partial torrent list")
+		} else {
+			logger.Warn(fmt.Sprintf("history purge skipped: %v", err))
+		}
 		return
 	}
 	present := make(map[string]struct{})
@@ -349,7 +368,8 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 		return
 	}
 	var dateMissing bool
-	if updated, dateMissing, err = h.checkPage(ctx, ttid, tc, e); err != nil {
+	var pageDate *time.Time
+	if updated, dateMissing, pageDate, err = h.checkPage(ctx, ttid, tc, e); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("processing interrupted")
 			return nil
@@ -383,6 +403,10 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 		h.logCheck(ctx, e, ttid, "error", err.Error())
 		return
 	}
+	if err = h.saveHistory(ctx, ttid, e, pageDate); err != nil {
+		h.logCheck(ctx, e, ttid, "error", err.Error())
+		return
+	}
 	logger.Info(fmt.Sprint("updated: ", e.Name))
 	h.logCheck(ctx, e, ttid, "updated", "")
 
@@ -402,7 +426,7 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 	}
 }
 
-func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry) (res bool, dateMissing bool, err error) {
+func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry) (res bool, dateMissing bool, pageDate *time.Time, err error) {
 	var (
 		cur        *time.Time
 		b          *bytes.Buffer
@@ -425,14 +449,13 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 		return
 	}
 	// TODO: add check count of updates in DB
-	if err = h.saveHistory(ctx, ttid, e, cur); err != nil {
-		return
-	}
 	res = e.Timestamp.Before(*cur)
+	pageDate = cur
 	if res {
 		e.Magnet = tc.ParseMagnet(b, encoded)
+		return
 	}
-
+	err = h.saveHistory(ctx, ttid, e, cur)
 	return
 }
 

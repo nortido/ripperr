@@ -3,17 +3,32 @@ package manager
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"trackerr/internal/model"
 )
 
 type stubClient struct {
-	calls   []string
-	detName string
-	detCom  string
-	detErr  error
-	addOpts model.ManagerAddFileOptions
+	calls         []string
+	detName       string
+	detCom        string
+	detErr        error
+	addOpts       model.ManagerAddFileOptions
+	incomingSame  bool
+	incomingKnown bool
+	addErr        error
+}
+
+func (s *stubClient) IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (bool, bool) {
+	s.calls = append(s.calls, "incoming")
+	if existing == "" {
+		return false, false
+	}
+	if s.incomingKnown {
+		return s.incomingSame, true
+	}
+	return true, true
 }
 
 func (s *stubClient) List(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error) {
@@ -28,13 +43,13 @@ func (s *stubClient) GetTorrentDetails(ctx context.Context, hash string) (string
 func (s *stubClient) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) error {
 	s.calls = append(s.calls, "add")
 	s.addOpts = opts
-	return nil
+	return s.addErr
 }
 
 func (s *stubClient) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error {
 	s.calls = append(s.calls, "add")
 	s.addOpts = opts
-	return nil
+	return s.addErr
 }
 
 func (s *stubClient) Delete(ctx context.Context, opts model.ManagerDeleteOptions) error {
@@ -57,7 +72,7 @@ func TestSubmit_PreservesNameAndCommentFromExistingTorrent(t *testing.T) {
 	if stub.addOpts.Comment != "existing comment" {
 		t.Errorf("expected comment filled from existing torrent, got %q", stub.addOpts.Comment)
 	}
-	wantOrder := []string{"details", "delete", "add"}
+	wantOrder := []string{"details", "incoming", "delete", "add"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
 	}
@@ -75,7 +90,7 @@ func TestSubmit_NoHashSkipsDetailsLookup(t *testing.T) {
 	if stub.addOpts.Name != "some name" || stub.addOpts.Comment != "some comment" {
 		t.Errorf("expected caller-provided opts unchanged, got %+v", stub.addOpts)
 	}
-	wantOrder := []string{"delete", "add"}
+	wantOrder := []string{"incoming", "add", "delete"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
 	}
@@ -93,7 +108,50 @@ func TestSubmitMagnet_PreservesNameAndCommentAndOrder(t *testing.T) {
 	if stub.addOpts.Name != "existing name" || stub.addOpts.Comment != "existing comment" {
 		t.Errorf("expected name/comment preserved, got %+v", stub.addOpts)
 	}
-	wantOrder := []string{"details", "delete", "add"}
+	wantOrder := []string{"details", "incoming", "delete", "add"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
+	}
+}
+
+func TestSubmit_DifferentHashAddsBeforeDelete(t *testing.T) {
+	stub := &stubClient{incomingSame: false, incomingKnown: true}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "oldhash"}
+	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantOrder := []string{"details", "incoming", "add", "delete"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
+	}
+}
+
+func TestSubmit_DifferentHashAddFailureSkipsDelete(t *testing.T) {
+	stub := &stubClient{incomingSame: false, incomingKnown: true, addErr: fmt.Errorf("add failed")}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "oldhash"}
+	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err == nil {
+		t.Fatal("expected add error")
+	}
+	for _, call := range stub.calls {
+		if call == "delete" {
+			t.Fatalf("delete must not run when add fails, calls = %v", stub.calls)
+		}
+	}
+}
+
+func TestSubmit_SameHashDeletesBeforeAdd(t *testing.T) {
+	stub := &stubClient{incomingSame: true, incomingKnown: true}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "samehash"}
+	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantOrder := []string{"details", "incoming", "delete", "add"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
 	}

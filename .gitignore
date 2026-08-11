@@ -2,3 +2,4 @@
 vendor
 bin/*
 .env
+.DS_Store

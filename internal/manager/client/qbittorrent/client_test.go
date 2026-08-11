@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -67,20 +68,25 @@ func TestList_Success(t *testing.T) {
 	}
 }
 
-// TestList_PropertiesErrorPropagates is a regression test for the errgroup
-// rewrite: an error from any single GetTorrentProperties call must fail the
-// whole List call, without leaving stale/partial results.
-func TestList_PropertiesErrorPropagates(t *testing.T) {
+// TestList_SkipsBadTorrent returns successful entries when one torrent's
+// properties fetch fails; the bad torrent is skipped and List returns ErrPartialList.
+func TestList_SkipsBadTorrent(t *testing.T) {
 	torrents := []qbt.Torrent{
 		{Hash: "h1", Name: "torrent-1"},
 		{Hash: "h2", Name: "torrent-2"},
+		{Hash: "h3", Name: "torrent-3"},
 	}
 	server := newStubServer(t, torrents, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("hash") == "h2" {
+		hash := r.URL.Query().Get("hash")
+		if hash == "h2" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(qbt.TorrentProperties{Hash: "h1"})
+		_ = json.NewEncoder(w).Encode(qbt.TorrentProperties{
+			Hash:         hash,
+			Comment:      "https://example.com/topic/" + strings.TrimPrefix(hash, "h"),
+			AdditionDate: 1700000000,
+		})
 	})
 
 	c, err := New(model.ManagerConfig{Host: server.URL})
@@ -88,26 +94,20 @@ func TestList_PropertiesErrorPropagates(t *testing.T) {
 		t.Fatalf("unexpected error creating client: %v", err)
 	}
 
-	type result struct {
-		entries []*model.Entry
-		err     error
+	entries, err := c.List(context.Background(), model.FilterOptions{})
+	if !errors.Is(err, model.ErrPartialList) {
+		t.Fatalf("expected ErrPartialList, got: %v", err)
 	}
-	done := make(chan result, 1)
-	go func() {
-		entries, err := c.List(context.Background(), model.FilterOptions{})
-		done <- result{entries, err}
-	}()
-
-	select {
-	case res := <-done:
-		if res.err == nil {
-			t.Fatal("expected an error from the failing properties fetch")
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	for _, e := range entries {
+		if e == nil {
+			t.Fatal("expected no nil entries")
 		}
-		if res.entries != nil {
-			t.Errorf("expected nil entries on error, got %v", res.entries)
+		if e.Hash == "h2" {
+			t.Fatalf("unexpected failed torrent in result: %+v", e)
 		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("List did not return: possible hang/deadlock")
 	}
 }
 

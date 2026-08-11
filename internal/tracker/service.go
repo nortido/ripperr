@@ -24,6 +24,8 @@ import (
 
 const TTL = time.Hour
 
+const maxStaleUses = 3
+
 const (
 	RutrackerID = 1
 	KinozalID   = 2
@@ -58,6 +60,7 @@ type service struct {
 	mx                 sync.RWMutex
 	flareMx            sync.Mutex
 	flareTimeoutCounts map[int]int
+	staleUseCounts     map[int]int
 	cacheLocks         helper.KeyedMutex
 	hc                 *http.Client
 	downloadHC         helper.HTTPDoer
@@ -162,9 +165,10 @@ func validateDownloadBody(res *http.Response, buf *bytes.Buffer) (err error) {
 
 func (s *service) BuildCache(ctx context.Context) (err error) {
 	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex
-		errs []error
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		errs    []error
+		success int
 	)
 
 	wg.Add(len(s.handlerRegistry))
@@ -181,11 +185,15 @@ func (s *service) BuildCache(ctx context.Context) (err error) {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("%s: %w", name, e))
 				mu.Unlock()
+				return
 			}
+			mu.Lock()
+			success++
+			mu.Unlock()
 		}(i)
 	}
 	wg.Wait()
-	if len(errs) > 0 {
+	if success == 0 && len(s.handlerRegistry) > 0 {
 		err = errors.Join(errs...)
 	}
 	return
@@ -222,8 +230,9 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 	}
 
 	if err = s.cache(ctx, id, forceLogin); err != nil {
-		return s.staleOnError(prev, s.handlerRegistry[id].GetName(), err)
+		return s.staleOnError(id, prev, s.handlerRegistry[id].GetName(), err)
 	}
+	s.resetStaleUseCount(id)
 	s.mx.RLock()
 	ct = s.clientIndex[id]
 	s.mx.RUnlock()
@@ -231,12 +240,25 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 	return
 }
 
-func (s *service) staleOnError(prev *CachedTracker, name string, err error) (ct *CachedTracker, out error) {
-	if prev != nil && prev.IClient != nil {
-		logger.Warn(fmt.Sprintf("%s: using stale cache: %s", name, err))
-		return prev, nil
+func (s *service) staleOnError(id int, prev *CachedTracker, name string, err error) (ct *CachedTracker, out error) {
+	if prev == nil || prev.IClient == nil {
+		return nil, err
 	}
-	return nil, err
+	s.flareMx.Lock()
+	s.staleUseCounts[id]++
+	count := s.staleUseCounts[id]
+	s.flareMx.Unlock()
+	if count > maxStaleUses {
+		return nil, err
+	}
+	logger.Warn(fmt.Sprintf("%s: using stale cache: %s", name, err))
+	return prev, nil
+}
+
+func (s *service) resetStaleUseCount(id int) {
+	s.flareMx.Lock()
+	delete(s.staleUseCounts, id)
+	s.flareMx.Unlock()
 }
 
 func (s *service) destroyFlareSession(id int) {
@@ -292,8 +314,9 @@ func (s *service) relogin(ctx context.Context, ttid int) (ct *CachedTracker, err
 	s.mx.RUnlock()
 
 	if err = s.cache(ctx, ttid, true); err != nil {
-		return s.staleOnError(prev, s.handlerRegistry[ttid].GetName(), err)
+		return s.staleOnError(ttid, prev, s.handlerRegistry[ttid].GetName(), err)
 	}
+	s.resetStaleUseCount(ttid)
 	s.mx.RLock()
 	ct = s.clientIndex[ttid]
 	s.mx.RUnlock()
@@ -413,6 +436,7 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, c
 		handlerRegistry:    handlerRegistry,
 		clientIndex:        make(map[int]*CachedTracker),
 		flareTimeoutCounts: make(map[int]int),
+		staleUseCounts:     make(map[int]int),
 		domainAlive:        defaultDomainAlive,
 	}
 }

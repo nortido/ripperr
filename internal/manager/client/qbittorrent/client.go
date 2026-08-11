@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	qbt "github.com/autobrr/go-qbittorrent"
@@ -23,6 +24,7 @@ var (
 type IClient interface {
 	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error)
+	IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (same bool, known bool)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
@@ -43,21 +45,37 @@ func (c *client) List(ctx context.Context, _ model.FilterOptions) (entries []*mo
 		return
 	}
 
-	entries = make([]*model.Entry, len(qts))
+	raw := make([]*model.Entry, len(qts))
+	var skipped atomic.Int32
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
 	for i := range qts {
 		i, t := i, qts[i]
 		g.Go(func() error {
 			p, err := c.getProperties(gctx, &t)
 			if err != nil {
-				return err
+				if gctx.Err() != nil {
+					return gctx.Err()
+				}
+				logger.Warn(fmt.Sprintf("torrent %s (%s): %v", t.Name, t.Hash, err))
+				skipped.Add(1)
+				return nil
 			}
-			entries[i] = c.mapEntry(&t, p)
+			raw[i] = c.mapEntry(&t, p)
 			return nil
 		})
 	}
 	if err = g.Wait(); err != nil {
-		entries = nil
+		return
+	}
+	entries = make([]*model.Entry, 0, len(raw))
+	for _, e := range raw {
+		if e != nil {
+			entries = append(entries, e)
+		}
+	}
+	if n := skipped.Load(); n > 0 {
+		err = fmt.Errorf("%w: %d torrents skipped due to errors", model.ErrPartialList, n)
 	}
 	return
 }

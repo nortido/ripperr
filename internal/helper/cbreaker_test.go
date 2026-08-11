@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -42,18 +43,10 @@ func TestCircuitBreaker_HalfOpenRecovery(t *testing.T) {
 	}
 	time.Sleep(5 * time.Millisecond)
 
-	// First call after the timeout elapses transitions Open -> HalfOpen but
-	// still blocks that particular call.
-	if err := cb.Call(func() error { return nil }); !errors.Is(err, ErrCircuitOpen) {
-		t.Fatalf("expected ErrCircuitOpen on the transition call, got %v", err)
-	}
-	if cb.state != StateHalfOpen {
-		t.Fatalf("expected half-open after timeout elapsed, got %v", cb.state)
-	}
-
-	// The next call is a real trial call: success closes the circuit again.
+	// First call after the timeout elapses transitions Open -> HalfOpen and
+	// runs the trial call immediately.
 	if err := cb.Call(func() error { return nil }); err != nil {
-		t.Fatalf("expected successful half-open call, got %v", err)
+		t.Fatalf("expected successful half-open transition call, got %v", err)
 	}
 	if cb.state != StateClosed {
 		t.Fatalf("expected closed after successful half-open call, got %v", cb.state)
@@ -78,5 +71,30 @@ func TestCircuitBreaker_ResetsFailuresOnSuccess(t *testing.T) {
 	}
 	if cb.state != StateClosed {
 		t.Fatalf("expected still closed, got %v", cb.state)
+	}
+}
+
+func TestCircuitBreaker_ContextCanceledNotAFailure(t *testing.T) {
+	cb := NewCircuitBreaker(&CircuitBreakerConfig{MaxFailures: 1, Timeout: time.Hour})
+	err := cb.Call(func() error { return context.Canceled })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if cb.failures != 0 {
+		t.Fatalf("expected canceled not to count as failure, got %d failures", cb.failures)
+	}
+	if cb.state != StateClosed {
+		t.Fatalf("expected circuit to stay closed, got %v", cb.state)
+	}
+}
+
+func TestCircuitBreaker_DeadlineExceededCountsAsFailure(t *testing.T) {
+	cb := NewCircuitBreaker(&CircuitBreakerConfig{MaxFailures: 1, Timeout: time.Hour})
+	err := cb.Call(func() error { return context.DeadlineExceeded })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+	if cb.state != StateOpen {
+		t.Fatalf("expected deadline exceeded to open circuit, got %v", cb.state)
 	}
 }

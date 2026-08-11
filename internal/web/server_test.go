@@ -560,6 +560,32 @@ func TestPostRun(t *testing.T) {
 	}
 }
 
+func TestPostRunAlreadyQueued(t *testing.T) {
+	state := runner.NewState()
+	srv := New(&fakeStore{}, func() {}, testEffective, ":0", state, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/run", nil)
+	w := httptest.NewRecorder()
+	srv.handleRun(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/run", nil)
+	w = httptest.NewRecorder()
+	srv.handleRun(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["error"] != "check already queued" {
+		t.Fatalf("error = %q, want check already queued", resp["error"])
+	}
+}
+
 func TestPostRunRestart(t *testing.T) {
 	state := runner.NewState()
 	reloaded := false

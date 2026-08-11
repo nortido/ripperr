@@ -46,9 +46,10 @@ func (s *State) RequestRun() bool {
 	}
 	select {
 	case s.trigger <- struct{}{}:
+		return true
 	default:
+		return false
 	}
-	return true
 }
 
 // Reset clears the activity counter and bumps generation so stale Begin/End are ignored.

@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -43,17 +44,24 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 	switch cb.state {
 	case StateClosed:
 		if err = fn(); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
 			cb.recordFailure(err)
 			return err
 		}
 		cb.reset()
 	case StateOpen:
-		if time.Since(cb.lastFailureTime) > cb.Timeout {
-			cb.state = StateHalfOpen
+		if time.Since(cb.lastFailureTime) <= cb.Timeout {
+			return ErrCircuitOpen
 		}
-		err = ErrCircuitOpen
+		cb.state = StateHalfOpen
+		fallthrough
 	case StateHalfOpen:
 		if err = fn(); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
 			cb.recordFailure(err)
 			return err
 		}

@@ -9,7 +9,7 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
-func CookieDomain(domain string) string {
+func cookieDomain(domain string) string {
 	domain = strings.TrimSpace(domain)
 	if domain == "" {
 		return ""
@@ -21,7 +21,7 @@ func CookieDomain(domain string) string {
 }
 
 func EnrichCookies(cookies []*http.Cookie, domain string, ttl time.Duration) {
-	d := CookieDomain(domain)
+	d := cookieDomain(domain)
 	expires := time.Now().Add(ttl)
 	for _, c := range cookies {
 		if c == nil {

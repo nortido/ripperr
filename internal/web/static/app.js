@@ -217,11 +217,16 @@ function setStopPending(active) {
     clearTimeout(stopPendingTimer);
     stopPendingTimer = null;
   }
-  if (!stopPending) return;
+  if (!stopPending) {
+    if (currentView === 'dashboard') updateRunStatusUI(dashboardRunning);
+    return;
+  }
   stopPendingTimer = setTimeout(function () {
     stopPending = false;
     stopPendingTimer = null;
+    if (currentView === 'dashboard') updateRunStatusUI(dashboardRunning);
   }, STOP_PENDING_MS);
+  if (currentView === 'dashboard') updateRunStatusUI(effectiveRunning(dashboardRunning));
 }
 
 function effectiveRunning(serverRunning) {
@@ -644,13 +649,22 @@ function updateRunStatusUI(running) {
       '<span class="run-status-label">' + escapeHtml(running ? t('dash.statusRunning') : t('dash.statusIdle')) + '</span>';
   }
   if (runBtn) {
-    runBtn.disabled = false;
-    if (running) {
-      runBtn.className = 'btn btn-restart';
-      runBtn.textContent = t('dash.restartCheck');
+    if (stopPending) {
+      runBtn.disabled = true;
+      runBtn.title = t('dash.stopPending');
+      runBtn.setAttribute('aria-label', t('dash.stopPending'));
     } else {
-      runBtn.className = 'btn btn-primary';
-      runBtn.textContent = t('dash.runCheck');
+      runBtn.disabled = false;
+      runBtn.removeAttribute('title');
+      if (running) {
+        runBtn.className = 'btn btn-restart';
+        runBtn.textContent = t('dash.restartCheck');
+        runBtn.setAttribute('aria-label', t('dash.restartCheck'));
+      } else {
+        runBtn.className = 'btn btn-primary';
+        runBtn.textContent = t('dash.runCheck');
+        runBtn.setAttribute('aria-label', t('dash.runCheck'));
+      }
     }
   }
   if (stopBtn) {
@@ -789,7 +803,7 @@ async function triggerRunCheck() {
       showToast(isRestart ? t('dash.checkRestarted') : t('dash.checkStarted'), 'success');
       updateRunStatusUI(true);
     } else if (res.status === 409) {
-      showToast(t('dash.checkAlreadyRunning'), 'info');
+      showToast((data && data.error) || t('dash.checkAlreadyRunning'), 'info');
       updateRunStatusUI(true);
     } else {
       updateRunStatusUI(prevRunning);
@@ -802,7 +816,7 @@ async function triggerRunCheck() {
     showToast(err.message, 'error');
     pollDashboardStatus();
   } finally {
-    if (runBtn) runBtn.disabled = false;
+    if (runBtn && currentView === 'dashboard') updateRunStatusUI(dashboardRunning);
   }
 }
 
@@ -888,10 +902,6 @@ let sidebarOverlayOpen = false;
 function isSidebarOverlayWidth() {
   const w = window.innerWidth;
   return w >= 901 && w < SIDEBAR_WIDE_MIN;
-}
-
-function isSidebarAutoCollapseWidth() {
-  return isSidebarOverlayWidth();
 }
 
 function effectiveSidebarCollapsed() {

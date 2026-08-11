@@ -49,17 +49,6 @@ func ValidateSchedule(s *Schedule) error {
 	return nil
 }
 
-func ScheduleFromJSON(raw json.RawMessage) (*Schedule, error) {
-	var s Schedule
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, err
-	}
-	if err := ValidateSchedule(&s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
 func SchedulePatchFromJSON(raw json.RawMessage) (scheduleOverlay, error) {
 	var o scheduleOverlay
 	if err := json.Unmarshal(raw, &o); err != nil {
