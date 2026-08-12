@@ -938,3 +938,35 @@ func TestTrackerTestProxyTimeoutFromConfig(t *testing.T) {
 		t.Fatalf("proxy_type = %d, want 1", got)
 	}
 }
+
+type capturingStore struct {
+	fakeStore
+	lastLimit int
+}
+
+func (c *capturingStore) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error) {
+	c.lastLimit = limit
+	return c.fakeStore.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy)
+}
+
+func TestGetHistoryLimitCap(t *testing.T) {
+	store := &capturingStore{fakeStore: fakeStore{checkLog: []storage.CheckLogEntry{{ID: 1}}}}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/history?limit=100000", nil)
+	w := httptest.NewRecorder()
+	srv.handleHistory(w, req)
+	if store.lastLimit != 1000 {
+		t.Fatalf("limit = %d, want 1000", store.lastLimit)
+	}
+}
+
+func TestRequestBodyTooLarge(t *testing.T) {
+	srv := newTestServer(&fakeStore{})
+	body := make([]byte, maxRequestBody+1)
+	req := httptest.NewRequest(http.MethodPut, "/api/schedule", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	withMaxBody(srv.handlePutSchedule)(w, req)
+	if w.Code != http.StatusBadRequest && w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 400 or 413", w.Code)
+	}
+}

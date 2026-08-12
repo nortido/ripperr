@@ -68,22 +68,22 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("GET /api/timezones", s.handleGetTimezones)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
-	mux.HandleFunc("POST /api/run", s.handleRun)
+	mux.HandleFunc("POST /api/run", withMaxBody(s.handleRun))
 	mux.HandleFunc("GET /api/history", s.handleHistory)
-	mux.HandleFunc("POST /api/plan/{hash}/force", s.handlePlanForce)
-	mux.HandleFunc("POST /api/plan/force-all", s.handlePlanForceAll)
+	mux.HandleFunc("POST /api/plan/{hash}/force", withMaxBody(s.handlePlanForce))
+	mux.HandleFunc("POST /api/plan/force-all", withMaxBody(s.handlePlanForceAll))
 	mux.HandleFunc("GET /api/categories", s.handleGetCategories)
 	mux.HandleFunc("GET /api/schedule", s.handleGetSchedule)
-	mux.HandleFunc("PUT /api/schedule", s.handlePutSchedule)
+	mux.HandleFunc("PUT /api/schedule", withMaxBody(s.handlePutSchedule))
 	mux.HandleFunc("GET /api/ignore", s.handleGetIgnore)
-	mux.HandleFunc("POST /api/ignore", s.handlePostIgnore)
+	mux.HandleFunc("POST /api/ignore", withMaxBody(s.handlePostIgnore))
 	mux.HandleFunc("DELETE /api/ignore/{hash}", s.handleDeleteIgnore)
 	mux.HandleFunc("GET /api/trackers", s.handleGetTrackers)
-	mux.HandleFunc("PUT /api/trackers/{key}", s.handlePutTracker)
-	mux.HandleFunc("POST /api/trackers/{key}/test", s.handleTestTracker)
+	mux.HandleFunc("PUT /api/trackers/{key}", withMaxBody(s.handlePutTracker))
+	mux.HandleFunc("POST /api/trackers/{key}/test", withMaxBody(s.handleTestTracker))
 	mux.HandleFunc("GET /api/integrations", s.handleGetIntegrations)
-	mux.HandleFunc("PUT /api/integrations", s.handlePutIntegrations)
-	mux.HandleFunc("POST /api/integrations/test", s.handleTestIntegration)
+	mux.HandleFunc("PUT /api/integrations", withMaxBody(s.handlePutIntegrations))
+	mux.HandleFunc("POST /api/integrations/test", withMaxBody(s.handleTestIntegration))
 	s.srv = &http.Server{Addr: listen, Handler: mux}
 	return s
 }
@@ -104,6 +104,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+const maxRequestBody = 1 << 20
+
+func withMaxBody(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		h(w, r)
+	}
 }
 
 func (s *Server) scheduleLoc(cfg config.App) *time.Location {
@@ -250,6 +259,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 1000 {
+		limit = 1000
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	if offset < 0 {

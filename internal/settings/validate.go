@@ -3,6 +3,7 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -157,11 +158,94 @@ func ValidateTrackerPatch(o trackerItemOverlay) error {
 			return err
 		}
 	}
+	if o.Domain != nil {
+		if err := validateTrackerHostname(strings.TrimSpace(*o.Domain), "domain"); err != nil {
+			return err
+		}
+	}
 	if o.ActiveDomain != nil {
 		d := strings.TrimSpace(*o.ActiveDomain)
-		if d != "" && strings.ContainsAny(d, " /") {
-			return fmt.Errorf("active_domain must not contain spaces or slashes: %q", d)
+		if d != "" {
+			if err := validateTrackerHostname(d, "active_domain"); err != nil {
+				return err
+			}
 		}
+	}
+	if o.LoginURL != nil {
+		if err := validateTrackerHTTPURL(*o.LoginURL, "login_url"); err != nil {
+			return err
+		}
+	}
+	if o.DownloadURL != nil {
+		if err := validateTrackerHTTPURL(*o.DownloadURL, "download_url"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTrackerHostname checks a tracker domain or mirror: no scheme, no slashes/spaces,
+// letters/digits/hyphen/dot, optional :port.
+func validateTrackerHostname(s, label string) error {
+	if s == "" {
+		return fmt.Errorf("%s must not be empty", label)
+	}
+	if strings.ContainsAny(s, " \t\n\r/") {
+		return fmt.Errorf("%s must not contain spaces or slashes: %q", label, s)
+	}
+	if strings.Contains(s, "://") {
+		return fmt.Errorf("%s must not include a URL scheme: %q", label, s)
+	}
+	host, port, hasPort := strings.Cut(s, ":")
+	if hasPort {
+		if host == "" || port == "" {
+			return fmt.Errorf("%s has invalid host:port: %q", label, s)
+		}
+		for _, c := range port {
+			if c < '0' || c > '9' {
+				return fmt.Errorf("%s has invalid port: %q", label, s)
+			}
+		}
+		if len(port) > 5 {
+			return fmt.Errorf("%s has invalid port: %q", label, s)
+		}
+	} else {
+		host = s
+	}
+	for i, c := range host {
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.'
+		if !ok {
+			return fmt.Errorf("%s contains invalid hostname characters: %q", label, s)
+		}
+		if c == '-' && (i == 0 || i == len(host)-1 || host[i-1] == '.' || (i+1 < len(host) && host[i+1] == '.')) {
+			return fmt.Errorf("%s has invalid hostname: %q", label, s)
+		}
+		if c == '.' && (i == 0 || i == len(host)-1) {
+			return fmt.Errorf("%s has invalid hostname: %q", label, s)
+		}
+	}
+	return nil
+}
+
+func validateTrackerHTTPURL(raw, label string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.ContainsAny(raw, " \t\n\r") {
+		return fmt.Errorf("%s must not contain spaces", label)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	switch u.Scheme {
+	case "http", "https":
+	default:
+		return fmt.Errorf("%s must use http or https scheme", label)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s: invalid url: missing host", label)
 	}
 	return nil
 }
@@ -173,8 +257,8 @@ func normalizeMirrorList(ss []string) ([]string, error) {
 		if s == "" {
 			continue
 		}
-		if strings.ContainsAny(s, " /") {
-			return nil, fmt.Errorf("mirror domain must not contain spaces or slashes: %q", s)
+		if err := validateTrackerHostname(s, "mirror domain"); err != nil {
+			return nil, err
 		}
 		out = append(out, s)
 	}

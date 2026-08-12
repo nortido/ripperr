@@ -1057,8 +1057,7 @@ body:has(.app.page-scaled) {
 
   .table-dash-releases .col-status,
   .table-dash-releases .col-time,
-  .table-dash-releases .plan-recheck-cell,
-  .table-dash-releases .col-actions {
+  .table-dash-releases .plan-recheck-cell {
     padding-left: 8px;
     padding-right: 14px;
   }
@@ -1066,6 +1065,8 @@ body:has(.app.page-scaled) {
   .table-dash-releases .col-actions {
     width: 94px;
     max-width: 94px;
+    padding-left: 8px;
+    padding-right: 14px;
   }
 }
 
@@ -1084,15 +1085,14 @@ body:has(.app.page-scaled) {
   .table-dash-releases .col-time {
     width: 100px;
     max-width: 100px;
+    font-size: 13px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 
   .table-dash-releases .plan-recheck-cell {
     width: 118px;
     max-width: 118px;
-  }
-
-  .table-dash-releases .col-time,
-  .table-dash-releases .plan-recheck-cell {
     font-size: 13px;
     padding-left: 8px;
     padding-right: 8px;
@@ -1649,18 +1649,6 @@ td.plan-recheck-cell {
   border-color: var(--danger);
 }
 
-.btn-unignore {
-  color: var(--text-muted);
-  border-color: var(--border);
-  background: transparent;
-}
-
-.btn-unignore:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: var(--danger);
-  background: var(--danger-bg);
-}
-
 .btn-icon-only {
   min-width: 36px;
   min-height: 36px;
@@ -2027,23 +2015,54 @@ td.plan-recheck-cell {
   font-weight: 500;
 }
 
-.btn-ignore {
-  color: var(--link);
-  border-color: var(--accent-subtle);
-  background: var(--accent-subtle);
+.btn-action-ignore {
+  border-color: transparent;
 }
 
-.btn-action-ignore {
+.btn-action-ignore.btn-ignore {
+  color: var(--hue-green);
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn-action-ignore.btn-unignore {
   color: var(--hue-cyan);
-  border-color: var(--tint-cyan);
   background: var(--tint-cyan);
 }
 
-.btn-action-ignore:hover:not(:disabled) {
-  color: #fff;
-  border-color: transparent;
-  background: var(--hue-cyan);
-  box-shadow: 0 4px 14px rgba(8, 145, 178, 0.3);
+.btn-action-ignore.btn-ignore:hover:not(:disabled) {
+  color: var(--hue-green);
+  border-color: var(--hue-green);
+  background: var(--tint-green);
+  box-shadow: none;
+  filter: brightness(1.1) saturate(1.15);
+}
+
+.btn-action-ignore.btn-unignore:hover:not(:disabled) {
+  color: var(--hue-cyan);
+  border-color: var(--tint-cyan);
+  background: var(--tint-cyan);
+  box-shadow: none;
+  filter: brightness(1.1) saturate(1.15);
+}
+
+.btn-action-ignore .icon-idle,
+.btn-action-ignore .icon-hover {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-action-ignore .icon-hover {
+  display: none;
+}
+
+.btn-action-ignore:hover:not(:disabled) .icon-idle {
+  display: none;
+}
+
+.btn-action-ignore:hover:not(:disabled) .icon-hover {
+  display: inline-flex;
 }
 
 .btn-plan-force {
@@ -2060,24 +2079,18 @@ td.plan-recheck-cell {
 }
 
 .btn-plan-force.is-active {
-  color: #fff;
+  color: var(--hue-amber);
   border-color: transparent;
-  background: var(--hue-amber);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(217, 119, 6, 0.2);
+  background: var(--tint-amber);
+  box-shadow: none;
 }
 
 .btn-plan-force.is-active:hover:not(:disabled) {
-  color: #fff;
-  border-color: transparent;
-  background: var(--hue-amber);
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(217, 119, 6, 0.3);
-}
-
-.btn-ignore:hover:not(:disabled) {
-  background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
-  color: #fff;
-  border-color: transparent;
-  box-shadow: var(--shadow-primary);
+  color: var(--hue-amber);
+  border-color: var(--hue-amber);
+  background: var(--tint-amber);
+  box-shadow: none;
+  filter: brightness(1.1) saturate(1.15);
 }
 
 .btn-group {

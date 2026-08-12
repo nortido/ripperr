@@ -7,7 +7,7 @@ const PAGE_SCALE_BASE = 360;
 const DISMISSED_ALERTS_KEY = 'trackerr-dismissed-alerts';
 const PAGE_SIZE_KEY = 'trackerr-page-size';
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 0];
-const PAGE_SIZE_ALL = 100000;
+const PAGE_SIZE_ALL = 1000;
 const STOP_PENDING_MS = 90000;
 
 const VIEW_HASH = {
@@ -45,6 +45,7 @@ const ICONS = {
   chevronRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeClosed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><path d="M5 14.5c2.2-1.5 11.8-1.5 14 0"/></svg>',
   eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
   help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
@@ -552,6 +553,15 @@ function updateIgnoredStatCard(count) {
   if (valueEl) valueEl.textContent = String(count);
 }
 
+function ignoreButtonIconsHtml(ignored) {
+  const idleIcon = ignored ? 'eyeOff' : 'eye';
+  const hoverIcon = ignored ? 'eye' : 'eyeOff';
+  return (
+    '<span class="icon-idle" data-icon="' + idleIcon + '"></span>' +
+    '<span class="icon-hover" data-icon="' + hoverIcon + '"></span>'
+  );
+}
+
 function updateHistoryIgnoreButtons(root) {
   (root || document).querySelectorAll('.btn-ignore-item').forEach(function (btn) {
     const hash = btn.getAttribute('data-hash');
@@ -561,9 +571,7 @@ function updateHistoryIgnoreButtons(root) {
     btn.classList.toggle('btn-unignore', ignored);
     btn.setAttribute('title', ignored ? t('dash.fromIgnore') : t('dash.toIgnore'));
     btn.setAttribute('aria-label', ignored ? t('dash.fromIgnore') : t('dash.toIgnore'));
-    const iconEl = btn.querySelector('[data-icon]');
-    if (iconEl) iconEl.setAttribute('data-icon', ignored ? 'eye' : 'eyeOff');
-    btn.innerHTML = '<span data-icon="' + (ignored ? 'eye' : 'eyeOff') + '"></span>';
+    btn.innerHTML = ignoreButtonIconsHtml(ignored);
   });
   hydrateIcons(root || document);
 }
@@ -1157,10 +1165,19 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+function isSafeLinkUrl(url) {
+  try {
+    const scheme = new URL(url).protocol.toLowerCase();
+    return scheme === 'http:' || scheme === 'https:' || scheme === 'magnet:';
+  } catch {
+    return false;
+  }
+}
+
 function linkCell(name, url) {
   const label = escapeHtml(name || url || t('common.emDash'));
   const titleAttr = name ? ' title="' + escapeHtml(name) + '"' : '';
-  if (url) {
+  if (url && isSafeLinkUrl(url)) {
     return '<a class="release-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener"' + titleAttr + '>' + label + '</a>';
   }
   return '<span class="release-link"' + titleAttr + '>' + label + '</span>';
@@ -1929,7 +1946,6 @@ function buildReleaseRows(histItems) {
     const btnCls = ignored
       ? 'btn btn-icon-only btn-unignore btn-ignore-item btn-action-ignore'
       : 'btn btn-icon-only btn-ignore btn-ignore-item btn-action-ignore';
-    const btnIcon = ignored ? 'eye' : 'eyeOff';
     const btnTitle = ignored ? t('dash.fromIgnore') : t('dash.toIgnore');
     const rowCls = forced ? ' class="plan-row-force"' : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
@@ -1952,7 +1968,7 @@ function buildReleaseRows(histItems) {
       'title="' + escapeHtml(btnTitle) + '" aria-label="' + escapeHtml(btnTitle) + '" ' +
       'data-url="' + escapeHtml(item.url || '') + '" data-name="' + escapeHtml(item.name || '') +
       '" data-hash="' + escapeHtml(urlHash) + '">' +
-      '<span data-icon="' + btnIcon + '"></span></button></div></td>' +
+      ignoreButtonIconsHtml(ignored) + '</button></div></td>' +
       '</tr>';
   });
   return releaseRows;

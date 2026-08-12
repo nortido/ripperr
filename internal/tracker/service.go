@@ -112,8 +112,12 @@ func (s *service) readResponseBody(ctx context.Context, ttid int, ct *CachedTrac
 	}
 	defer res.Body.Close()
 
+	limit := int64(client.MaxPageResponse)
+	if download {
+		limit = client.MaxDownloadResponse
+	}
 	var b bytes.Buffer
-	if _, err = b.ReadFrom(res.Body); err != nil {
+	if err = client.ReadLimited(&b, res.Body, limit); err != nil {
 		return
 	}
 	if download {
@@ -149,8 +153,7 @@ func validateDownloadBody(res *http.Response, buf *bytes.Buffer) (err error) {
 		contentType = res.Header.Get("Content-Type")
 	}
 	if buf.Len() < 50 {
-		err = fmt.Errorf("no file data (status=%d, type=%s, bytes=%d): %s",
-			status, contentType, buf.Len(), helper.Substr(buf.String(), 0, 100))
+		err = fmt.Errorf("no file data (status=%d, type=%s, bytes=%d)", status, contentType, buf.Len())
 		return
 	}
 	sample := buf.Bytes()

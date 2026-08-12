@@ -17,6 +17,21 @@ import (
 	"trackerr/internal/system/logger"
 )
 
+const (
+	MaxPageResponse     = 8 << 20  // 8 MiB HTML tracker pages
+	MaxDownloadResponse = 64 << 20 // 64 MiB .torrent downloads
+	maxErrorResponse    = 8 << 10  // 8 KiB error response snippets
+)
+
+// ReadLimited reads up to limit bytes from r into dst; returns an error if the body exceeds limit.
+func ReadLimited(dst *bytes.Buffer, r io.Reader, limit int64) error {
+	n, err := io.Copy(dst, io.LimitReader(r, limit+1))
+	if n > limit {
+		return fmt.Errorf("response too large (limit %d)", limit)
+	}
+	return err
+}
+
 type ITracker interface {
 	GetName() (name string)
 	GetDomain() (host string)
@@ -450,18 +465,22 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 		return
 	}
 	if download && res.StatusCode >= http.StatusMultipleChoices && res.StatusCode < http.StatusBadRequest {
-		err = fmt.Errorf("download redirect not followed (status %d, location %s)", res.StatusCode, res.Header.Get("Location"))
+		err = fmt.Errorf("download redirect not followed (status %d)", res.StatusCode)
 		return
 	}
 	if res.StatusCode >= http.StatusBadRequest {
 		b := new(bytes.Buffer)
 		defer res.Body.Close()
 
-		if _, err = b.ReadFrom(res.Body); err != nil {
+		if err = ReadLimited(b, res.Body, maxErrorResponse); err != nil {
 			return
 		}
-		body := helper.Substr(b.String(), 0, 100)
-		err = fmt.Errorf("unexpected status code: %d\n%s", res.StatusCode, body)
+		contentType := res.Header.Get("Content-Type")
+		bodySize := b.Len()
+		logger.Debug(fmt.Sprintf("%s: unexpected status %d (type=%s, bytes=%d): %s",
+			c.ITracker.GetName(), res.StatusCode, contentType, bodySize, helper.Substr(b.String(), 0, 500)))
+		err = fmt.Errorf("%s: unexpected status code %d (type=%s, bytes=%d)",
+			c.ITracker.GetName(), res.StatusCode, contentType, bodySize)
 		return
 	}
 	return
