@@ -923,6 +923,11 @@ body:has(.app.page-scaled) {
   min-width: 0;
 }
 
+html:not(.mobile-layout) .name-filter-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
 .th-name-filter-label {
   display: inline-flex;
   align-items: center;
@@ -930,6 +935,18 @@ body:has(.app.page-scaled) {
   min-width: 0;
   cursor: pointer;
   user-select: none;
+}
+
+html:not(.mobile-layout) .th-name-filter-label {
+  width: 100%;
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
 }
 
 .th-name-filter-label:hover {
@@ -968,20 +985,66 @@ body:has(.app.page-scaled) {
   color: var(--hue-cyan);
 }
 
-.name-filter-wrap.is-open .th-name-filter-label {
+html:not(.mobile-layout) .name-filter-wrap.is-open .th-name-filter-label {
+  transform: translateX(100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .name-filter-wrap.is-open .th-name-filter-label {
   display: none;
 }
 
 .name-filter-inline {
-  display: none;
+  display: flex;
   align-items: center;
   gap: 2px;
   width: 100%;
   min-width: 0;
 }
 
-.name-filter-wrap.is-open .name-filter-inline {
+html.mobile-layout .name-filter-inline {
+  display: none;
+}
+
+html.mobile-layout .name-filter-wrap.is-open .name-filter-inline {
   display: flex;
+}
+
+html:not(.mobile-layout) .name-filter-inline {
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.mobile-layout) .th-name-filter-label,
+  html:not(.mobile-layout) .name-filter-inline {
+    transition-duration: 0.001ms;
+  }
 }
 
 .name-filter-input {
@@ -1054,12 +1117,6 @@ body:has(.app.page-scaled) {
   position: relative;
   color: var(--text-muted);
   flex-shrink: 0;
-  transition:
-    opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    min-width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    padding 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    visibility 0s linear 0s;
 }
 
 .btn.btn-mobile-name-search.is-active {
@@ -1082,6 +1139,13 @@ body:has(.app.page-scaled) {
   align-items: center;
   min-width: 0;
   overflow: hidden;
+}
+
+/* search/close button pair: a fixed-position stack, only its icon cross-fades.
+   Promoted out of .mobile-name-search-slot so its own box geometry never
+   depends on the slot's (animated) width. */
+.mobile-name-search-toggle {
+  display: none;
 }
 
 .mobile-name-search-field {
@@ -1133,14 +1197,45 @@ body:has(.app.page-scaled) {
   flex-shrink: 0;
 }
 
+/*
+ * Mobile releases-card-header toolbar: name-search open/close animation.
+ *
+ * Geometry model (all lengths relative to .card-header-toolbar, the single
+ * positioning root — .card-toolbar-post-search is left `position: static`
+ * on purpose so it never becomes an alternate containing block):
+ *
+ *   T = .card-header-toolbar content width
+ *   buttons-w = btn-h-sm + gap + btn-h-sm            (name-search button + filter button)
+ *   content-right = buttons-w + gap                  (reserved strip on the right)
+ *   W = T - content-right                             (width of the sliding panes)
+ *
+ * .card-header-toolbar-shift (title/refresh/sort/force-all) and
+ * .mobile-name-search-slot (the search-input field) are both pinned to the
+ * exact same box — left: 0; right: content-right — at all times, in every
+ * state (idle, animating, expanded). Only `transform: translateX()` and
+ * `opacity` move them; nothing about their box (position/left/right/width)
+ * ever changes, so the two states are true time-reverses of each other and
+ * the two panes' edges stay perfectly adjacent (never overlapping, never
+ * gapping) at every point of the animation, regardless of easing, because
+ * both use the same `right` reserve and mirrored translateX(±100%).
+ *
+ * .mobile-name-search-toggle (the search button and close button, stacked
+ * in the same spot) and .hist-filter-select (filter button) are pinned with
+ * a constant `right` offset in EVERY state. The search button and the close
+ * button never move at all — they occupy the same box and cross-fade via
+ * opacity/visibility only (no display swap, no layout shift). The filter
+ * button is the only fixed-position element that itself animates away
+ * (transform + opacity, taken out of flow in both states, no max-width/flex).
+ */
+
 html.mobile-layout .releases-card-header .card-header-toolbar {
-  --mobile-toolbar-post-w: calc(var(--btn-h-sm) + 8px + var(--btn-h-sm) + 8px);
-  --mobile-toolbar-filter-reserve: calc(var(--btn-h-sm) + 8px);
+  --mobile-toolbar-buttons-w: calc(var(--btn-h-sm) + 8px + var(--btn-h-sm));
+  --mobile-toolbar-content-right: calc(var(--mobile-toolbar-buttons-w) + 8px);
   display: flex;
   align-items: center;
-  gap: 8px;
   position: relative;
   overflow: visible;
+  height: var(--btn-h-sm);
 }
 
 html.mobile-layout .releases-card-header.is-search-expanded .card-header-toolbar,
@@ -1148,146 +1243,174 @@ html.mobile-layout .releases-card-header.is-search-animating .card-header-toolba
   overflow: hidden;
 }
 
-html.mobile-layout .releases-card-header .card-header-toolbar-shift {
+html.mobile-layout .releases-card-header .card-toolbar-post-search {
   flex: 1 1 auto;
   min-width: 0;
-  transform: translateX(0);
-  opacity: 1;
-  pointer-events: auto;
-  transition:
-    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  height: 100%;
 }
 
-html.mobile-layout .releases-card-header.is-search-expanded .card-header-toolbar-shift,
-html.mobile-layout .releases-card-header.is-search-animating .card-header-toolbar-shift {
+html.mobile-layout .releases-card-header .card-header-toolbar-shift,
+html.mobile-layout .releases-card-header .mobile-name-search-slot {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  z-index: 1;
-}
-
-html.mobile-layout .releases-card-header.is-search-expanded .card-header-toolbar-shift {
-  right: 0;
-  transform: translateX(calc(-100% - 8px));
-  opacity: 0;
-  pointer-events: none;
-}
-
-html.mobile-layout .releases-card-header.is-search-animating:not(.is-search-expanded) .card-header-toolbar-shift {
-  right: var(--mobile-toolbar-post-w);
-  transform: translateX(0);
-  opacity: 1;
-}
-
-html.mobile-layout .releases-card-header .card-toolbar-post-search {
-  flex: 0 0 auto;
+  right: var(--mobile-toolbar-content-right);
   min-width: 0;
-  justify-content: flex-end;
-  overflow: visible;
-}
-
-html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-search,
-html.mobile-layout .releases-card-header.is-search-animating:not(.is-search-expanded) .card-toolbar-post-search {
-  flex: 1 1 auto;
-  position: relative;
-  z-index: 2;
-}
-
-html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-search {
-  box-sizing: border-box;
-  gap: 0;
-  padding-right: var(--mobile-toolbar-filter-reserve);
-}
-
-html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-slot {
-  flex: 1 1 auto;
-  width: auto;
-  max-width: none;
+  display: flex;
   align-items: center;
 }
 
-html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-search > .hist-filter-select {
-  flex: 0 0 0;
-  max-width: 0;
-  overflow: hidden;
-  opacity: 0;
-  transform: translateX(calc(100% + 8px));
-  pointer-events: none;
-}
-
-html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select {
-  flex-shrink: 0;
-  max-width: var(--btn-h-sm);
-  overflow: visible;
+html.mobile-layout .releases-card-header .card-header-toolbar-shift {
+  gap: 8px;
+  z-index: 1;
   transform: translateX(0);
   opacity: 1;
-  pointer-events: auto;
+  visibility: visible;
   transition:
-    max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+/* .card-header-toolbar-shift is squeezed into a fixed-height (--btn-h-sm)
+   absolutely-positioned box; without a nowrap guard a long release-card
+   title would wrap to a second line and get clipped instead of shrinking
+   the flex row, so it must ellipsize on one line here. */
+html.mobile-layout .releases-card-header .card-header-toolbar-shift .card-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .card-header-toolbar-shift {
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .releases-card-header .mobile-name-search-slot {
+  display: flex;
+  z-index: 1;
+  transform: translateX(100%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-slot {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+html.mobile-layout .mobile-name-search-field {
+  order: initial;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  opacity: 1;
+  visibility: visible;
+  transition: none;
+}
+
+html.mobile-layout .mobile-name-search-field .mobile-name-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* filter button: fixed at the toolbar's right edge in every state; when the
+   name-search field is open it is the one element that leaves, via
+   transform + opacity only (never max-width), taken out of flow always. */
+html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  width: var(--btn-h-sm);
+  transform: translateX(0);
+  opacity: 1;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-search > .hist-filter-select {
+  transform: translateX(calc(100% + 8px));
+  opacity: 0;
 }
 
 html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.open {
   z-index: 301;
 }
 
-html.mobile-layout .releases-card-header.is-search-animating .card-header-toolbar,
-html.mobile-layout .releases-card-header.is-search-animating .card-toolbar-post-search,
-html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-slot {
-  pointer-events: none;
-}
-
+/* search button / close button: constant position in every state — the
+   search button must never move a single pixel. Both buttons are stacked
+   in the same box; only the icon cross-fades via opacity/visibility. */
 html.mobile-layout .btn.btn-mobile-name-search {
   display: inline-flex;
-  flex: 0 0 var(--btn-h-sm);
-  width: var(--btn-h-sm);
-  min-width: var(--btn-h-sm);
 }
 
-html.mobile-layout .mobile-name-search-slot {
+html.mobile-layout .releases-card-header .mobile-name-search-toggle {
   display: flex;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--btn-h-sm) + 8px);
+  z-index: 2;
+  width: var(--btn-h-sm);
   align-items: center;
-  flex: 0 0 var(--btn-h-sm);
-  width: var(--btn-h-sm);
-  max-width: var(--btn-h-sm);
-  transition:
-    width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
-    flex 0.32s cubic-bezier(0.4, 0, 0.2, 1),
-    max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-html.mobile-layout .mobile-name-search-toggle {
-  position: relative;
-  flex: 0 0 var(--btn-h-sm);
-  width: var(--btn-h-sm);
-  height: var(--btn-h-sm);
-  order: 2;
-  align-self: center;
 }
 
 html.mobile-layout .mobile-name-search-toggle .btn-mobile-name-search,
 html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: var(--btn-h-sm);
   height: var(--btn-h-sm);
   min-width: var(--btn-h-sm);
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+html.mobile-layout .mobile-name-search-toggle .btn-mobile-name-search {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear {
-  display: none;
+  display: inline-flex;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
   border: none;
   border-color: transparent;
   outline: none;
   box-shadow: none;
   background: transparent;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
 }
 
 html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear:hover {
@@ -1296,43 +1419,51 @@ html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear:hove
   border-color: transparent;
 }
 
-html.mobile-layout .mobile-name-search-slot.is-open .mobile-name-search-toggle .btn.mobile-name-filter-clear {
-  display: inline-flex;
-}
-
-html.mobile-layout .mobile-name-search-slot.is-open .mobile-name-search-toggle .btn-mobile-name-search {
-  display: none;
-}
-
-html.mobile-layout .mobile-name-search-field {
-  order: 1;
-}
-
-html.mobile-layout .mobile-name-search-slot.is-open .mobile-name-search-field {
-  flex: 1 1 auto;
-  width: auto;
-  opacity: 1;
-  visibility: visible;
-  transition:
-    flex 0.32s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    visibility 0s linear 0s;
-}
-
-html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-slot .mobile-name-search-field {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-}
-
 html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear svg {
   width: var(--btn-icon-sm);
   height: var(--btn-icon-sm);
 }
 
-html.mobile-layout .mobile-name-search-field .mobile-name-filter-input {
-  flex: 1 1 auto;
-  min-width: 0;
+html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-toggle .btn-mobile-name-search {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+/* Lock out all interaction while mid-transition. These selectors must win
+   over the steady-state `pointer-events: auto` rules above despite equal
+   specificity — an explicitly declared value always beats one inherited
+   from an .is-search-animating ancestor, so each target is listed
+   explicitly here (not relied on via inheritance), and this block is kept
+   last in the cascade so it wins the tie. */
+html.mobile-layout .releases-card-header.is-search-animating .card-header-toolbar-shift,
+html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-slot,
+html.mobile-layout .releases-card-header.is-search-animating .card-toolbar-post-search > .hist-filter-select,
+html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-toggle .btn-mobile-name-search,
+html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.mobile-layout .releases-card-header .card-header-toolbar-shift,
+  html.mobile-layout .releases-card-header .mobile-name-search-slot,
+  html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select,
+  html.mobile-layout .mobile-name-search-toggle .btn-mobile-name-search,
+  html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+    transition-duration: 0.001ms;
+  }
 }
 
 .seg-ctrl {

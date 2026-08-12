@@ -2053,13 +2053,18 @@ function buildMobileNameSearchSlot() {
   const headerExpanded = active ? ' is-search-expanded' : '';
   return {
     headerClass: headerExpanded,
+    // .mobile-name-search-toggle is a sibling of .mobile-name-search-slot
+    // (not nested inside it): the search button and the close button must
+    // sit in a fixed-position box that is completely independent of the
+    // search-field's own animated geometry, so the search button is
+    // physically unable to move.
     html:
       '<div class="' + slotCls + '">' +
       '<div class="mobile-name-search-field">' +
       '<input type="text" class="name-filter-input mobile-name-filter-input"' +
       ' value="' + escapeHtml(historyState.name) + '"' +
       ' placeholder="' + escapeHtml(t('dash.nameFilterPlaceholder')) + '" autocomplete="off">' +
-      '</div>' +
+      '</div></div>' +
       '<div class="mobile-name-search-toggle">' +
       '<button type="button" class="btn btn-sm btn-icon name-filter-clear mobile-name-filter-clear"' +
       ' title="' + escapeHtml(t('dash.nameFilterClear')) + '"' +
@@ -2069,7 +2074,7 @@ function buildMobileNameSearchSlot() {
       ' aria-haspopup="true" aria-expanded="' + (active ? 'true' : 'false') + '"' +
       ' title="' + escapeHtml(title) + '" aria-label="' + escapeHtml(title) + '">' +
       '<span data-icon="search"></span>' + dotHtml + '</button>' +
-      '</div></div>',
+      '</div>',
   };
 }
 
