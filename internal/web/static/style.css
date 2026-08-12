@@ -518,10 +518,6 @@ body:has(.app.page-scaled) {
   margin-left: auto;
 }
 
-.dash-header-text {
-  min-width: 0;
-}
-
 .dash-page-header .page-title {
   margin-bottom: 0;
 }
@@ -729,11 +725,6 @@ body:has(.app.page-scaled) {
 .stat-icon-blue {
   background: var(--tint-blue);
   color: var(--hue-blue);
-}
-
-.stat-icon-amber {
-  background: var(--tint-amber);
-  color: var(--hue-amber);
 }
 
 .stat-icon-cyan {
@@ -2760,8 +2751,7 @@ td.plan-recheck-cell {
 }
 
 .input,
-.select,
-.textarea {
+.select {
   width: 100%;
   min-height: var(--btn-h-md);
   padding: 10px var(--btn-pad-x-sm);
@@ -2775,8 +2765,7 @@ td.plan-recheck-cell {
 }
 
 .input:focus,
-.select:focus,
-.textarea:focus {
+.select:focus {
   outline: none;
   border-color: var(--accent-from);
   box-shadow: 0 0 0 3px var(--focus-ring);

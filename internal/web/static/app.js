@@ -1017,7 +1017,6 @@ function initSidebarCollapse() {
     });
   });
   refreshSidebarLayout();
-  window.addEventListener('resize', refreshSidebarLayout);
 }
 
 function applyMobileLayout() {
@@ -1046,7 +1045,15 @@ function applyMobileLayout() {
 initSidebarCollapse();
 layoutWasMobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;
 applyMobileLayout();
-window.addEventListener('resize', applyMobileLayout);
+let mobileLayoutFrameScheduled = false;
+window.addEventListener('resize', function () {
+  if (mobileLayoutFrameScheduled) return;
+  mobileLayoutFrameScheduled = true;
+  requestAnimationFrame(function () {
+    mobileLayoutFrameScheduled = false;
+    applyMobileLayout();
+  });
+});
 
 document.querySelectorAll('.theme-toggle').forEach(function (btn) {
   btn.addEventListener('click', function () {
@@ -1170,7 +1177,7 @@ function formatThenSlot(iso) {
 }
 
 function escapeHtml(s) {
-  if (!s) return '';
+  if (s === null || s === undefined) return '';
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -1583,7 +1590,7 @@ function statCard(value, label, iconName, variant, filterType) {
   return (
     '<div class="stat-card' + filterCls + '"' + filterAttr + '>' +
     '<div class="stat-card-body">' +
-    '<div class="stat-value">' + escapeHtml(String(value)) + '</div>' +
+    '<div class="stat-value">' + escapeHtml(value) + '</div>' +
     '<div class="stat-label">' + escapeHtml(label) + '</div>' +
     '</div>' +
     '<div class="' + iconCls + '" data-icon="' + iconName + '"></div>' +
@@ -2933,15 +2940,15 @@ function renderSchedule(el, sch, suggestions, qbitDown, timezones) {
     '<div class="form-group">' +
     '<label class="form-label" for="threshold_month">' + escapeHtml(t('settings.thresholdMonth')) + '</label>' +
     '<input type="number" class="input" id="threshold_month" min="1" value="' +
-    sch.threshold_month + '"></div>' +
+    escapeHtml(sch.threshold_month) + '"></div>' +
     '<div class="form-group">' +
     '<label class="form-label" for="threshold_half_year">' + escapeHtml(t('settings.thresholdHalfYear')) + '</label>' +
     '<input type="number" class="input" id="threshold_half_year" min="1" value="' +
-    sch.threshold_half_year + '"></div>' +
+    escapeHtml(sch.threshold_half_year) + '"></div>' +
     '<div class="form-group">' +
     '<label class="form-label" for="threshold_year">' + escapeHtml(t('settings.thresholdYear')) + '</label>' +
     '<input type="number" class="input" id="threshold_year" min="1" value="' +
-    sch.threshold_year + '"></div>' +
+    escapeHtml(sch.threshold_year) + '"></div>' +
     '</div>' +
     '<hr class="form-divider">' +
     '<div class="form-group">' +
@@ -3150,7 +3157,7 @@ function trackerItemHtml(tracker) {
     '<input type="text" class="input tr-domain" autocomplete="off" name="' + escapeHtml(randomFieldName('tr-domain')) +
     '" value="' + escapeHtml(tracker.domain) + '"></div>' +
     '<div class="form-group"><label class="form-label">' + escapeHtml(t('trackers.hourLimit')) + '</label>' +
-    '<input type="number" class="input tr-hour-limit" min="1" value="' + tracker.hour_limit + '"></div>' +
+    '<input type="number" class="input tr-hour-limit" min="1" value="' + escapeHtml(tracker.hour_limit) + '"></div>' +
     '<div class="form-group"><label class="form-label">' + escapeHtml(t('trackers.proxy')) + '</label>' +
     '<select class="select tr-proxy-type">' +
     '<option value="0"' + (tracker.proxy_type === 0 ? ' selected' : '') + '>' + escapeHtml(t('trackers.proxyDirect')) + '</option>' +
@@ -3541,7 +3548,7 @@ function renderIntegrations(el, data) {
     '<div class="form-group"><label class="form-label">' + escapeHtml(t('integrations.url')) + '</label>' +
     '<input type="text" class="input" id="flare-url" value="' + escapeHtml(f.url) + '"></div>' +
     '<div class="form-group"><label class="form-label">' + escapeHtml(t('integrations.timeout')) + '</label>' +
-    '<input type="number" class="input" id="flare-timeout" min="1" value="' + (f.timeout_ms || 0) + '"></div>' +
+    '<input type="number" class="input" id="flare-timeout" min="1" value="' + escapeHtml(f.timeout_ms || 0) + '"></div>' +
     '<div class="btn-group">' +
     '<button type="button" class="btn btn-primary btn-save-int" data-section="flaresolverr">' + escapeHtml(t('common.save')) + '</button>' +
     '<button type="button" class="btn btn-ghost btn-test-int" data-kind="flaresolverr">' + escapeHtml(t('integrations.test')) + '</button>' +
