@@ -30,7 +30,7 @@ import (
 var staticFS embed.FS
 
 type store interface {
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -273,7 +273,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if sortBy != "recheck" {
 		sortBy = "checked"
 	}
-	items, total, err := s.db.ListCheckLog(r.Context(), limit, offset, status, ignoredOnly, sortBy)
+	nameFilter := strings.TrimSpace(r.URL.Query().Get("name"))
+	if len(nameFilter) > 200 {
+		nameFilter = nameFilter[:200]
+	}
+	items, total, err := s.db.ListCheckLog(r.Context(), limit, offset, status, ignoredOnly, sortBy, nameFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

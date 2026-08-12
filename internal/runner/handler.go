@@ -52,6 +52,7 @@ type storage interface {
 	GetIgnoreSet(ctx context.Context) (map[string]struct{}, error)
 	ListDueItems(ctx context.Context) ([]storageModel.DueItem, error)
 	DeleteItem(ctx context.Context, urlHash string) error
+	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 }
 
@@ -223,6 +224,17 @@ func (h *handler) push(ctx context.Context) (err error) {
 			err = fmt.Errorf("get entries error: %w", err)
 			return
 		}
+	}
+	entries = helper.DedupeEntriesByName(entries)
+	winners := make(map[string]string)
+	for _, e := range entries {
+		if e.URL == "" {
+			continue
+		}
+		winners[helper.NormalizeReleaseName(e.Name)] = storagePkg.URLHash(e.URL)
+	}
+	if err = h.storage.PurgeDuplicateNames(ctx, winners); err != nil {
+		logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
 	}
 	if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
 		return

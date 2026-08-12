@@ -22,7 +22,7 @@ type postgres interface {
 	AddItem(ctx context.Context, item *storage.Item) (err error)
 	UpdateItem(ctx context.Context, item *storage.Item) (err error)
 	AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -31,6 +31,7 @@ type postgres interface {
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
 	ListDueItems(ctx context.Context) ([]storage.DueItem, error)
 	DeleteItem(ctx context.Context, urlHash string) error
+	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 	ForceCheckAll(ctx context.Context, force bool) (int64, error)
 }
@@ -42,7 +43,7 @@ type IClient interface {
 	GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error)
 	SaveItem(ctx context.Context, item *runner.HistoryItem) (err error)
 	AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -51,6 +52,7 @@ type IClient interface {
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
 	ListDueItems(ctx context.Context) ([]storage.DueItem, error)
 	DeleteItem(ctx context.Context, urlHash string) error
+	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 	ForceCheckAll(ctx context.Context, force bool) (int64, error)
 }
@@ -148,8 +150,8 @@ func (s *service) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry)
 	return s.pg.AddCheckLog(ctx, entry)
 }
 
-func (s *service) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error) {
-	return s.pg.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy)
+func (s *service) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
+	return s.pg.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy, nameFilter)
 }
 
 func (s *service) ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error) {
@@ -182,6 +184,10 @@ func (s *service) ListDueItems(ctx context.Context) ([]storage.DueItem, error) {
 
 func (s *service) DeleteItem(ctx context.Context, urlHash string) error {
 	return s.pg.DeleteItem(ctx, urlHash)
+}
+
+func (s *service) PurgeDuplicateNames(ctx context.Context, winners map[string]string) error {
+	return s.pg.PurgeDuplicateNames(ctx, winners)
 }
 
 func (s *service) SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error) {

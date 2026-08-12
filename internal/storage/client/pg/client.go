@@ -3,6 +3,7 @@ package pg
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -27,7 +28,7 @@ type IClient interface {
 	AddItem(ctx context.Context, item *storage.Item) (err error)
 	UpdateItem(ctx context.Context, item *storage.Item) (err error)
 	AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -36,6 +37,7 @@ type IClient interface {
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
 	ListDueItems(ctx context.Context) ([]storage.DueItem, error)
 	DeleteItem(ctx context.Context, urlHash string) error
+	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 	ForceCheckAll(ctx context.Context, force bool) (int64, error)
 }
@@ -107,6 +109,14 @@ WHERE id IN (
     ) dedup WHERE rn > 1
 );
 CREATE UNIQUE INDEX IF NOT EXISTS check_log_url_hash_uidx ON trackerr.check_log (url_hash);
+
+DELETE FROM trackerr.check_log
+WHERE id IN (
+    SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(item_name)) ORDER BY checked_at DESC, id DESC) AS rn
+        FROM trackerr.check_log
+    ) dedup_name WHERE rn > 1
+);
 `)
 	return err
 }
@@ -184,9 +194,11 @@ func (c *client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 	return err
 }
 
-func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error) {
+func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
 	var total int
-	from := "trackerr.check_log c"
+	from := `(SELECT DISTINCT ON (LOWER(TRIM(item_name))) id, checked_at, url_hash, item_name, item_url, tracker_type_id, status, error
+		FROM trackerr.check_log
+		ORDER BY LOWER(TRIM(item_name)), checked_at DESC, id DESC) c`
 	join := " LEFT JOIN trackerr.history h ON h.url_hash = c.url_hash"
 	if ignoredOnly {
 		join += " INNER JOIN trackerr.ignore i ON i.url_hash = c.url_hash"
@@ -202,6 +214,11 @@ func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilt
 		where = append(where, "c.status = $"+itoa(n))
 		n++
 		args = append(args, statusFilter)
+	}
+	if nameFilter != "" {
+		where = append(where, "POSITION(LOWER($"+itoa(n)+") IN LOWER(c.item_name)) > 0")
+		n++
+		args = append(args, nameFilter)
 	}
 	if len(where) > 0 {
 		clause := " WHERE " + strings.Join(where, " AND ")
@@ -320,7 +337,33 @@ func (c *client) ListDueItems(ctx context.Context) ([]storage.DueItem, error) {
 }
 
 func (c *client) DeleteItem(ctx context.Context, urlHash string) error {
+	if _, err := c.db.Exec(ctx, `DELETE FROM trackerr.check_log WHERE url_hash = $1`, urlHash); err != nil {
+		return err
+	}
 	_, err := c.db.Exec(ctx, `DELETE FROM trackerr.history WHERE url_hash = $1`, urlHash)
+	return err
+}
+
+func (c *client) PurgeDuplicateNames(ctx context.Context, winners map[string]string) error {
+	if len(winners) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(winners))
+	hashes := make([]string, 0, len(winners))
+	for name, hash := range winners {
+		names = append(names, strings.ToLower(strings.TrimSpace(name)))
+		hashes = append(hashes, hash)
+	}
+	const purgeQ = `
+DELETE FROM %s x
+WHERE EXISTS (
+    SELECT 1 FROM unnest($1::text[], $2::text[]) AS w(norm_name, winner_hash)
+    WHERE LOWER(TRIM(x.item_name)) = w.norm_name AND x.url_hash != w.winner_hash
+)`
+	if _, err := c.db.Exec(ctx, fmt.Sprintf(purgeQ, "trackerr.check_log"), names, hashes); err != nil {
+		return err
+	}
+	_, err := c.db.Exec(ctx, fmt.Sprintf(purgeQ, "trackerr.history"), names, hashes)
 	return err
 }
 

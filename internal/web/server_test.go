@@ -29,14 +29,46 @@ type fakeStore struct {
 	forceItems map[string]bool
 }
 
-func (f *fakeStore) ListCheckLog(_ context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error) {
+func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
+	type pick struct {
+		entry storage.CheckLogEntry
+	}
+	best := make(map[string]pick)
+	for _, e := range items {
+		key := strings.ToLower(strings.TrimSpace(e.ItemName))
+		cur, ok := best[key]
+		if !ok || e.CheckedAt.After(cur.entry.CheckedAt) || (e.CheckedAt.Equal(cur.entry.CheckedAt) && e.ID > cur.entry.ID) {
+			best[key] = pick{entry: e}
+		}
+	}
+	out := make([]storage.CheckLogEntry, 0, len(best))
+	seen := make(map[string]struct{})
+	for _, e := range items {
+		key := strings.ToLower(strings.TrimSpace(e.ItemName))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		w := best[key].entry
+		if w.URLHash == e.URLHash && w.ID == e.ID {
+			out = append(out, e)
+			seen[key] = struct{}{}
+		}
+	}
+	return out
+}
+
+func (f *fakeStore) ListCheckLog(_ context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
 	ignoreSet := make(map[string]struct{}, len(f.ignore))
 	for _, e := range f.ignore {
 		ignoreSet[e.URLHash] = struct{}{}
 	}
 	var filtered []storage.CheckLogEntry
-	for _, e := range f.checkLog {
+	nameNeedle := strings.ToLower(nameFilter)
+	for _, e := range dedupeCheckLogByName(f.checkLog) {
 		if statusFilter != "" && e.Status != statusFilter {
+			continue
+		}
+		if nameFilter != "" && !strings.Contains(strings.ToLower(e.ItemName), nameNeedle) {
 			continue
 		}
 		_, inIgnore := ignoreSet[e.URLHash]
@@ -903,6 +935,57 @@ func TestPostTrackerTestUnknownKey(t *testing.T) {
 	}
 }
 
+func TestGetHistoryDedupesByName(t *testing.T) {
+	now := time.Now()
+	store := &fakeStore{checkLog: []storage.CheckLogEntry{
+		{ID: 1, CheckedAt: now.Add(-time.Hour), URLHash: "old", ItemName: "Same", Status: "unchanged"},
+		{ID: 2, CheckedAt: now, URLHash: "new", ItemName: " Same ", Status: "updated"},
+		{ID: 3, CheckedAt: now, URLHash: "other", ItemName: "Other", Status: "unchanged"},
+	}}
+	srv := newTestServer(store)
+	req := httptest.NewRequest(http.MethodGet, "/api/history", nil)
+	w := httptest.NewRecorder()
+	srv.handleHistory(w, req)
+	var resp struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Total != 2 || len(resp.Items) != 2 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if resp.Items[0]["url_hash"] != "new" {
+		t.Fatalf("items = %+v, want latest check for duplicate name", resp.Items)
+	}
+}
+
+func TestGetHistoryNameFilter(t *testing.T) {
+	store := &fakeStore{checkLog: []storage.CheckLogEntry{
+		{ID: 1, URLHash: "h1", ItemName: "Breaking Bad S01", Status: "unchanged"},
+		{ID: 2, URLHash: "h2", ItemName: "Better Call Saul", Status: "unchanged"},
+		{ID: 3, URLHash: "h3", ItemName: "bad torrent", Status: "error"},
+	}}
+	srv := newTestServer(store)
+	req := httptest.NewRequest(http.MethodGet, "/api/history?name=bad", nil)
+	w := httptest.NewRecorder()
+	srv.handleHistory(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Total != 2 || len(resp.Items) != 2 {
+		t.Fatalf("resp = %+v", resp)
+	}
+}
+
 func TestGetHistoryIgnoredOnly(t *testing.T) {
 	store := &fakeStore{
 		checkLog: []storage.CheckLogEntry{
@@ -944,9 +1027,9 @@ type capturingStore struct {
 	lastLimit int
 }
 
-func (c *capturingStore) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string) ([]storage.CheckLogEntry, int, error) {
+func (c *capturingStore) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
 	c.lastLimit = limit
-	return c.fakeStore.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy)
+	return c.fakeStore.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy, nameFilter)
 }
 
 func TestGetHistoryLimitCap(t *testing.T) {

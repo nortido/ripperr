@@ -3,7 +3,9 @@
 const REFRESH_OPTIONS = [1, 2, 3, 4, 6, 8, 12, 24];
 const THEME_KEY = 'trackerr-theme';
 const SIDEBAR_COLLAPSED_KEY = 'trackerr-sidebar-collapsed';
-const PAGE_SCALE_BASE = 360;
+const PAGE_SCALE_BASE = 480;
+const MOBILE_LAYOUT_MAX = 900;
+let layoutWasMobile = false;
 const DISMISSED_ALERTS_KEY = 'trackerr-dismissed-alerts';
 const PAGE_SIZE_KEY = 'trackerr-page-size';
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 0];
@@ -59,6 +61,7 @@ const ICONS = {
   minus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   xCircle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
   funnel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
   stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>',
 };
@@ -73,7 +76,7 @@ let integrationsCache = null;
 let qbitCategoriesCache = null;
 let qbitCategoriesUnavailable = false;
 let timezonesCache = null;
-const historyState = { offset: 0, limit: 10, status: '', ignored: false, sort: 'checked' };
+const historyState = { offset: 0, limit: 10, status: '', ignored: false, sort: 'checked', name: '' };
 let stopPending = false;
 let stopPendingTimer = null;
 let activeErrorPopover = null;
@@ -82,6 +85,8 @@ let slotsPopoverLeaveTimer = null;
 let currentView = null;
 let openCustomSelect = null;
 let openHistFilterSelect = null;
+let openNameFilterWrap = null;
+let nameFilterDebounceTimer = null;
 let dashboardPollTimer = null;
 let dashboardDataRefreshTimer = null;
 let dashboardVisibilityBound = false;
@@ -469,7 +474,7 @@ function getProxyDownloadValue() {
 }
 
 function dashboardHasActiveInteraction() {
-  if (activeErrorPopover || activeSlotsPopover || openCustomSelect || openHistFilterSelect) return true;
+  if (activeErrorPopover || activeSlotsPopover || openCustomSelect || openHistFilterSelect || openNameFilterWrap) return true;
   const dash = document.getElementById('view-dashboard');
   if (!dash || dash.classList.contains('hidden')) return false;
   const active = document.activeElement;
@@ -1015,25 +1020,33 @@ function initSidebarCollapse() {
   window.addEventListener('resize', refreshSidebarLayout);
 }
 
-function applyViewportScale() {
+function applyMobileLayout() {
   const app = document.querySelector('.app');
   if (!app) return;
   const w = window.innerWidth;
-  if (w > 0 && w < PAGE_SCALE_BASE) {
+  const mobile = w > 0 && w < MOBILE_LAYOUT_MAX;
+  const layoutChanged = mobile !== layoutWasMobile;
+  if (mobile) {
     const scale = w / PAGE_SCALE_BASE;
+    document.documentElement.classList.add('mobile-layout');
     app.classList.add('page-scaled');
     app.style.setProperty('--page-scale', String(scale));
     document.documentElement.style.setProperty('--page-scale-inv', String(1 / scale));
   } else {
+    document.documentElement.classList.remove('mobile-layout');
     app.classList.remove('page-scaled');
     app.style.removeProperty('--page-scale');
     document.documentElement.style.removeProperty('--page-scale-inv');
   }
+  layoutWasMobile = mobile;
+  refreshSidebarLayout();
+  if (layoutChanged) syncNameFilterLayout();
 }
 
 initSidebarCollapse();
-applyViewportScale();
-window.addEventListener('resize', applyViewportScale);
+layoutWasMobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;
+applyMobileLayout();
+window.addEventListener('resize', applyMobileLayout);
 
 document.querySelectorAll('.theme-toggle').forEach(function (btn) {
   btn.addEventListener('click', function () {
@@ -1306,12 +1319,14 @@ document.addEventListener('click', function (e) {
   closePopovers();
   if (openCustomSelect && !openCustomSelect.contains(e.target)) closeOpenCustomSelect();
   if (openHistFilterSelect && !openHistFilterSelect.contains(e.target)) closeOpenHistFilterSelect();
+  if (openNameFilterWrap && !openNameFilterWrap.contains(e.target)) closeOpenNameFilter();
 });
 
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') {
     closeOpenCustomSelect();
     closeOpenHistFilterSelect();
+    closeOpenNameFilter();
   }
 });
 
@@ -1344,10 +1359,13 @@ function parseHash() {
       historyState.ignored = false;
       historyState.status = '';
     }
+    const name = params.get('name');
+    historyState.name = name ? name.trim().slice(0, 200) : '';
     historyState.offset = 0;
   } else if ((HASH_VIEW[main] || 'dashboard') === 'dashboard') {
     historyState.ignored = false;
     historyState.status = '';
+    historyState.name = '';
     historyState.offset = 0;
   }
   return HASH_VIEW[main] || 'dashboard';
@@ -1356,9 +1374,12 @@ function parseHash() {
 function buildHash(view) {
   const base = VIEW_HASH[view] || '#dashboard';
   if (view !== 'dashboard') return base;
-  if (historyState.ignored) return base + '?filter=ignored';
-  if (historyState.status) return base + '?filter=' + encodeURIComponent(historyState.status);
-  return base;
+  const params = new URLSearchParams();
+  if (historyState.ignored) params.set('filter', 'ignored');
+  else if (historyState.status) params.set('filter', historyState.status);
+  if (historyState.name) params.set('name', historyState.name);
+  const qs = params.toString();
+  return qs ? base + '?' + qs : base;
 }
 
 function syncDashboardFilterHash() {
@@ -1604,6 +1625,526 @@ function closeOpenHistFilterSelect() {
   openHistFilterSelect = null;
 }
 
+function isMobileStackedLayout() {
+  return document.documentElement.classList.contains('mobile-layout');
+}
+
+function nameFilterHasValue() {
+  if ((historyState.name || '').trim()) return true;
+  if (openNameFilterWrap) {
+    const input = openNameFilterWrap.querySelector('.name-filter-input, .mobile-name-filter-input');
+    if (input && input.value.trim()) return true;
+  }
+  return false;
+}
+
+const MOBILE_SEARCH_CLOSE_MS = 320;
+let mobileSearchAnimToken = 0;
+
+function closeMobileNameSearchPanel(root, force) {
+  const scope = root || document.getElementById('view-dashboard');
+  if (!scope) return;
+  if (!force && nameFilterHasValue()) return;
+  const header = scope.querySelector('.releases-card-header');
+  const slot = scope.querySelector('.mobile-name-search-slot');
+  const btn = scope.querySelector('#dash-mobile-name-search-btn');
+  if (!header || !slot) return;
+
+  mobileSearchAnimToken += 1;
+  const token = mobileSearchAnimToken;
+
+  function finishClose() {
+    if (token !== mobileSearchAnimToken) return;
+    header.classList.remove('is-search-animating');
+    if (openNameFilterWrap === slot) openNameFilterWrap = null;
+  }
+
+  if (!header.classList.contains('is-search-expanded') && !slot.classList.contains('is-open')) {
+    finishClose();
+    return;
+  }
+
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  slot.classList.remove('is-open');
+  header.classList.remove('is-search-expanded');
+
+  if (!isMobileStackedLayout()) {
+    finishClose();
+    return;
+  }
+
+  header.classList.add('is-search-animating');
+
+  const shift = scope.querySelector('.card-header-toolbar-shift');
+  let done = false;
+  function onShiftTransitionEnd(e) {
+    if (!shift || e.target !== shift || e.propertyName !== 'transform') return;
+    if (done) return;
+    done = true;
+    shift.removeEventListener('transitionend', onShiftTransitionEnd);
+    finishClose();
+  }
+  if (shift) shift.addEventListener('transitionend', onShiftTransitionEnd);
+  setTimeout(function () {
+    if (done) return;
+    done = true;
+    if (shift) shift.removeEventListener('transitionend', onShiftTransitionEnd);
+    finishClose();
+  }, MOBILE_SEARCH_CLOSE_MS + 40);
+}
+
+function openMobileNameSearchPanel(root, focus) {
+  const scope = root || document.getElementById('view-dashboard');
+  if (!scope || !isMobileStackedLayout()) return;
+  const header = scope.querySelector('.releases-card-header');
+  const slot = scope.querySelector('.mobile-name-search-slot');
+  const btn = scope.querySelector('#dash-mobile-name-search-btn');
+  const input = scope.querySelector('.mobile-name-filter-input');
+  if (!header || !slot || !btn || !input) return;
+  if (header.classList.contains('is-search-animating')) return;
+  closeOpenCustomSelect();
+  closeOpenHistFilterSelect();
+  if (openNameFilterWrap && !openNameFilterWrap.classList.contains('mobile-name-search-slot')) {
+    closeOpenNameFilter(true);
+  }
+
+  mobileSearchAnimToken += 1;
+  const token = mobileSearchAnimToken;
+
+  if (slot.classList.contains('is-open') && header.classList.contains('is-search-expanded')) {
+    openNameFilterWrap = slot;
+    input.value = historyState.name;
+    btn.setAttribute('aria-expanded', 'true');
+    if (focus) {
+      input.focus();
+      const len = input.value.length;
+      input.setSelectionRange(len, len);
+    }
+    return;
+  }
+
+  slot.classList.remove('is-open');
+  header.classList.remove('is-search-expanded', 'is-search-animating');
+  header.classList.add('is-search-animating');
+  btn.setAttribute('aria-expanded', 'true');
+  openNameFilterWrap = slot;
+  input.value = historyState.name;
+
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      if (token !== mobileSearchAnimToken) return;
+      header.classList.add('is-search-expanded');
+      slot.classList.add('is-open');
+      const shift = scope.querySelector('.card-header-toolbar-shift');
+      let done = false;
+      function finishOpen() {
+        if (token !== mobileSearchAnimToken) return;
+        header.classList.remove('is-search-animating');
+      }
+      function onShiftTransitionEnd(e) {
+        if (!shift || e.target !== shift || e.propertyName !== 'transform') return;
+        if (done) return;
+        done = true;
+        shift.removeEventListener('transitionend', onShiftTransitionEnd);
+        finishOpen();
+      }
+      if (shift) shift.addEventListener('transitionend', onShiftTransitionEnd);
+      setTimeout(function () {
+        if (done) return;
+        done = true;
+        if (shift) shift.removeEventListener('transitionend', onShiftTransitionEnd);
+        finishOpen();
+      }, MOBILE_SEARCH_CLOSE_MS + 40);
+      if (focus) {
+        input.focus();
+        const len = input.value.length;
+        input.setSelectionRange(len, len);
+      }
+    });
+  });
+}
+
+function closeDesktopNameFilterPanel(root) {
+  const scope = root || document.getElementById('view-dashboard');
+  if (!scope) return;
+  const wrap = scope.querySelector('.name-filter-wrap');
+  const label = wrap && wrap.querySelector('.th-name-filter-label');
+  if (!wrap) return;
+  wrap.classList.remove('is-open');
+  if (label) label.setAttribute('aria-expanded', 'false');
+  if (openNameFilterWrap === wrap) openNameFilterWrap = null;
+}
+
+function openDesktopNameFilterPanel(root) {
+  const scope = root || document.getElementById('view-dashboard');
+  if (!scope || isMobileStackedLayout()) return;
+  const wrap = scope.querySelector('.name-filter-wrap');
+  const label = wrap && wrap.querySelector('.th-name-filter-label');
+  const input = wrap && wrap.querySelector('.name-filter-input');
+  if (!wrap || !label || !input) return;
+  closeMobileNameSearchPanel(scope, true);
+  wrap.classList.add('is-open');
+  label.setAttribute('aria-expanded', 'true');
+  openNameFilterWrap = wrap;
+  input.value = historyState.name;
+}
+
+function syncNameFilterLayout() {
+  if (!(historyState.name || '').trim()) return;
+  const el = document.getElementById('view-dashboard');
+  if (!el || !el.querySelector('.table-dash-releases')) return;
+  if (isMobileStackedLayout()) {
+    closeDesktopNameFilterPanel(el);
+    openMobileNameSearchPanel(el, false);
+  } else {
+    closeMobileNameSearchPanel(el, true);
+    openDesktopNameFilterPanel(el);
+  }
+  updateNameFilterHeader(el);
+}
+
+function closeOpenNameFilter(force) {
+  if (!openNameFilterWrap) return;
+  if (!force && nameFilterHasValue()) return;
+  if (openNameFilterWrap.classList.contains('mobile-name-search-slot')) {
+    closeMobileNameSearchPanel(document.getElementById('view-dashboard'), true);
+  } else {
+    const label = openNameFilterWrap.querySelector('.th-name-filter-label');
+    openNameFilterWrap.classList.remove('is-open');
+    if (label) label.setAttribute('aria-expanded', 'false');
+    openNameFilterWrap = null;
+  }
+  if (nameFilterDebounceTimer) {
+    clearTimeout(nameFilterDebounceTimer);
+    nameFilterDebounceTimer = null;
+  }
+}
+
+async function applyNameFilter(value) {
+  const trimmed = (value || '').trim().slice(0, 200);
+  if (trimmed === historyState.name) return;
+  const keepOpen = openNameFilterWrap !== null;
+  historyState.name = trimmed;
+  historyState.offset = 0;
+  syncDashboardFilterHash();
+  const el = document.getElementById('view-dashboard');
+  if (!el || !el.querySelector('.table-dash-releases')) {
+    loadDashboard();
+    return;
+  }
+  const fetchGen = ++dashboardFetchGen;
+  try {
+    const history = await fetchJSON(buildHistoryQuery());
+    if (fetchGen !== dashboardFetchGen) return;
+    syncPlanForceLocal(history.items || []);
+    updateDashboardTable(el, history);
+    updateNameFilterHeader(el);
+    if (keepOpen || trimmed) restoreNameFilterPanel(el);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function updateNameFilterHeader(el) {
+  const th = el.querySelector('th.col-name');
+  const wrap = el.querySelector('.name-filter-wrap');
+  const label = wrap && wrap.querySelector('.th-name-filter-label');
+  const input = wrap && wrap.querySelector('.name-filter-input');
+  if (!th || !wrap || !label) return;
+  const active = !!historyState.name;
+  th.classList.toggle('is-active', active);
+  const title = active
+    ? t('dash.nameFilterActive', { value: historyState.name })
+    : t('dash.col.name');
+  label.setAttribute('title', title);
+  if (input) input.value = historyState.name;
+  let funnel = label.querySelector('.th-name-filter-icon-active');
+  if (active && !funnel) {
+    funnel = document.createElement('span');
+    funnel.className = 'th-name-filter-icon th-name-filter-icon-active';
+    funnel.setAttribute('data-icon', 'funnel');
+    funnel.setAttribute('aria-hidden', 'true');
+    label.appendChild(funnel);
+    hydrateIcons(label);
+  } else if (!active && funnel) {
+    funnel.remove();
+  }
+  updateMobileNameSearchUI(el);
+}
+
+function updateMobileNameSearchUI(el) {
+  const root = el || document.getElementById('view-dashboard');
+  if (!root) return;
+  const btn = root.querySelector('#dash-mobile-name-search-btn');
+  const slot = root.querySelector('.mobile-name-search-slot');
+  const header = root.querySelector('.releases-card-header');
+  const input = root.querySelector('.mobile-name-filter-input');
+  if (!btn || !slot) return;
+  const active = !!historyState.name;
+  btn.classList.toggle('is-active', active);
+  const title = active
+    ? t('dash.nameFilterActive', { value: historyState.name })
+    : t('dash.nameFilterPlaceholder');
+  btn.setAttribute('title', title);
+  btn.setAttribute('aria-label', title);
+  let dot = btn.querySelector('.mobile-name-search-dot');
+  if (active && !dot) {
+    dot = document.createElement('span');
+    dot.className = 'mobile-name-search-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    btn.appendChild(dot);
+  } else if (!active && dot) {
+    dot.remove();
+  }
+  if (input) input.value = historyState.name;
+  if (header && active && isMobileStackedLayout()) header.classList.add('is-search-expanded');
+  else if (header && !active && !slot.classList.contains('is-open')) {
+    header.classList.remove('is-search-expanded');
+  }
+  if (active && isMobileStackedLayout()) slot.classList.add('is-open');
+}
+
+function restoreNameFilterPanel(el) {
+  if (isMobileStackedLayout()) {
+    openMobileNameSearchPanel(el, true);
+    return;
+  }
+  openDesktopNameFilterPanel(el);
+  const input = el.querySelector('.name-filter-input');
+  if (input) {
+    input.focus();
+    const len = input.value.length;
+    input.setSelectionRange(len, len);
+  }
+}
+
+function buildNameColumnHeader() {
+  const active = !!historyState.name;
+  const thClass = 'col-name' + (active ? ' is-active' : '');
+  const label = active
+    ? t('dash.nameFilterActive', { value: historyState.name })
+    : t('dash.col.name');
+  const activeIconHtml = active
+    ? '<span class="th-name-filter-icon th-name-filter-icon-active" data-icon="funnel" aria-hidden="true"></span>'
+    : '';
+  return (
+    '<th class="' + thClass + '">' +
+    '<div class="name-filter-wrap">' +
+    '<span class="th-name-filter-label" role="button" tabindex="0"' +
+    ' aria-haspopup="dialog" aria-expanded="false"' +
+    ' title="' + escapeHtml(label) + '">' +
+    '<span class="th-name-filter-text">' + escapeHtml(t('dash.col.name')) + '</span>' +
+    '<span class="th-name-filter-search" data-icon="search" aria-hidden="true"></span>' +
+    activeIconHtml +
+    '</span>' +
+    '<div class="name-filter-inline">' +
+    '<input type="text" class="name-filter-input"' +
+    ' value="' + escapeHtml(historyState.name) + '"' +
+    ' placeholder="' + escapeHtml(t('dash.nameFilterPlaceholder')) + '" autocomplete="off">' +
+    '<button type="button" class="name-filter-clear"' +
+    ' title="' + escapeHtml(t('dash.nameFilterClear')) + '"' +
+    ' aria-label="' + escapeHtml(t('dash.nameFilterClear')) + '">' +
+    '<span data-icon="x"></span></button>' +
+    '</div></div></th>'
+  );
+}
+
+function bindNameFilter(root) {
+  const wrap = (root || document).querySelector('.name-filter-wrap');
+  if (!wrap || wrap.dataset.nameFilterBound) return;
+  wrap.dataset.nameFilterBound = '1';
+
+  const label = wrap.querySelector('.th-name-filter-label');
+  const input = wrap.querySelector('.name-filter-input');
+  const clearBtn = wrap.querySelector('.name-filter-clear');
+  if (!label || !input) return;
+
+  function closePanel(force) {
+    if (!force && nameFilterHasValue()) return;
+    wrap.classList.remove('is-open');
+    label.setAttribute('aria-expanded', 'false');
+    if (openNameFilterWrap === wrap) openNameFilterWrap = null;
+    if (nameFilterDebounceTimer) {
+      clearTimeout(nameFilterDebounceTimer);
+      nameFilterDebounceTimer = null;
+    }
+  }
+
+  function openPanel() {
+    closeOpenCustomSelect();
+    closeOpenHistFilterSelect();
+    if (openNameFilterWrap && openNameFilterWrap !== wrap) closeOpenNameFilter();
+    wrap.classList.add('is-open');
+    label.setAttribute('aria-expanded', 'true');
+    openNameFilterWrap = wrap;
+    input.value = historyState.name;
+    input.focus();
+    input.select();
+  }
+
+  label.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (wrap.classList.contains('is-open')) closePanel();
+    else openPanel();
+  });
+
+  label.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      closePanel();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (!wrap.classList.contains('is-open')) openPanel();
+      else closePanel();
+    }
+  });
+
+  input.addEventListener('input', function () {
+    if (nameFilterDebounceTimer) clearTimeout(nameFilterDebounceTimer);
+    nameFilterDebounceTimer = setTimeout(function () {
+      nameFilterDebounceTimer = null;
+      applyNameFilter(input.value);
+    }, 400);
+  });
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      closePanel();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (nameFilterDebounceTimer) {
+        clearTimeout(nameFilterDebounceTimer);
+        nameFilterDebounceTimer = null;
+      }
+      applyNameFilter(input.value);
+      closePanel();
+    }
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', async function (e) {
+      e.stopPropagation();
+      if (nameFilterDebounceTimer) {
+        clearTimeout(nameFilterDebounceTimer);
+        nameFilterDebounceTimer = null;
+      }
+      input.value = '';
+      await applyNameFilter('');
+      closePanel(true);
+    });
+  }
+
+  if (historyState.name && !wrap.classList.contains('is-open') && !isMobileStackedLayout()) {
+    openPanel();
+  }
+}
+
+function buildMobileNameSearchSlot() {
+  const active = !!historyState.name;
+  const slotCls = 'mobile-name-search-slot' + (active ? ' is-open' : '');
+  const btnCls = 'btn btn-sm btn-ghost btn-icon btn-mobile-name-search' + (active ? ' is-active' : '');
+  const title = active
+    ? t('dash.nameFilterActive', { value: historyState.name })
+    : t('dash.nameFilterPlaceholder');
+  const dotHtml = active ? '<span class="mobile-name-search-dot" aria-hidden="true"></span>' : '';
+  const headerExpanded = active ? ' is-search-expanded' : '';
+  return {
+    headerClass: headerExpanded,
+    html:
+      '<div class="' + slotCls + '">' +
+      '<div class="mobile-name-search-field">' +
+      '<input type="text" class="name-filter-input mobile-name-filter-input"' +
+      ' value="' + escapeHtml(historyState.name) + '"' +
+      ' placeholder="' + escapeHtml(t('dash.nameFilterPlaceholder')) + '" autocomplete="off">' +
+      '</div>' +
+      '<div class="mobile-name-search-toggle">' +
+      '<button type="button" class="btn btn-sm btn-icon name-filter-clear mobile-name-filter-clear"' +
+      ' title="' + escapeHtml(t('dash.nameFilterClear')) + '"' +
+      ' aria-label="' + escapeHtml(t('dash.nameFilterClear')) + '">' +
+      '<span data-icon="x"></span></button>' +
+      '<button type="button" class="' + btnCls + '" id="dash-mobile-name-search-btn"' +
+      ' aria-haspopup="true" aria-expanded="' + (active ? 'true' : 'false') + '"' +
+      ' title="' + escapeHtml(title) + '" aria-label="' + escapeHtml(title) + '">' +
+      '<span data-icon="search"></span>' + dotHtml + '</button>' +
+      '</div></div>',
+  };
+}
+
+function bindMobileNameSearch(root) {
+  const scope = root || document;
+  const header = scope.querySelector('.releases-card-header');
+  const slot = scope.querySelector('.mobile-name-search-slot');
+  const btn = scope.querySelector('#dash-mobile-name-search-btn');
+  const input = scope.querySelector('.mobile-name-filter-input');
+  const clearBtn = scope.querySelector('.mobile-name-filter-clear');
+  if (!header || !slot || !btn || !input || slot.dataset.mobileNameSearchBound) return;
+  slot.dataset.mobileNameSearchBound = '1';
+
+  function closePanel(force) {
+    if (nameFilterDebounceTimer) {
+      clearTimeout(nameFilterDebounceTimer);
+      nameFilterDebounceTimer = null;
+    }
+    closeMobileNameSearchPanel(scope, force);
+  }
+
+  function openPanel() {
+    openMobileNameSearchPanel(scope, true);
+    input.select();
+  }
+
+  btn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (header.classList.contains('is-search-animating')) return;
+    if (slot.classList.contains('is-open')) closePanel();
+    else openPanel();
+  });
+
+  input.addEventListener('input', function () {
+    if (nameFilterDebounceTimer) clearTimeout(nameFilterDebounceTimer);
+    nameFilterDebounceTimer = setTimeout(function () {
+      nameFilterDebounceTimer = null;
+      applyNameFilter(input.value);
+    }, 400);
+  });
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      closePanel();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (nameFilterDebounceTimer) {
+        clearTimeout(nameFilterDebounceTimer);
+        nameFilterDebounceTimer = null;
+      }
+      applyNameFilter(input.value);
+      closePanel();
+    }
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', async function (e) {
+      e.stopPropagation();
+      if (nameFilterDebounceTimer) {
+        clearTimeout(nameFilterDebounceTimer);
+        nameFilterDebounceTimer = null;
+      }
+      input.value = '';
+      await applyNameFilter('');
+      closePanel(true);
+    });
+  }
+
+  if (historyState.name && isMobileStackedLayout()) {
+    openMobileNameSearchPanel(scope, false);
+  }
+}
+
 function buildHistFilters() {
   const active = getActiveHistFilter();
   const isAll = active.v === '' && !active.isIgnored;
@@ -1673,6 +2214,7 @@ function bindHistFilterSelect(root) {
   function openPanel() {
     closeOpenCustomSelect();
     closeOpenHistFilterSelect();
+    closeOpenNameFilter();
     wrap.classList.add('open');
     trigger.setAttribute('aria-expanded', 'true');
     panel.hidden = false;
@@ -1818,6 +2360,7 @@ function buildHistoryQuery() {
     '&sort=' + encodeURIComponent(historyState.sort);
   if (historyState.ignored) q += '&ignored=1';
   else if (historyState.status) q += '&status=' + encodeURIComponent(historyState.status);
+  if (historyState.name) q += '&name=' + encodeURIComponent(historyState.name);
   return q;
 }
 
@@ -2095,18 +2638,18 @@ function renderDashboard(el, status, history, stats) {
   const allForced = nonIgnored.length > 0 && nonIgnored.every(function (item) { return planItemForced(item); });
   const forceAllTitle = allForced ? t('dash.forceAllClear') : t('dash.forceAll');
   const forceAllCls = 'btn btn-sm btn-ghost btn-icon btn-force-all' + (allForced ? ' is-active' : '');
+  const mobileSearch = buildMobileNameSearchSlot();
 
   el.innerHTML =
     '<div class="page-header dash-page-header">' +
     '<div class="page-header-row">' +
-    '<div class="dash-header-text">' +
+    '<div class="dash-header-top">' +
     '<h1 class="page-title">' + escapeHtml(t('dash.title')) + '</h1>' +
-    '</div>' +
     '<div class="dash-header-status-block">' +
     '<div class="run-status" id="dash-run-status"></div>' +
     '<span class="dash-meta-sep" aria-hidden="true">·</span>' +
     '<span class="dash-last-updated text-muted" id="dash-last-updated"></span>' +
-    '</div>' +
+    '</div></div>' +
     '<div class="page-header-actions dash-header-actions">' +
     '<div class="page-header-run-group">' +
     '<button type="button" class="btn btn-stop" id="dash-stop-btn"' +
@@ -2129,7 +2672,9 @@ function renderDashboard(el, status, history, stats) {
     '</div>' +
 
     '<div class="card">' +
-    '<div class="card-header">' +
+    '<div class="card-header releases-card-header' + mobileSearch.headerClass + '">' +
+    '<div class="card-header-toolbar">' +
+    '<div class="card-header-toolbar-shift">' +
     '<div class="card-header-left">' +
     '<h2 class="card-title">' + escapeHtml(t('dash.releasesTitle')) + '</h2>' +
     '<button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="dash-refresh-btn"' +
@@ -2137,18 +2682,20 @@ function renderDashboard(el, status, history, stats) {
     ' title="' + escapeHtml(t('dash.refresh')) + '">' +
     '<span data-icon="refresh"></span></button>' +
     '</div>' +
-    '<div class="card-actions">' + sortHtml +
+    '<div class="card-toolbar-pre-search">' + sortHtml +
     '<button type="button" class="' + forceAllCls + '" id="dash-force-all-btn"' +
     ' title="' + escapeHtml(forceAllTitle) + '" aria-label="' + escapeHtml(forceAllTitle) + '"' +
     ' aria-pressed="' + (allForced ? 'true' : 'false') + '">' +
     '<span data-icon="zapForceAll"></span></button>' +
+    '</div></div>' +
+    '<div class="card-toolbar-post-search">' +
+    mobileSearch.html +
     filterHtml +
-    '</div>' +
-    '</div>' +
+    '</div></div></div>' +
     '<div class="card-body-flush">' +
     '<div class="table-wrap">' +
     '<table class="table table-dash-releases">' +
-    '<thead><tr><th class="col-name">' + escapeHtml(t('dash.col.name')) + '</th><th class="col-tracker">' +
+    '<thead><tr>' + buildNameColumnHeader() + '<th class="col-tracker">' +
     escapeHtml(t('dash.col.tracker')) + '</th><th class="col-status">' +
     '<span class="th-label-full">' + escapeHtml(t('dash.col.status')) + '</span>' +
     '<span class="th-label-short">' + escapeHtml(t('dash.col.statusShort')) + '</span>' +
@@ -2214,6 +2761,8 @@ function renderDashboard(el, status, history, stats) {
   });
 
   bindHistFilterSelect(el);
+  bindNameFilter(el);
+  bindMobileNameSearch(el);
   bindStatCardFilters(el);
 
   const prev = el.querySelector('#hist-prev');
@@ -3209,7 +3758,7 @@ function renderLogs(el, data) {
     '<h1 class="page-title">' + escapeHtml(t('logs.title')) + '</h1>' +
     '<div class="page-header-actions">' +
     '<span class="text-muted logs-last-updated" id="logs-last-updated"></span>' +
-    '<button type="button" class="btn btn-ghost btn-icon btn-refresh" id="logs-refresh-btn"' +
+    '<button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="logs-refresh-btn"' +
     ' aria-label="' + escapeHtml(t('logs.refresh')) + '">' +
     '<span data-icon="refresh"></span></button>' +
     '</div></div></div>' +

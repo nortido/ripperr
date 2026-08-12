@@ -59,6 +59,8 @@ func (f *fakeStorage) DeleteItem(_ context.Context, urlHash string) error {
 	return nil
 }
 
+func (f *fakeStorage) PurgeDuplicateNames(context.Context, map[string]string) error { return nil }
+
 func (f *fakeStorage) SetForceCheck(_ context.Context, urlHash string, force bool) (bool, error) {
 	if f.items == nil {
 		return false, nil
@@ -211,6 +213,41 @@ func TestPushSkipsIgnored(t *testing.T) {
 	select {
 	case <-h.idx[1]:
 		t.Fatal("ignored entry should not be queued")
+	default:
+	}
+}
+
+func TestPushDedupesSameName(t *testing.T) {
+	early := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	const earlyURL = "https://example.com/t/early"
+	const lateURL = "https://example.com/t/late"
+	h := &handler{
+		config: model.HandlerConfig{WatchTags: []string{"watch"}},
+		manager: &fakeManager{all: []*model.Entry{
+			{URL: lateURL, Name: "Same Release", Tag: "watch", Timestamp: &late},
+			{URL: earlyURL, Name: "Same Release", Tag: "watch", Timestamp: &early},
+		}},
+		storage:        &fakeStorage{},
+		trackerService: &fakeTracker{id: 1},
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-h.idx[1]:
+		if e.URL != earlyURL {
+			t.Fatalf("queued %q, want earliest %q", e.URL, earlyURL)
+		}
+	default:
+		t.Fatal("expected entry to be queued")
+	}
+	select {
+	case <-h.idx[1]:
+		t.Fatal("duplicate name should not be queued twice")
 	default:
 	}
 }
