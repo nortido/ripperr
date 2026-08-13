@@ -392,8 +392,16 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
+
+	select {
+	case redownloadSlot <- struct{}{}:
+		defer func() { <-redownloadSlot }()
+	case <-ctx.Done():
+		writeError(w, http.StatusGatewayTimeout, "timed out waiting in the redownload queue")
+		return
+	}
 
 	cfg := s.effective()
 	qbc, err := qbitClientFactory(model.ManagerConfig{
@@ -722,6 +730,11 @@ type qbitCategoriesClient interface {
 var qbitClientFactory = func(cfg model.ManagerConfig) (qbitCategoriesClient, error) {
 	return qbittorrent.New(cfg)
 }
+
+// redownloadSlot serializes force redownloads: qBittorrent deletes torrents
+// asynchronously, so a re-add running while another deletion is still in flight
+// gets silently rejected.
+var redownloadSlot = make(chan struct{}, 1)
 
 func (s *Server) handleGetCategories(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

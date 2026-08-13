@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -202,6 +203,8 @@ type fakeQbitClient struct {
 	entries            []*model.Entry
 	err                error
 	forceRedownloadErr error
+	redownloadDelay    time.Duration
+	redownloadTracker  *concurrencyTracker
 }
 
 func (f *fakeQbitClient) GetCategories(context.Context) ([]string, error) {
@@ -218,8 +221,46 @@ func (f *fakeQbitClient) List(context.Context, model.FilterOptions) ([]*model.En
 	return f.entries, nil
 }
 
-func (f *fakeQbitClient) ForceRedownload(context.Context, string) error {
+func (f *fakeQbitClient) ForceRedownload(ctx context.Context, _ string) error {
+	if f.redownloadTracker != nil {
+		f.redownloadTracker.enter()
+		defer f.redownloadTracker.leave()
+	}
+	if f.redownloadDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(f.redownloadDelay):
+		}
+	}
 	return f.forceRedownloadErr
+}
+
+type concurrencyTracker struct {
+	mu      sync.Mutex
+	current int
+	max     int
+}
+
+func (c *concurrencyTracker) enter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.current++
+	if c.current > c.max {
+		c.max = c.current
+	}
+}
+
+func (c *concurrencyTracker) leave() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.current--
+}
+
+func (c *concurrencyTracker) peak() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.max
 }
 
 func TestStaticCacheHeaders(t *testing.T) {
@@ -1249,5 +1290,44 @@ func TestPostRunStopBlocksFurtherRuns(t *testing.T) {
 	srv.handleRun(w, req)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("after reset status = %d, want 202", w.Code)
+	}
+}
+
+func TestHandleRedownloadSerializes(t *testing.T) {
+	orig := qbitClientFactory
+	defer func() { qbitClientFactory = orig }()
+
+	testURL := "https://rutracker.org/forum/viewtopic.php?t=777"
+	testURLHash := storagePkg.URLHash(testURL)
+	entries := []*model.Entry{{URL: testURL, Hash: "abc777", Name: "Serialized"}}
+	tracker := &concurrencyTracker{}
+
+	qbitClientFactory = func(_ model.ManagerConfig) (qbitCategoriesClient, error) {
+		return &fakeQbitClient{
+			entries:           entries,
+			redownloadDelay:   50 * time.Millisecond,
+			redownloadTracker: tracker,
+		}, nil
+	}
+
+	srv := newTestServer(&fakeStore{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
+			req.SetPathValue("hash", testURLHash)
+			w := httptest.NewRecorder()
+			srv.handleRedownload(w, req)
+			if w.Code != http.StatusOK {
+				t.Errorf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+
+	if peak := tracker.peak(); peak != 1 {
+		t.Fatalf("peak concurrency = %d, want 1", peak)
 	}
 }

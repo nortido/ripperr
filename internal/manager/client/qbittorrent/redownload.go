@@ -4,9 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"trackerr/internal/model"
 	"trackerr/internal/system/logger"
+)
+
+const (
+	// redownloadSettleDelay gives qBittorrent time to finish deleting files: the
+	// torrent leaves the list right away, but the removal job keeps running and
+	// re-adding the same infohash too early is silently rejected.
+	redownloadSettleDelay = 3 * time.Second
+	// redownloadAddAttempts is how many times the re-add is tried before failing.
+	redownloadAddAttempts = 3
+	// redownloadRetryDelay is the pause between re-add attempts.
+	redownloadRetryDelay = 5 * time.Second
 )
 
 func (c *client) ForceRedownload(ctx context.Context, torrentHash string) error {
@@ -60,7 +72,20 @@ func (c *client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		return fmt.Errorf("torrent did not disappear after deletion")
 	}
 
-	// Step 6: Add torrent back from exported bytes
+	// Step 6: Let the removal job finish on disk, then confirm the torrent is
+	// really gone before reusing its infohash.
+	if err = sleepCtx(ctx, redownloadSettleDelay); err != nil {
+		return err
+	}
+	present, err := c.torrentExists(ctx, torrentHash)
+	if err != nil {
+		return fmt.Errorf("presence check failed: %w", err)
+	}
+	if present {
+		return fmt.Errorf("torrent reappeared after deletion")
+	}
+
+	// Step 7: Add torrent back from exported bytes, retrying a silent rejection
 	logger.Info(fmt.Sprintf("force redownload: re-adding torrent %s", torrentHash))
 	opts := model.ManagerAddFileOptions{
 		Hash:           torrentHash,
@@ -72,10 +97,42 @@ func (c *client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		MaxRatio:       entry.MaxRatio,
 		MaxSeedingTime: entry.MaxSeedingTime,
 	}
-	if err = c.addTorrentVerified(ctx, torrentData, opts); err != nil {
-		return fmt.Errorf("add torrent failed: %w", err)
+	var addErr error
+	for attempt := 1; attempt <= redownloadAddAttempts; attempt++ {
+		addErr = c.addTorrentVerified(ctx, torrentData, opts)
+		if addErr == nil {
+			break
+		}
+		if errors.Is(addErr, model.ErrAlreadyAdded) {
+			// A previous attempt landed after our check: the torrent is back.
+			logger.Info(fmt.Sprintf("force redownload: torrent %s is already back", torrentHash))
+			addErr = nil
+			break
+		}
+		if attempt == redownloadAddAttempts {
+			break
+		}
+		logger.Warn(fmt.Sprintf("force redownload: add attempt %d/%d for %s failed: %v",
+			attempt, redownloadAddAttempts, torrentHash, addErr))
+		if err = sleepCtx(ctx, redownloadRetryDelay); err != nil {
+			return err
+		}
+	}
+	if addErr != nil {
+		return fmt.Errorf("add torrent failed: %w", addErr)
 	}
 
 	logger.Info(fmt.Sprintf("force redownload: completed for torrent %s", torrentHash))
 	return nil
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
