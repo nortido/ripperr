@@ -56,6 +56,9 @@ func (h *cachedStaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if urlPath == "/" {
 		urlPath = "/index.html"
 	}
+	if urlPath == "/login" {
+		urlPath = "/login.html"
+	}
 	if strings.Contains(urlPath, "..") {
 		http.NotFound(w, r)
 		return

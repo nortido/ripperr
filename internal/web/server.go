@@ -67,6 +67,10 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	}
 	mux.Handle("/", staticHandler)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /api/auth/state", s.handleAuthState)
+	mux.HandleFunc("POST /api/auth/setup", withMaxBody(s.handleAuthSetup))
+	mux.HandleFunc("POST /api/auth/login", withMaxBody(s.handleAuthLogin))
+	mux.HandleFunc("POST /api/auth/logout", withMaxBody(s.handleAuthLogout))
 	mux.HandleFunc("GET /api/timezones", s.handleGetTimezones)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
@@ -87,7 +91,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("GET /api/integrations", s.handleGetIntegrations)
 	mux.HandleFunc("PUT /api/integrations", withMaxBody(s.handlePutIntegrations))
 	mux.HandleFunc("POST /api/integrations/test", withMaxBody(s.handleTestIntegration))
-	s.srv = &http.Server{Addr: listen, Handler: mux}
+	s.srv = &http.Server{Addr: listen, Handler: s.withAuth(mux)}
 	return s
 }
 
@@ -335,9 +339,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			"error_streak": e.ErrorStreak,
 			// the threshold lives in the schedule settings, so the flag is
 			// resolved here rather than re-derived by every client
-			"broken": brokenStreak >= 1 && e.ErrorStreak >= brokenStreak,
-			"recheck_at":   recheckAt,
-			"force_check":  e.ForceCheck,
+			"broken":      brokenStreak >= 1 && e.ErrorStreak >= brokenStreak,
+			"recheck_at":  recheckAt,
+			"force_check": e.ForceCheck,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out, "total": total})

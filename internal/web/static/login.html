@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <script>
+    (function () {
+      var lang = 'ru';
+      try {
+        var l = localStorage.getItem('trackerr-lang');
+        if (l === 'ru' || l === 'en') lang = l;
+      } catch (_) {}
+      document.documentElement.setAttribute('lang', lang);
+
+      var t = 'dark';
+      try {
+        var s = localStorage.getItem('trackerr-theme');
+        if (s === 'light' || s === 'dark') t = s;
+      } catch (_) {}
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>trackerr</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="auth-page"><div class="auth-card" id="auth-card"></div></div>
+  <script src="i18n.js"></script>
+  <script>
+    function escapeHtml(text) {
+      const map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+      return text.replace(/[&<>"']/g, function (m) { return map[m]; });
+    }
+
+    function nextUrl() {
+      const n = new URLSearchParams(location.search).get('next');
+      // same-origin relative paths only: '//host' and '/\host' are absolute URLs to the browser
+      if (n && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\')) return n;
+      return '/';
+    }
+
+    async function init() {
+      let state = null;
+      try {
+        const res = await fetch('/api/auth/state');
+        if (res.ok) state = await res.json();
+      } catch (_) {}
+
+      if (state && state.configured && state.authenticated) {
+        location.replace(nextUrl());
+        return;
+      }
+
+      // no state (request failed) falls back to the login form: offering setup
+      // to someone who may already have an account is the worse guess
+      const isSetup = state !== null && !state.configured;
+      const card = document.getElementById('auth-card');
+
+      card.innerHTML =
+        '<h2 class="auth-title">' + escapeHtml(t(isSetup ? 'auth.setupTitle' : 'auth.loginTitle')) + '</h2>' +
+        '<p class="auth-hint">' + escapeHtml(t(isSetup ? 'auth.setupHint' : 'auth.loginHint')) + '</p>' +
+        '<form id="auth-form" class="auth-form" autocomplete="on">' +
+        '<div class="form-group">' +
+        '<label class="form-label" for="auth-username">' + escapeHtml(t('auth.username')) + '</label>' +
+        '<input type="text" class="input" id="auth-username" autocomplete="username" required></div>' +
+        '<div class="form-group">' +
+        '<label class="form-label" for="auth-password">' + escapeHtml(t('auth.password')) + '</label>' +
+        '<input type="password" class="input" id="auth-password" autocomplete="' +
+        (isSetup ? 'new-password' : 'current-password') + '" required></div>' +
+        '<div class="auth-error hidden" id="auth-error"></div>' +
+        '<div class="auth-actions">' +
+        '<button type="submit" class="btn btn-primary" id="auth-submit">' +
+        escapeHtml(t(isSetup ? 'auth.create' : 'auth.signIn')) + '</button>' +
+        (isSetup
+          ? '<button type="button" class="btn btn-ghost" id="auth-skip">' + escapeHtml(t('auth.later')) + '</button>'
+          : '') +
+        '</div></form>';
+
+      const form = document.getElementById('auth-form');
+      const errBox = document.getElementById('auth-error');
+      const skip = document.getElementById('auth-skip');
+
+      if (skip) {
+        skip.addEventListener('click', function () {
+          try {
+            localStorage.setItem('trackerr.auth.setupSkipped', '1');
+          } catch (_) {}
+          location.replace(nextUrl());
+        });
+      }
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const btn = document.getElementById('auth-submit');
+        const username = document.getElementById('auth-username').value.trim();
+        const password = document.getElementById('auth-password').value;
+        btn.disabled = true;
+        errBox.classList.add('hidden');
+        try {
+          const res = await fetch(isSetup ? '/api/auth/setup' : '/api/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username: username, password: password}),
+          });
+          if (!res.ok) {
+            let msg = 'HTTP ' + res.status;
+            try {
+              const data = await res.json();
+              if (data && data.error) msg = data.error;
+            } catch (_) {}
+            errBox.textContent = msg;
+            errBox.classList.remove('hidden');
+            btn.disabled = false;
+            return;
+          }
+          location.replace(nextUrl());
+        } catch (err) {
+          errBox.textContent = err.message;
+          errBox.classList.remove('hidden');
+          btn.disabled = false;
+        }
+      });
+
+      const first = document.getElementById('auth-username');
+      if (first) first.focus();
+    }
+
+    init();
+  </script>
+</body>
+</html>

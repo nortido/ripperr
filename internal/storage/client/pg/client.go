@@ -17,6 +17,7 @@ const (
 	SettingSchedule     = "schedule"
 	SettingTrackers     = "trackers"
 	SettingIntegrations = "integrations"
+	SettingAuth         = "auth"
 )
 
 type IClient interface {

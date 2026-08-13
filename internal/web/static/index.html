@@ -27,14 +27,16 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app">
-    <header class="mobile-header">
-      <button type="button" class="btn btn-ghost btn-icon mobile-menu-btn" id="mobile-menu-btn" data-i18n-aria="nav.menu" aria-expanded="false">
-        <span data-icon="menu"></span>
-      </button>
-      <a class="mobile-header-brand" href="#dashboard">trackerr</a>
-    </header>
+  <!-- outside .app on purpose: .app is transform-scaled on mobile, which would make
+       it the containing block for this fixed header and let it scroll away -->
+  <header class="mobile-header">
+    <button type="button" class="btn btn-ghost btn-icon mobile-menu-btn" id="mobile-menu-btn" data-i18n-aria="nav.menu" aria-expanded="false">
+      <span data-icon="menu"></span>
+    </button>
+    <a class="mobile-header-brand" href="#dashboard">trackerr</a>
+  </header>
 
+  <div class="app">
     <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
 
     <aside class="sidebar" id="sidebar">
@@ -62,6 +64,10 @@
         </a>
       </nav>
       <div class="sidebar-footer">
+        <button type="button" class="nav-link hidden" id="logout-btn" data-i18n-aria="auth.logout">
+          <span class="nav-icon" data-icon="x"></span>
+          <span class="nav-label" data-i18n="auth.logout"></span>
+        </button>
         <button type="button" class="nav-link theme-toggle" id="theme-toggle" data-i18n-aria="nav.theme" aria-pressed="true">
           <span class="nav-icon theme-icon-light" data-icon="sun"></span>
           <span class="nav-icon theme-icon-dark" data-icon="moon"></span>

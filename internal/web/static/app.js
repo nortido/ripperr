@@ -65,7 +65,9 @@ const ICONS = {
   x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
   minus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   xCircle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
-  funnel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
+  // the funnel is top-heavy: bbox center is 11.95 but ink centroid is 9.11, so it
+  // reads high. viewBox shifted down 1.4 (halfway to the centroid) to optically center.
+  funnel: '<svg viewBox="0 -1.4 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   activity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
   stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>',
@@ -98,6 +100,9 @@ let dashboardVisibilityBound = false;
 let dashboardStatusSlots = [];
 let dashboardRunning = false;
 let dashboardDryRun = false;
+let authState = null;
+let authRedirecting = false;
+const AUTH_SETUP_SKIP_KEY = 'trackerr.auth.setupSkipped';
 let dashboardFetchGen = 0;
 let planForceLocal = Object.create(null);
 let ignoreHashesCache = null;
@@ -1050,12 +1055,13 @@ function applyMobileLayout() {
     const scale = w / PAGE_SCALE_BASE;
     document.documentElement.classList.add('mobile-layout');
     app.classList.add('page-scaled');
-    app.style.setProperty('--page-scale', String(scale));
+    // on the root so the mobile header, which sits outside .app, can read it too
+    document.documentElement.style.setProperty('--page-scale', String(scale));
     document.documentElement.style.setProperty('--page-scale-inv', String(1 / scale));
   } else {
     document.documentElement.classList.remove('mobile-layout');
     app.classList.remove('page-scaled');
-    app.style.removeProperty('--page-scale');
+    document.documentElement.style.removeProperty('--page-scale');
     document.documentElement.style.removeProperty('--page-scale-inv');
   }
   layoutWasMobile = mobile;
@@ -1063,11 +1069,26 @@ function applyMobileLayout() {
   if (layoutChanged) syncNameFilterLayout();
 }
 
+// the collapsed state is derived from the window width, so it has to land in the
+// same frame as the resize event: deferring it to rAF paints the sidebar expanded
+// first and then collapses it. Runs before the throttled applyMobileLayout.
+function syncSidebarToWidth() {
+  const mobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;
+  const sidebar = mobile !== layoutWasMobile ? document.getElementById('sidebar') : null;
+  if (sidebar) sidebar.classList.add('no-anim');
+  refreshSidebarLayout();
+  if (sidebar) {
+    void sidebar.offsetWidth;
+    requestAnimationFrame(function () { sidebar.classList.remove('no-anim'); });
+  }
+}
+
 initSidebarCollapse();
 layoutWasMobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;
 applyMobileLayout();
 let mobileLayoutFrameScheduled = false;
 window.addEventListener('resize', function () {
+  syncSidebarToWidth();
   if (mobileLayoutFrameScheduled) return;
   mobileLayoutFrameScheduled = true;
   requestAnimationFrame(function () {
@@ -1083,10 +1104,31 @@ document.querySelectorAll('.theme-toggle').forEach(function (btn) {
   });
 });
 
+// the drawer is fixed inside the scaled .app, so its top must track the page
+// scroll to stay on screen; the offset is in the app's own scaled units
+function syncDrawerTop() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const inv = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--page-scale-inv')) || 1;
+  sidebar.style.setProperty('--drawer-top', (window.scrollY * inv) + 'px');
+}
+
+let drawerTopFrame = false;
+function onDrawerScroll() {
+  if (drawerTopFrame) return;
+  drawerTopFrame = true;
+  requestAnimationFrame(function () {
+    drawerTopFrame = false;
+    syncDrawerTop();
+  });
+}
+
 function closeMobileMenu() {
   const sidebar = document.getElementById('sidebar');
   const backdrop = document.getElementById('sidebar-backdrop');
   const btn = document.getElementById('mobile-menu-btn');
+  window.removeEventListener('scroll', onDrawerScroll);
+  document.documentElement.classList.remove('drawer-open');
   if (sidebar) sidebar.classList.remove('open');
   if (backdrop) {
     backdrop.classList.remove('visible');
@@ -1099,6 +1141,12 @@ function openMobileMenu() {
   const sidebar = document.getElementById('sidebar');
   const backdrop = document.getElementById('sidebar-backdrop');
   const btn = document.getElementById('mobile-menu-btn');
+  // lock first, then measure: a browser that clamps the scroll on lock would
+  // otherwise leave --drawer-top pointing at the old offset
+  document.documentElement.classList.add('drawer-open');
+  syncDrawerTop();
+  // safety net for browsers that scroll anyway (iOS momentum)
+  window.addEventListener('scroll', onDrawerScroll, { passive: true });
   if (sidebar) sidebar.classList.add('open');
   if (backdrop) {
     backdrop.hidden = false;
@@ -1130,6 +1178,10 @@ async function fetchJSON(url, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
   const res = await fetch(url, { ...options, headers });
+  if (res.status === 401 && !url.startsWith('/api/auth/')) {
+    gotoLogin();
+    throw new Error(t('auth.required'));
+  }
   if (res.status === 204) return null;
   const text = await res.text();
   let data = null;
@@ -1148,6 +1200,7 @@ async function fetchJSON(url, options = {}) {
 }
 
 function showToast(message, type) {
+  if (authRedirecting && type === 'error') return;
   const container = document.getElementById('toast-container');
   const cls =
     type === 'success' ? 'toast-success' :
@@ -3987,6 +4040,54 @@ function buildIntegrationsDoc() {
   return base;
 }
 
+// the view, filters and paging all live in the hash, so the whole location is
+// carried over and restored after login
+function gotoLogin() {
+  if (authRedirecting) return;
+  authRedirecting = true;
+  const next = location.pathname + location.search + location.hash;
+  location.href = '/login?next=' + encodeURIComponent(next);
+}
+
+async function loadAuthState() {
+  try {
+    const res = await fetch('/api/auth/state');
+    if (!res.ok) return;
+    authState = await res.json();
+  } catch (_) {
+    return;
+  }
+  if (!authState.configured && !authSetupSkipped()) { gotoLogin(); return; }
+  const logoutBtn = document.getElementById('logout-btn');
+  // under LAN bypass logout is a no-op: the cookie is cleared but the request is
+  // let in by IP anyway, so the button is hidden rather than left dead
+  if (logoutBtn) logoutBtn.classList.toggle('hidden', !(authState && authState.configured && !authState.lan_bypass));
+}
+
+function authSetupSkipped() {
+  try {
+    return localStorage.getItem(AUTH_SETUP_SKIP_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function bindLogout() {
+  const btn = document.getElementById('logout-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async function () {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (_) { /* ponytail: best-effort */ }
+    try {
+      localStorage.setItem(AUTH_SETUP_SKIP_KEY, '1');
+    } catch (_) { /* ponytail: best-effort */ }
+    location.reload();
+  });
+}
+
 const initialView = parseHash();
 historyState.limit = loadStoredPageSize(10);
 showView(initialView, false);
+bindLogout();
+loadAuthState();
