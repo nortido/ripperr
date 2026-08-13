@@ -125,8 +125,8 @@
   border-color: var(--border-subtle);
 }
 
-.stat-card-active.stat-card-filter-blue {
-  border-color: var(--hue-blue);
+.stat-card-active.stat-card-filter-green {
+  border-color: var(--hue-green);
 }
 
 .stat-card-active.stat-card-filter-danger {

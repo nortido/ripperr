@@ -21,9 +21,9 @@ export function randomFieldName(prefix) {
 export function secureInputAttrs(prefix) {
   const name = randomFieldName(prefix);
   if (SECURE_INPUT_SUPPORTED) {
-    return ' type="text" class="input input-secure" autocomplete="off" name="' + escapeHtml(name) + '"';
+    return html` type="text" class="input input-secure" autocomplete="off" name="${name}"`;
   }
-  return ' type="password" class="input" autocomplete="off" name="' + escapeHtml(name) + '"';
+  return html` type="password" class="input" autocomplete="off" name="${name}"`;
 }
 
 export function getDismissedAlertKeys() {
@@ -146,7 +146,7 @@ export function pageSizeQueryLimit(size) {
 export function trackerBadgeHtml(name) {
   const label = name || t('common.emDash');
   const idx = trackerNameHueIndex(label);
-  return '<span class="tracker-badge tracker-badge-hue-' + idx + '">' + escapeHtml(label) + '</span>';
+  return html`<span class="tracker-badge tracker-badge-hue-${idx}">${label}</span>`;
 }
 
 
@@ -192,6 +192,37 @@ export function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+// markup builder: every ${} substitution is escaped, so raw HTML can only enter
+// through another html`` result (or an array of them) — no way to forget escapeHtml
+class Html {
+  constructor(value) {
+    this.value = value;
+  }
+  toString() {
+    return this.value;
+  }
+}
+
+function htmlValue(v) {
+  if (v instanceof Html) return v.value;
+  if (Array.isArray(v)) return v.map(htmlValue).join('');
+  if (v === null || v === undefined || v === false) return '';
+  return escapeHtml(String(v));
+}
+
+export function html(strings, ...values) {
+  let out = strings[0];
+  for (let i = 0; i < values.length; i++) {
+    out += htmlValue(values[i]) + strings[i + 1];
+  }
+  return new Html(out);
+}
+
+// escape hatch for markup that is a literal in the source, never data: the icon table
+export function rawHtml(value) {
+  return new Html(value == null ? '' : String(value));
+}
+
 export function isSafeLinkUrl(url) {
   try {
     const scheme = new URL(url).protocol.toLowerCase();
@@ -202,12 +233,12 @@ export function isSafeLinkUrl(url) {
 }
 
 export function linkCell(name, url) {
-  const label = escapeHtml(name || url || t('common.emDash'));
-  const titleAttr = name ? ' title="' + escapeHtml(name) + '"' : '';
+  const label = name || url || t('common.emDash');
+  const titleAttr = name ? html` title="${name}"` : '';
   if (url && isSafeLinkUrl(url)) {
-    return '<a class="release-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener"' + titleAttr + '>' + label + '</a>';
+    return html`<a class="release-link" href="${url}" target="_blank" rel="noopener"${titleAttr}>${label}</a>`;
   }
-  return '<span class="release-link"' + titleAttr + '>' + label + '</span>';
+  return html`<span class="release-link"${titleAttr}>${label}</span>`;
 }
 
 export function statusIcon(status, error, streak) {
@@ -231,46 +262,38 @@ export function statusIcon(status, error, streak) {
     iconName = 'help';
     label = t('status.unknown');
   }
-  const err = escapeHtml(error || '');
-  const title = status === 'error' && error ? err : escapeHtml(label);
-  const dataErr = status === 'error' && error
-    ? ' data-error="' + err + '" class="' + cls + ' status-error-badge"'
-    : ' class="' + cls + '"';
+  const title = status === 'error' && error ? error : label;
+  const attrs = status === 'error' && error
+    ? html` data-error="${error}" class="${cls} status-error-badge"`
+    : html` class="${cls}"`;
   const badge = streak > 1
-    ? '<span class="streak-badge" title="' + escapeHtml(t('dash.streakTitle').replace('{n}', String(streak))) +
-      '">' + escapeHtml(String(streak)) + '</span>'
+    ? html`<span class="streak-badge" title="${t('dash.streakTitle').replace('{n}', String(streak))}">${streak}</span>`
     : '';
-  return (
-    '<span' + dataErr + ' title="' + title + '" aria-label="' + title + '">' +
-    icon(iconName) + '</span>' + badge
-  );
+  return html`<span${attrs} title="${title}" aria-label="${title}">${icon(iconName)}</span>${badge}`;
 }
 
 
 export function hourOptions(selected) {
-  let html = '';
+  const out = [];
   for (let h = 0; h < 24; h++) {
-    html += '<option value="' + h + '"' + (h === selected ? ' selected' : '') + '>' +
-      String(h).padStart(2, '0') + ':00</option>';
+    out.push(html`<option value="${h}"${h === selected ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`);
   }
-  return html;
+  return html`${out}`;
 }
 
 export function refreshOptions(selected) {
-  return REFRESH_OPTIONS.map(function (n) {
-    return '<option value="' + n + '"' + (n === selected ? ' selected' : '') + '>' + n + '</option>';
-  }).join('');
+  return html`${REFRESH_OPTIONS.map(function (n) {
+    return html`<option value="${n}"${n === selected ? ' selected' : ''}>${n}</option>`;
+  })}`;
 }
 
 export function timezoneOptions(timezones, selected) {
-  let html = '<option value="">' + escapeHtml(t('settings.timezoneDefault')) + '</option>';
-  (timezones || []).forEach(function (tz) {
+  const out = (timezones || []).map(function (tz) {
     const id = typeof tz === 'string' ? tz : tz.id;
     const label = typeof tz === 'string' ? tz : formatTimezoneLabel(tz);
-    html += '<option value="' + escapeHtml(id) + '"' +
-      (id === selected ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+    return html`<option value="${id}"${id === selected ? ' selected' : ''}>${label}</option>`;
   });
-  return html;
+  return html`<option value="">${t('settings.timezoneDefault')}</option>${out}`;
 }
 
 export function updateRefreshedAt(id, key) {

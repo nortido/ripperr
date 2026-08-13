@@ -4,7 +4,7 @@ import { triggerDryRun, updateDryRunButtonState } from './dashboard.js';
 import { hydrateIcons, icon } from './icons.js';
 import { createPoller } from './poller.js';
 import { currentView } from './router.js';
-import { escapeHtml, formatLogTime, updateRefreshedAt } from './util.js';
+import { html, formatLogTime, updateRefreshedAt } from './util.js';
 
 export let logsState = { limit: 200 };
 export let logsFetchGen = 0;
@@ -20,7 +20,7 @@ export async function loadLogs() {
   const el = document.getElementById('view-logs');
   const hadContent = !!el.querySelector('.page-header');
   if (!hadContent) {
-    el.innerHTML = '<div class="loading">' + escapeHtml(t('common.loading')) + '</div>';
+    el.innerHTML = html`<div class="loading">${t('common.loading')}</div>`;
   }
   const fetchGen = ++logsFetchGen;
   try {
@@ -36,7 +36,7 @@ export async function loadLogs() {
     ensureLogsPolling();
   } catch (err) {
     if (!hadContent) {
-      el.innerHTML = '<div class="alert alert-danger">' + escapeHtml(err.message) + '</div>';
+      el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
     }
     showToast(err.message, 'error');
   }
@@ -70,12 +70,7 @@ export async function refreshLogs(manual) {
 export function renderLogLine(item) {
   const level = (item.level || 'INFO').toUpperCase();
   const cls = level === 'ERROR' ? 'log-error' : level === 'WARN' ? 'log-warn' : 'log-info';
-  return (
-    '<div class="log-line ' + cls + '">' +
-    '<span class="log-time">' + escapeHtml(formatLogTime(item.time)) + '</span> ' +
-    '<span class="log-level">[' + escapeHtml(level) + ']</span> ' +
-    '<span class="log-msg">' + escapeHtml(item.message || '') + '</span></div>'
-  );
+  return html`<div class="log-line ${cls}"><span class="log-time">${formatLogTime(item.time)}</span> <span class="log-level">[${level}]</span> <span class="log-msg">${item.message || ''}</span></div>`;
 }
 
 export function renderLogsFeed(el, data) {
@@ -83,42 +78,22 @@ export function renderLogsFeed(el, data) {
   if (!feed) return;
   const items = (data && data.items) || [];
   if (!items.length) {
-    feed.innerHTML = '<div class="log-empty">' + escapeHtml(t('logs.empty')) + '</div>';
+    feed.innerHTML = html`<div class="log-empty">${t('logs.empty')}</div>`;
     return;
   }
-  let html = '';
-  items.forEach(function (item) { html += renderLogLine(item); });
-  feed.innerHTML = html;
+  let parts = '';
+  items.forEach(function (item) { parts += renderLogLine(item); });
+  feed.innerHTML = parts;
   feed.scrollTop = feed.scrollHeight;
 }
 
 export function renderLogs(el, data) {
   const limitOpts = [100, 200, 500, 1000];
-  let limitHtml = '';
-  limitOpts.forEach(function (n) {
-    limitHtml += '<option value="' + n + '"' + (logsState.limit === n ? ' selected' : '') + '>' + n + '</option>';
+  const limitParts = limitOpts.map(function (n) {
+    return html`<option value="${n}"${logsState.limit === n ? ' selected' : ''}>${n}</option>`;
   });
 
-  el.innerHTML =
-    '<div class="page-header logs-page-header">' +
-    '<div class="page-header-row">' +
-    '<h1 class="page-title">' + escapeHtml(t('logs.title')) + '</h1>' +
-    '<div class="page-header-actions">' +
-    '<span class="text-muted logs-last-updated" id="logs-last-updated"></span>' +
-    '<button type="button" class="btn btn-sm btn-ghost" id="logs-dryrun-btn" ' +
-    'title="' + escapeHtml(t('logs.dryRunHint')) + '">' +
-    escapeHtml(t('logs.dryRun')) + '</button>' +
-    '<button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="logs-refresh-btn"' +
-    ' aria-label="' + escapeHtml(t('logs.refresh')) + '">' +
-    '<span data-icon="refresh"></span></button>' +
-    '</div></div></div>' +
-    '<div class="card logs-card">' +
-    '<div class="card-header logs-card-header">' +
-    '<div class="form-group logs-limit-group">' +
-    '<label class="form-label" for="logs-limit">' + escapeHtml(t('logs.limit')) + '</label>' +
-    '<select class="select" id="logs-limit">' + limitHtml + '</select>' +
-    '</div></div>' +
-    '<div class="logs-feed card-body-flush"></div></div>';
+  el.innerHTML = html`<div class="page-header logs-page-header"><div class="page-header-row"><h1 class="page-title">${t('logs.title')}</h1><div class="page-header-actions"><span class="text-muted logs-last-updated" id="logs-last-updated"></span><button type="button" class="btn btn-sm btn-ghost" id="logs-dryrun-btn" title="${t('logs.dryRunHint')}">${t('logs.dryRun')}</button><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="logs-refresh-btn" aria-label="${t('logs.refresh')}"><span data-icon="refresh"></span></button></div></div></div><div class="card logs-card"><div class="card-header logs-card-header"><div class="form-group logs-limit-group"><label class="form-label" for="logs-limit">${t('logs.limit')}</label><select class="select" id="logs-limit">${limitParts}</select></div></div><div class="logs-feed card-body-flush"></div></div>`;
 
   renderLogsFeed(el, data);
   hydrateIcons(el);

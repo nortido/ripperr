@@ -3,7 +3,7 @@ import { buildHistoryQuery, dashboardFetchGen, loadDashboard, syncPlanForceLocal
 import { ICONS, hydrateIcons, icon } from './icons.js';
 import { syncDashboardFilterHash } from './router.js';
 import { historyState } from './state.js';
-import { PAGE_SIZE_OPTIONS, escapeHtml, formatRunSlot, savePageSize } from './util.js';
+import { PAGE_SIZE_OPTIONS, formatRunSlot, html, savePageSize } from './util.js';
 
 export let activeErrorPopover = null;
 export let activeSlotsPopover = null;
@@ -75,9 +75,7 @@ export function initCustomSelect(selectEl) {
       item.dataset.index = String(idx);
       if (opt.disabled) item.setAttribute('aria-disabled', 'true');
       if (opt.value === curVal) {
-        item.innerHTML =
-          '<span class="custom-select-check">' + ICONS.check + '</span>' +
-          '<span>' + escapeHtml(opt.textContent) + '</span>';
+        item.innerHTML = html`<span class="custom-select-check">${icon('check')}</span><span>${opt.textContent}</span>`;
       } else {
         item.textContent = opt.textContent;
       }
@@ -323,9 +321,7 @@ export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onCha
     chips.forEach(function (val) {
       const chip = document.createElement('span');
       chip.className = 'chip';
-      chip.innerHTML =
-        '<span class="chip-label">' + escapeHtml(val) + '</span>' +
-        '<button type="button" class="chip-remove" aria-label="' + escapeHtml(t('common.remove')) + '">&times;</button>';
+      chip.innerHTML = html`<span class="chip-label">${val}</span><button type="button" class="chip-remove" aria-label="${t('common.remove')}">&times;</button>`;
       chip.querySelector('.chip-remove').addEventListener('click', function () {
         const i = chips.indexOf(val);
         if (i !== -1) chips.splice(i, 1);
@@ -757,28 +753,9 @@ export function buildNameColumnHeader() {
     ? t('dash.nameFilterActive', { value: historyState.name })
     : t('dash.col.name');
   const activeIconHtml = active
-    ? '<span class="th-name-filter-icon th-name-filter-icon-active" data-icon="funnel" aria-hidden="true"></span>'
+    ? html`<span class="th-name-filter-icon th-name-filter-icon-active" data-icon="funnel" aria-hidden="true"></span>`
     : '';
-  return (
-    '<th class="' + thClass + '">' +
-    '<div class="name-filter-wrap">' +
-    '<span class="th-name-filter-label" role="button" tabindex="0"' +
-    ' aria-haspopup="dialog" aria-expanded="false"' +
-    ' title="' + escapeHtml(label) + '">' +
-    '<span class="th-name-filter-text">' + escapeHtml(t('dash.col.name')) + '</span>' +
-    '<span class="th-name-filter-search" data-icon="search" aria-hidden="true"></span>' +
-    activeIconHtml +
-    '</span>' +
-    '<div class="name-filter-inline">' +
-    '<input type="text" class="name-filter-input"' +
-    ' value="' + escapeHtml(historyState.name) + '"' +
-    ' placeholder="' + escapeHtml(t('dash.nameFilterPlaceholder')) + '" autocomplete="off">' +
-    '<button type="button" class="name-filter-clear"' +
-    ' title="' + escapeHtml(t('dash.nameFilterClear')) + '"' +
-    ' aria-label="' + escapeHtml(t('dash.nameFilterClear')) + '">' +
-    '<span data-icon="x"></span></button>' +
-    '</div></div></th>'
-  );
+  return html`<th class="${thClass}"><div class="name-filter-wrap"><span class="th-name-filter-label" role="button" tabindex="0" aria-haspopup="dialog" aria-expanded="false" title="${label}"><span class="th-name-filter-text">${t('dash.col.name')}</span><span class="th-name-filter-search" data-icon="search" aria-hidden="true"></span>${activeIconHtml}</span><div class="name-filter-inline"><input type="text" class="name-filter-input" value="${historyState.name}" placeholder="${t('dash.nameFilterPlaceholder')}" autocomplete="off"><button type="button" class="name-filter-clear" title="${t('dash.nameFilterClear')}" aria-label="${t('dash.nameFilterClear')}"><span data-icon="x"></span></button></div></div></th>`;
 }
 
 export function bindNameFilter(root) {
@@ -881,7 +858,7 @@ export function buildMobileNameSearchSlot() {
   const title = active
     ? t('dash.nameFilterActive', { value: historyState.name })
     : t('dash.nameFilterPlaceholder');
-  const dotHtml = active ? '<span class="mobile-name-search-dot" aria-hidden="true"></span>' : '';
+  const dotHtml = active ? html`<span class="mobile-name-search-dot" aria-hidden="true"></span>` : '';
   const headerExpanded = active ? ' is-search-expanded' : '';
   return {
     headerClass: headerExpanded,
@@ -890,23 +867,7 @@ export function buildMobileNameSearchSlot() {
     // sit in a fixed-position box that is completely independent of the
     // search-field's own animated geometry, so the search button is
     // physically unable to move.
-    html:
-      '<div class="' + slotCls + '">' +
-      '<div class="mobile-name-search-field">' +
-      '<input type="text" class="name-filter-input mobile-name-filter-input"' +
-      ' value="' + escapeHtml(historyState.name) + '"' +
-      ' placeholder="' + escapeHtml(t('dash.nameFilterPlaceholder')) + '" autocomplete="off">' +
-      '</div></div>' +
-      '<div class="mobile-name-search-toggle">' +
-      '<button type="button" class="btn btn-sm btn-icon name-filter-clear mobile-name-filter-clear"' +
-      ' title="' + escapeHtml(t('dash.nameFilterClear')) + '"' +
-      ' aria-label="' + escapeHtml(t('dash.nameFilterClear')) + '">' +
-      '<span data-icon="x"></span></button>' +
-      '<button type="button" class="' + btnCls + '" id="dash-mobile-name-search-btn"' +
-      ' aria-haspopup="true" aria-expanded="' + (active ? 'true' : 'false') + '"' +
-      ' title="' + escapeHtml(title) + '" aria-label="' + escapeHtml(title) + '">' +
-      '<span data-icon="search"></span>' + dotHtml + '</button>' +
-      '</div>',
+    html: html`<div class="${slotCls}"><div class="mobile-name-search-field"><input type="text" class="name-filter-input mobile-name-filter-input" value="${historyState.name}" placeholder="${t('dash.nameFilterPlaceholder')}" autocomplete="off"></div></div><div class="mobile-name-search-toggle"><button type="button" class="btn btn-sm btn-icon name-filter-clear mobile-name-filter-clear" title="${t('dash.nameFilterClear')}" aria-label="${t('dash.nameFilterClear')}"><span data-icon="x"></span></button><button type="button" class="${btnCls}" id="dash-mobile-name-search-btn" aria-haspopup="true" aria-expanded="${active ? 'true' : 'false'}" title="${title}" aria-label="${title}"><span data-icon="search"></span>${dotHtml}</button></div>`,
   };
 }
 
@@ -987,40 +948,23 @@ export function buildHistFilters() {
   const isAll = active.v === '' && !active.isIgnored;
   const triggerClass = 'btn btn-sm btn-ghost btn-icon hist-filter-trigger' +
     (isAll ? '' : ' ' + active.activeClass);
-  const dotHtml = isAll ? '' : '<span class="hist-filter-dot" aria-hidden="true"></span>';
+  const dotHtml = isAll ? '' : html`<span class="hist-filter-dot" aria-hidden="true"></span>`;
   const triggerLabel = isAll ? t('dash.filter') : t('dash.filterActive', { value: active.label });
-  let optionsHtml = '';
+  const optionsParts = [];
   getHistFilterOptions().forEach(function (opt) {
     const selected = isHistFilterActive(opt);
     const iconHtml = opt.icon
-      ? '<span class="hist-filter-option-icon hist-filter-option-icon-' + (opt.v || 'all') +
-        '" data-icon="' + opt.icon + '"></span>'
-      : '<span class="hist-filter-option-icon-spacer"></span>';
+      ? html`<span class="hist-filter-option-icon hist-filter-option-icon-${opt.v || 'all'}" data-icon="${opt.icon}"></span>`
+      : html`<span class="hist-filter-option-icon-spacer"></span>`;
     const checkHtml = selected
-      ? '<span class="hist-filter-check" data-icon="check"></span>'
-      : '<span class="hist-filter-check"></span>';
+      ? html`<span class="hist-filter-check" data-icon="check"></span>`
+      : html`<span class="hist-filter-check"></span>`;
     const dataAttr = opt.isIgnored
-      ? ' data-filter-ignored="1"'
-      : ' data-status="' + opt.v + '"';
-    optionsHtml +=
-      '<div class="hist-filter-option' + (selected ? ' is-selected' : '') + '"' +
-      ' role="option" aria-selected="' + (selected ? 'true' : 'false') + '"' +
-      dataAttr + ' data-active-class="' + opt.activeClass + '">' +
-      checkHtml + iconHtml +
-      '<span class="hist-filter-option-label">' + escapeHtml(opt.label) + '</span></div>';
+      ? html` data-filter-ignored="1"`
+      : html` data-status="${opt.v}"`;
+    optionsParts.push(html`<div class="hist-filter-option${selected ? ' is-selected' : ''}" role="option" aria-selected="${selected ? 'true' : 'false'}"${dataAttr} data-active-class="${opt.activeClass}">${checkHtml}${iconHtml}<span class="hist-filter-option-label">${opt.label}</span></div>`);
   });
-  return (
-    '<div class="hist-filter-select">' +
-    '<button type="button" class="' + triggerClass + '"' +
-    ' aria-haspopup="listbox" aria-expanded="false"' +
-    ' title="' + escapeHtml(triggerLabel) + '"' +
-    ' aria-label="' + escapeHtml(triggerLabel) + '">' +
-    '<span data-icon="funnel"></span>' +
-    dotHtml +
-  '</button>' +
-    '<div class="hist-filter-panel" role="listbox" hidden>' + optionsHtml + '</div>' +
-    '</div>'
-  );
+  return html`<div class="hist-filter-select"><button type="button" class="${triggerClass}" aria-haspopup="listbox" aria-expanded="false" title="${triggerLabel}" aria-label="${triggerLabel}"><span data-icon="funnel"></span>${dotHtml}</button><div class="hist-filter-panel" role="listbox" hidden>${optionsParts}</div></div>`;
 }
 
 export function bindHistFilterSelect(root) {
@@ -1098,26 +1042,15 @@ export function bindHistFilterSelect(root) {
 }
 
 export function paginationButtons(prevId, nextId, prevDisabled, nextDisabled) {
-  return (
-    '<button type="button" class="btn btn-sm btn-ghost btn-pagination" id="' + prevId + '"' +
-    (prevDisabled ? ' disabled' : '') +
-    ' aria-label="' + escapeHtml(t('common.pagePrev')) + '">‹</button>' +
-    '<button type="button" class="btn btn-sm btn-ghost btn-pagination" id="' + nextId + '"' +
-    (nextDisabled ? ' disabled' : '') +
-    ' aria-label="' + escapeHtml(t('common.pageNext')) + '">›</button>'
-  );
+  return html`<button type="button" class="btn btn-sm btn-ghost btn-pagination" id="${prevId}"${prevDisabled ? ' disabled' : ''} aria-label="${t('common.pagePrev')}">‹</button><button type="button" class="btn btn-sm btn-ghost btn-pagination" id="${nextId}"${nextDisabled ? ' disabled' : ''} aria-label="${t('common.pageNext')}">›</button>`;
 }
 
 export function buildPageSizeSelect(currentSize) {
-  let html = '<select class="select select-compact page-size-select" id="hist-page-size" aria-label="' +
-    escapeHtml(t('common.pageSize')) + '">';
-  PAGE_SIZE_OPTIONS.forEach(function (n) {
+  const options = PAGE_SIZE_OPTIONS.map(function (n) {
     const label = n === 0 ? t('common.all') : String(n);
-    html += '<option value="' + n + '"' + (currentSize === n ? ' selected' : '') + '>' +
-      escapeHtml(label) + '</option>';
+    return html`<option value="${n}"${currentSize === n ? ' selected' : ''}>${label}</option>`;
   });
-  html += '</select>';
-  return html;
+  return html`<select class="select select-compact page-size-select" id="hist-page-size" aria-label="${t('common.pageSize')}">${options}</select>`;
 }
 
 export function buildSegmentControl(options, activeValue, ariaLabel) {
@@ -1125,24 +1058,11 @@ export function buildSegmentControl(options, activeValue, ariaLabel) {
   options.forEach(function (opt, i) {
     if (opt.value === activeValue) activeIdx = i;
   });
-  let btns = '';
-  options.forEach(function (opt, i) {
+  const btnsParts = options.map(function (opt, i) {
     const isActive = i === activeIdx;
-    btns +=
-      '<button type="button" class="seg-ctrl-btn' + (isActive ? ' active' : '') + '"' +
-      ' data-value="' + escapeHtml(opt.value) + '"' +
-      (opt.dataAttr || '') +
-      ' title="' + escapeHtml(opt.title) + '"' +
-      ' aria-label="' + escapeHtml(opt.title) + '"' +
-      ' aria-pressed="' + (isActive ? 'true' : 'false') + '">' +
-      (opt.icon ? '<span data-icon="' + opt.icon + '"></span>' : escapeHtml(opt.label || '')) +
-      '</button>';
+    return html`<button type="button" class="seg-ctrl-btn${isActive ? ' active' : ''}" data-value="${opt.value}"${opt.dataAttr || ''} title="${opt.title}" aria-label="${opt.title}" aria-pressed="${isActive ? 'true' : 'false'}">${opt.icon ? html`<span data-icon="${opt.icon}"></span>` : opt.label || ''}</button>`;
   });
-  return (
-    '<div class="seg-ctrl" role="group" aria-label="' + escapeHtml(ariaLabel) +
-    '" data-active-index="' + activeIdx + '">' +
-    '<div class="seg-ctrl-thumb" aria-hidden="true"></div>' + btns + '</div>'
-  );
+  return html`<div class="seg-ctrl" role="group" aria-label="${ariaLabel}" data-active-index="${activeIdx}"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${btnsParts}</div>`;
 }
 
 export function updateSegmentThumb(seg) {

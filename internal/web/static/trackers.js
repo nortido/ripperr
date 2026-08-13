@@ -2,24 +2,22 @@ import { fetchJSON, showToast } from './api.js';
 import { initChipInput, initCustomSelects, initPasswordToggles } from './components.js';
 import { hydrateIcons, icon } from './icons.js';
 import { integrationsCache, setIntegrationsCache } from './integrations.js';
-import { escapeHtml, randomFieldName, secureInputAttrs, trackerDisplayDomain } from './util.js';
+import { html, randomFieldName, secureInputAttrs, trackerDisplayDomain } from './util.js';
 
 export let openTrackerKey = null;
 
 export function activeDomainOptionsHtml(domain, mirrors, selected) {
   const sel = selected || '';
-  let html = '<option value=""' + (sel === '' ? ' selected' : '') + '>' +
-    escapeHtml(t('trackers.activeDomainAuto')) + '</option>';
+  const parts = [];
+  parts.push(html`<option value=""${sel === '' ? ' selected' : ''}>${t('trackers.activeDomainAuto')}</option>`);
   if (domain) {
-    html += '<option value="' + escapeHtml(domain) + '"' +
-      (sel === domain ? ' selected' : '') + '>' + escapeHtml(domain) + '</option>';
+    parts.push(html`<option value="${domain}"${sel === domain ? ' selected' : ''}>${domain}</option>`);
   }
   (mirrors || []).forEach(function (m) {
     if (!m || m === domain) return;
-    html += '<option value="' + escapeHtml(m) + '"' +
-      (sel === m ? ' selected' : '') + '>' + escapeHtml(m) + '</option>';
+    parts.push(html`<option value="${m}"${sel === m ? ' selected' : ''}>${m}</option>`);
   });
-  return html;
+  return html`${parts}`;
 }
 
 export function syncActiveDomainSelect(card, domain, mirrors) {
@@ -79,74 +77,7 @@ export function trackerItemHtml(tracker) {
   const isOpen = openTrackerKey === key;
   const disabledCls = tracker.enabled ? '' : ' tracker-item-disabled';
   const domain = trackerDisplayDomain(tracker);
-  return (
-    '<div class="tracker-item' + disabledCls + (isOpen ? ' is-open' : '') + '" data-key="' + escapeHtml(key) + '">' +
-    '<div class="tracker-row" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">' +
-    '<label class="form-switch tracker-row-toggle" title="' + escapeHtml(t('trackers.enabled')) + '">' +
-    '<input class="tr-enabled" type="checkbox"' + (tracker.enabled ? ' checked' : '') + '>' +
-    '<span class="sr-only">' + escapeHtml(t('trackers.enabled')) + '</span></label>' +
-    '<button type="button" class="btn btn-ghost btn-icon-only btn-test-tracker" data-key="' + escapeHtml(key) + '"' +
-    ' title="' + escapeHtml(t('trackers.test')) + '" aria-label="' + escapeHtml(t('trackers.test')) + '">' +
-    '<span data-icon="activity"></span></button>' +
-    '<div class="tracker-row-main">' +
-    '<span class="tracker-row-name">' + escapeHtml(tracker.name || key) + '</span>' +
-    (domain ? '<span class="tracker-row-domain">' + escapeHtml(domain) + '</span>' : '') +
-    '</div>' +
-    '<span class="tracker-chevron" data-icon="chevron"></span>' +
-    '</div>' +
-    '<div class="tracker-panel">' +
-    '<div class="tracker-panel-inner">' +
-    '<div class="tracker-form form-row">' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('trackers.domain')) + '</label>' +
-    '<input type="text" class="input tr-domain" autocomplete="off" name="' + escapeHtml(randomFieldName('tr-domain')) +
-    '" value="' + escapeHtml(tracker.domain) + '"></div>' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('trackers.hourLimit')) + '</label>' +
-    '<input type="number" class="input tr-hour-limit" min="1" value="' + escapeHtml(tracker.hour_limit) + '"></div>' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('trackers.proxy')) + '</label>' +
-    '<select class="select tr-proxy-type">' +
-    '<option value="0"' + (tracker.proxy_type === 0 ? ' selected' : '') + '>' + escapeHtml(t('trackers.proxyDirect')) + '</option>' +
-    '<option value="1"' + (tracker.proxy_type === 1 ? ' selected' : '') + '>' + escapeHtml(t('trackers.proxyFlare')) + '</option>' +
-    '</select></div>' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('trackers.publicity')) + '</label>' +
-    '<select class="select tr-publicity">' +
-    '<option value="public"' + (pub === 'public' ? ' selected' : '') + '>' + escapeHtml(t('trackers.public')) + '</option>' +
-    '<option value="private"' + (pub === 'private' ? ' selected' : '') + '>' + escapeHtml(t('trackers.private')) + '</option>' +
-    '</select></div>' +
-    '<div class="form-group form-group-full">' +
-    '<label class="form-label">' + escapeHtml(t('trackers.mirrors')) + '</label>' +
-    '<div class="chip-input tr-mirrors">' +
-    '<div class="chip-input-chips"></div>' +
-    '<input type="text" class="chip-input-field" autocomplete="off" name="' + escapeHtml(randomFieldName('tr-mirror')) +
-    '" placeholder="' + escapeHtml(t('trackers.mirrorsPlaceholder')) + '">' +
-    '</div></div>' +
-    '<div class="form-group form-group-full">' +
-    '<label class="form-label" for="tr-active-domain-' + escapeHtml(key) + '">' +
-    escapeHtml(t('trackers.activeDomain')) + '</label>' +
-    '<select class="select tr-active-domain" id="tr-active-domain-' + escapeHtml(key) + '">' +
-    activeDomainOptionsHtml(tracker.domain, mirrors, tracker.active_domain || '') +
-    '</select>' +
-    '<p class="form-hint">' + escapeHtml(t('trackers.activeDomainHint')) + '</p>' +
-    '</div>' +
-    '<div class="form-group form-group-full"><label class="form-label">' + escapeHtml(t('trackers.loginUrl')) + '</label>' +
-    '<input type="text" class="input tr-login-url" autocomplete="off" name="' + escapeHtml(randomFieldName('tr-login')) +
-    '" value="' + escapeHtml(tracker.login_url) + '"></div>' +
-    '<div class="form-group form-group-full"><label class="form-label">' + escapeHtml(t('trackers.downloadUrl')) + '</label>' +
-    '<input type="text" class="input tr-download-url" autocomplete="off" name="' + escapeHtml(randomFieldName('tr-dl')) +
-    '" value="' + escapeHtml(tracker.download_url) + '"></div>' +
-    '<div class="form-group form-group-full"><label class="form-label">' + escapeHtml(t('trackers.credentials')) + '</label>' +
-    '<div class="input-password-wrap">' +
-    '<input' + secureInputAttrs('tr-cred') + ' value="' + escapeHtml(tracker.credentials) + '">' +
-    '<button type="button" class="input-password-toggle" aria-label="' + escapeHtml(t('trackers.showCredentials')) + '">' +
-    '<span data-icon="eye"></span></button></div></div>' +
-    '<div class="form-group form-group-full"><label class="form-label">' + escapeHtml(t('trackers.cookies')) + '</label>' +
-    '<input type="text" class="input tr-cookies" autocomplete="off" name="' + escapeHtml(randomFieldName('tr-cookie')) +
-    '" value="' + escapeHtml(tracker.cookies) + '"></div>' +
-    '</div>' +
-    '<div class="form-submit-row tracker-save-row">' +
-    '<button type="button" class="btn btn-primary btn-save-tracker">' + escapeHtml(t('common.save')) + '</button>' +
-    '</div>' +
-    '</div></div></div>'
-  );
+  return html`<div class="tracker-item${disabledCls}${isOpen ? ' is-open' : ''}" data-key="${key}"><div class="tracker-row" role="button" tabindex="0" aria-expanded="${isOpen ? 'true' : 'false'}"><label class="form-switch tracker-row-toggle" title="${t('trackers.enabled')}"><input class="tr-enabled" type="checkbox"${tracker.enabled ? ' checked' : ''}><span class="sr-only">${t('trackers.enabled')}</span></label><button type="button" class="btn btn-ghost btn-icon-only btn-test-tracker" data-key="${key}" title="${t('trackers.test')}" aria-label="${t('trackers.test')}"><span data-icon="activity"></span></button><div class="tracker-row-main"><span class="tracker-row-name">${tracker.name || key}</span>${domain ? html`<span class="tracker-row-domain">${domain}</span>` : ''}</div><span class="tracker-chevron" data-icon="chevron"></span></div><div class="tracker-panel"><div class="tracker-panel-inner"><div class="tracker-form form-row"><div class="form-group"><label class="form-label">${t('trackers.domain')}</label><input type="text" class="input tr-domain" autocomplete="off" name="${randomFieldName('tr-domain')}" value="${tracker.domain}"></div><div class="form-group"><label class="form-label">${t('trackers.hourLimit')}</label><input type="number" class="input tr-hour-limit" min="1" value="${tracker.hour_limit}"></div><div class="form-group"><label class="form-label">${t('trackers.proxy')}</label><select class="select tr-proxy-type"><option value="0"${tracker.proxy_type === 0 ? ' selected' : ''}>${t('trackers.proxyDirect')}</option><option value="1"${tracker.proxy_type === 1 ? ' selected' : ''}>${t('trackers.proxyFlare')}</option></select></div><div class="form-group"><label class="form-label">${t('trackers.publicity')}</label><select class="select tr-publicity"><option value="public"${pub === 'public' ? ' selected' : ''}>${t('trackers.public')}</option><option value="private"${pub === 'private' ? ' selected' : ''}>${t('trackers.private')}</option></select></div><div class="form-group form-group-full"><label class="form-label">${t('trackers.mirrors')}</label><div class="chip-input tr-mirrors"><div class="chip-input-chips"></div><input type="text" class="chip-input-field" autocomplete="off" name="${randomFieldName('tr-mirror')}" placeholder="${t('trackers.mirrorsPlaceholder')}"></div></div><div class="form-group form-group-full"><label class="form-label" for="tr-active-domain-${key}">${t('trackers.activeDomain')}</label><select class="select tr-active-domain" id="tr-active-domain-${key}">${activeDomainOptionsHtml(tracker.domain, mirrors, tracker.active_domain || '')}</select><p class="form-hint">${t('trackers.activeDomainHint')}</p></div><div class="form-group form-group-full"><label class="form-label">${t('trackers.loginUrl')}</label><input type="text" class="input tr-login-url" autocomplete="off" name="${randomFieldName('tr-login')}" value="${tracker.login_url}"></div><div class="form-group form-group-full"><label class="form-label">${t('trackers.downloadUrl')}</label><input type="text" class="input tr-download-url" autocomplete="off" name="${randomFieldName('tr-dl')}" value="${tracker.download_url}"></div><div class="form-group form-group-full"><label class="form-label">${t('trackers.credentials')}</label><div class="input-password-wrap"><input${secureInputAttrs('tr-cred')} value="${tracker.credentials}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eye"></span></button></div></div><div class="form-group form-group-full"><label class="form-label">${t('trackers.cookies')}</label><input type="text" class="input tr-cookies" autocomplete="off" name="${randomFieldName('tr-cookie')}" value="${tracker.cookies}"></div></div><div class="form-submit-row tracker-save-row"><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div></div></div>`;
 }
 
 
@@ -263,7 +194,7 @@ export async function testTracker(key, btn, item, mirrorValues) {
 
 export async function loadTrackers() {
   const el = document.getElementById('view-trackers');
-  el.innerHTML = '<div class="loading">' + escapeHtml(t('common.loading')) + '</div>';
+  el.innerHTML = html`<div class="loading">${t('common.loading')}</div>`;
   try {
     const fetches = [fetchJSON('/api/trackers')];
     if (!integrationsCache) fetches.push(fetchJSON('/api/integrations'));
@@ -271,24 +202,21 @@ export async function loadTrackers() {
     if (!integrationsCache && results[1]) setIntegrationsCache(results[1]);
     renderTrackers(el, results[0] || []);
   } catch (err) {
-    el.innerHTML = '<div class="alert alert-danger">' + escapeHtml(err.message) + '</div>';
+    el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
     showToast(err.message, 'error');
   }
 }
 
 export function renderTrackers(el, trackers) {
-  let list = '';
+  let list;
   if (trackers.length === 0) {
-    list = '<p class="text-muted">' + escapeHtml(t('trackers.empty')) + '</p>';
+    list = html`<p class="text-muted">${t('trackers.empty')}</p>`;
   } else {
-    list = '<div class="tracker-list">';
-    trackers.forEach(function (tr) { list += trackerItemHtml(tr); });
-    list += '</div>';
+    const items = trackers.map(function (tr) { return trackerItemHtml(tr); });
+    list = html`<div class="tracker-list">${items}</div>`;
   }
 
-  el.innerHTML =
-    '<div class="page-header">' +
-    '<h1 class="page-title">' + escapeHtml(t('trackers.title')) + '</h1></div>' + list;
+  el.innerHTML = html`<div class="page-header"><h1 class="page-title">${t('trackers.title')}</h1></div>${list}`;
 
   const mirrorInputs = {};
   el.querySelectorAll('.tracker-item').forEach(function (item) {

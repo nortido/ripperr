@@ -5,7 +5,7 @@ import { refreshLogs } from './logs.js';
 import { createPoller } from './poller.js';
 import { applyDashboardFilter, currentView } from './router.js';
 import { historyState } from './state.js';
-import { alertIncidentKey, dismissAlertKey, escapeHtml, formatDateTime, formatRunSlot, formatTableTime, formatThenSlot, linkCell, pageSizeQueryLimit, pruneDismissedAlerts, statusIcon, trackerBadgeHtml, updateRefreshedAt, visibleAlerts } from './util.js';
+import { alertIncidentKey, dismissAlertKey, formatDateTime, formatRunSlot, formatTableTime, formatThenSlot, html, linkCell, pageSizeQueryLimit, pruneDismissedAlerts, statusIcon, trackerBadgeHtml, updateRefreshedAt, visibleAlerts } from './util.js';
 
 export const STOP_PENDING_MS = 90000;
 
@@ -89,10 +89,7 @@ export function updateIgnoredStatCard(count) {
 export function ignoreButtonIconsHtml(ignored) {
   const idleIcon = ignored ? 'eyeOff' : 'eye';
   const hoverIcon = ignored ? 'eye' : 'eyeOff';
-  return (
-    '<span class="icon-idle" data-icon="' + idleIcon + '"></span>' +
-    '<span class="icon-hover" data-icon="' + hoverIcon + '"></span>'
-  );
+  return html`<span class="icon-idle" data-icon="${idleIcon}"></span><span class="icon-hover" data-icon="${hoverIcon}"></span>`;
 }
 
 export function updateHistoryIgnoreButtons(root) {
@@ -137,26 +134,15 @@ export function syncPlanForceLocal(items) {
 }
 
 export function redownloadButtonHtml(hash) {
-  const btnTitle = escapeHtml(t('dash.redownload'));
-  return (
-    '<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" ' +
-    'title="' + btnTitle + '" aria-label="' + btnTitle + '" ' +
-    'data-hash="' + escapeHtml(hash) + '">' +
-    '<span data-icon="rotateCw"></span></button>'
-  );
+  const btnTitle = t('dash.redownload');
+  return html`<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" title="${btnTitle}" aria-label="${btnTitle}" data-hash="${hash}"><span data-icon="rotateCw"></span></button>`;
 }
 
 export function planForceButtonHtml(hash, forced) {
-  const btnTitle = escapeHtml(forced ? t('dash.forceCancel') : t('dash.forceCheck'));
+  const btnTitle = forced ? t('dash.forceCancel') : t('dash.forceCheck');
   const btnCls = 'btn btn-icon-only btn-plan-force btn-action-force' + (forced ? ' is-active' : '');
   const btnIcon = forced ? 'zapOff' : 'zap';
-  return (
-    '<button type="button" class="' + btnCls + '" ' +
-    'title="' + btnTitle + '" aria-label="' + btnTitle + '" ' +
-    'aria-pressed="' + (forced ? 'true' : 'false') + '" ' +
-    'data-hash="' + escapeHtml(hash) + '" data-force="' + (forced ? '1' : '0') + '">' +
-    '<span data-icon="' + btnIcon + '"></span></button>'
-  );
+  return html`<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" aria-pressed="${forced ? 'true' : 'false'}" data-hash="${hash}" data-force="${forced ? '1' : '0'}"><span data-icon="${btnIcon}"></span></button>`;
 }
 
 export function updatePlanForceButton(btn, hash, forced) {
@@ -168,7 +154,7 @@ export function updatePlanForceButton(btn, hash, forced) {
   btn.setAttribute('aria-pressed', forced ? 'true' : 'false');
   btn.setAttribute('data-hash', hash);
   btn.setAttribute('data-force', forced ? '1' : '0');
-  btn.innerHTML = '<span data-icon="' + (forced ? 'zapOff' : 'zap') + '"></span>';
+  btn.innerHTML = html`<span data-icon="${forced ? 'zapOff' : 'zap'}"></span>`;
   hydrateIcons(btn);
 }
 
@@ -182,8 +168,7 @@ export function updateReleaseRow(hash, force) {
   if (recheckCell) {
     const dateShort = recheckCell.getAttribute('data-recheck-short') || '';
     const dateFull = recheckCell.getAttribute('data-recheck-full') || '';
-    recheckCell.innerHTML = '<span class="plan-recheck-text" title="' + escapeHtml(dateFull) + '">' +
-      escapeHtml(dateShort) + '</span>';
+    recheckCell.innerHTML = html`<span class="plan-recheck-text" title="${dateFull}">${dateShort}</span>`;
   }
   const btn = row.querySelector('.btn-plan-force');
   if (btn) updatePlanForceButton(btn, hash, forced);
@@ -195,11 +180,7 @@ export function updateRunStatusUI(running) {
   const runBtn = document.getElementById('dash-run-btn');
   const stopBtn = document.getElementById('dash-stop-btn');
   if (statusEl) {
-    statusEl.innerHTML =
-      '<span class="run-status-dot' + (running ? ' run-status-dot-active' : '') + '"></span>' +
-      '<span class="run-status-label">' +
-      escapeHtml(running ? (dashboardDryRun ? t('dash.statusDryRunning') : t('dash.statusRunning')) : t('dash.statusIdle')) +
-      '</span>';
+    statusEl.innerHTML = html`<span class="run-status-dot${running ? ' run-status-dot-active' : ''}"></span><span class="run-status-label">${running ? (dashboardDryRun ? t('dash.statusDryRunning') : t('dash.statusRunning')) : t('dash.statusIdle')}</span>`;
   }
   if (runBtn) {
     if (stopPending) {
@@ -248,7 +229,7 @@ export function updateNextRunCard(slots) {
       }
     }
     const sub = card.querySelector('.stat-sub');
-    if (sub) sub.innerHTML = '<span class="stat-then-pill">' + escapeHtml(t('dash.then', { time: formatThenSlot(runs[1]) })) + '</span>';
+    if (sub) sub.innerHTML = html`<span class="stat-then-pill">${t('dash.then', { time: formatThenSlot(runs[1]) })}</span>`;
   } else if (subEl) {
     subEl.remove();
   }
@@ -273,29 +254,14 @@ export async function pollDashboardStatus() {
 export function renderAlertsHtml(alerts) {
   const visible = visibleAlerts(alerts);
   if (!visible.length) return '';
-  let html = '<div class="dash-alerts">';
+  const parts = [];
   visible.forEach(function (alert) {
     const key = alertIncidentKey(alert);
     const sinceTime = formatTableTime(alert.since);
     const name = alert.tracker || t('common.emDash');
-    html +=
-      '<div class="dash-alert" data-alert-key="' + escapeHtml(key) + '">' +
-      '<span class="dash-alert-icon" data-icon="warning"></span>' +
-      '<span class="dash-alert-text">' +
-      escapeHtml(t('dash.alert.trackerDown', {
-        name: name,
-        time: sinceTime,
-        error: alert.error || '',
-      })) +
-      '</span>' +
-      '<button type="button" class="btn btn-ghost btn-icon btn-sm dash-alert-dismiss"' +
-      ' data-alert-key="' + escapeHtml(key) + '"' +
-      ' title="' + escapeHtml(t('dash.alert.dismiss')) + '"' +
-      ' aria-label="' + escapeHtml(t('dash.alert.dismiss')) + '">' +
-      '<span data-icon="x"></span></button></div>';
+    parts.push(html`<div class="dash-alert" data-alert-key="${key}"><span class="dash-alert-icon" data-icon="warning"></span><span class="dash-alert-text">${t('dash.alert.trackerDown', { name: name, time: sinceTime, error: alert.error || '', })}</span><button type="button" class="btn btn-ghost btn-icon btn-sm dash-alert-dismiss" data-alert-key="${key}" title="${t('dash.alert.dismiss')}" aria-label="${t('dash.alert.dismiss')}"><span data-icon="x"></span></button></div>`);
   });
-  html += '</div>';
-  return html;
+  return html`<div class="dash-alerts">${parts}</div>`;
 }
 
 export function updateDashboardAlerts(alerts) {
@@ -421,22 +387,14 @@ export function statCard(value, label, iconName, variant, filterType) {
   let filterAttr = '';
   if (filterType) {
     filterCls = ' stat-card-filter stat-card-filter-' + variant;
-    if (filterType === 'error' && !historyState.ignored && historyState.status === 'error') {
+    if (filterType !== 'ignored' && !historyState.ignored && historyState.status === filterType) {
       filterCls += ' stat-card-active';
     } else if (filterType === 'ignored' && historyState.ignored) {
       filterCls += ' stat-card-active';
     }
-    filterAttr = ' data-stat-filter="' + filterType + '" role="button" tabindex="0"';
+    filterAttr = html` data-stat-filter="${filterType}" role="button" tabindex="0"`;
   }
-  return (
-    '<div class="stat-card' + filterCls + '"' + filterAttr + '>' +
-    '<div class="stat-card-body">' +
-    '<div class="stat-value">' + escapeHtml(value) + '</div>' +
-    '<div class="stat-label">' + escapeHtml(label) + '</div>' +
-    '</div>' +
-    '<div class="' + iconCls + '" data-icon="' + iconName + '"></div>' +
-    '</div>'
-  );
+  return html`<div class="stat-card${filterCls}"${filterAttr}><div class="stat-card-body"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div><div class="${iconCls}" data-icon="${iconName}"></div></div>`;
 }
 
 
@@ -452,38 +410,25 @@ export function buildHistoryQuery() {
 
 export function buildSortControls() {
   return buildSegmentControl([
-    { value: 'checked', icon: 'list', title: t('dash.sort.checked'), dataAttr: ' data-sort="checked"' },
-    { value: 'recheck', icon: 'clock', title: t('dash.sort.recheck'), dataAttr: ' data-sort="recheck"' },
+    { value: 'checked', icon: 'list', title: t('dash.sort.checked'), dataAttr: html` data-sort="checked"` },
+    { value: 'recheck', icon: 'clock', title: t('dash.sort.recheck'), dataAttr: html` data-sort="recheck"` },
   ], historyState.sort, t('dash.sortLabel'));
 }
 
 export function nextRunStatCard(slots) {
   const runs = slots || [];
   const first = runs[0] ? formatRunSlot(runs[0]) : t('common.emDash');
-  let subLine = '';
+  const subLine = runs.length >= 2 ? html`<div class="stat-sub"><span class="stat-then-pill">${t('dash.then', { time: formatThenSlot(runs[1]) })}</span></div>` : '';
   const hasPopover = runs.length > 2;
-  if (runs.length >= 2) {
-    subLine = '<div class="stat-sub"><span class="stat-then-pill">' +
-      escapeHtml(t('dash.then', { time: formatThenSlot(runs[1]) })) + '</span></div>';
-  }
-  const popoverAttr = hasPopover ? ' data-has-slots-popover="1"' : '';
-  return (
-    '<div class="stat-card stat-card-next-run"' + popoverAttr + '>' +
-    '<div class="stat-card-body">' +
-    '<div class="stat-value">' + escapeHtml(first) + '</div>' +
-  subLine +
-    '<div class="stat-label">' + escapeHtml(t('dash.nextRun')) + '</div>' +
-    '</div>' +
-    '<div class="stat-icon stat-icon-green" data-icon="clock"></div>' +
-    '</div>'
-  );
+  const popoverAttr = hasPopover ? html` data-has-slots-popover="1"` : '';
+  return html`<div class="stat-card stat-card-next-run"${popoverAttr}><div class="stat-card-body"><div class="stat-value">${first}</div>${subLine}<div class="stat-label">${t('dash.nextRun')}</div></div><div class="stat-icon stat-icon-green" data-icon="clock"></div></div>`;
 }
 
 export async function fetchDashboardData() {
-  const [status, history, histTotal, histErrors, ignoreItems] = await Promise.all([
+  const [status, history, histUpdated, histErrors, ignoreItems] = await Promise.all([
     fetchJSON('/api/status'),
     fetchJSON(buildHistoryQuery()),
-    fetchJSON('/api/history?limit=1'),
+    fetchJSON('/api/history?limit=1&status=updated'),
     fetchJSON('/api/history?limit=1&status=error'),
     fetchJSON('/api/ignore'),
   ]);
@@ -492,7 +437,7 @@ export async function fetchDashboardData() {
     status: status,
     history: history,
     stats: {
-      total: histTotal.total || 0,
+      updated: histUpdated.total || 0,
       errors: histErrors.total || 0,
       ignored: (ignoreItems || []).length,
     },
@@ -503,7 +448,7 @@ export async function loadDashboard() {
   const el = document.getElementById('view-dashboard');
   const hadContent = !!el.querySelector('.page-header');
   if (!hadContent) {
-    el.innerHTML = '<div class="loading">' + escapeHtml(t('common.loading')) + '</div>';
+    el.innerHTML = html`<div class="loading">${t('common.loading')}</div>`;
   }
   const fetchGen = ++dashboardFetchGen;
   try {
@@ -514,7 +459,7 @@ export async function loadDashboard() {
     updateRefreshedAt('dash-last-updated', 'dash.lastUpdated');
     ensureDashboardPolling();
   } catch (err) {
-    el.innerHTML = '<div class="alert alert-danger">' + escapeHtml(err.message) + '</div>';
+    el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
     showToast(err.message, 'error');
   }
 }
@@ -561,9 +506,9 @@ export async function reloadDashboardTable() {
 
 export function buildReleaseRows(histItems) {
   if (!histItems || histItems.length === 0) {
-    return '<tr class="table-empty"><td colspan="6">' + escapeHtml(t('dash.empty.releases')) + '</td></tr>';
+    return html`<tr class="table-empty"><td colspan="6">${t('dash.empty.releases')}</td></tr>`;
   }
-  let releaseRows = '';
+  const rows = [];
   histItems.forEach(function (item) {
     const urlHash = item.url_hash || '';
     const ignored = isUrlIgnored(urlHash);
@@ -579,32 +524,11 @@ export function buildReleaseRows(histItems) {
     let rowClsValue = '';
     if (forced) rowClsValue = 'plan-row-force';
     if (item.broken) rowClsValue = rowClsValue ? rowClsValue + ' release-row-broken' : 'release-row-broken';
-    const rowCls = rowClsValue ? ' class="' + rowClsValue + '"' : '';
+    const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
-    releaseRows +=
-      '<tr' + rowCls + ' data-release-hash="' + escapeHtml(urlHash) + '">' +
-      '<td class="col-name">' +
-      '<div class="release-title-wrap">' + linkCell(item.name, item.url) + '</div>' +
-      '<div class="release-foot">' + trackerBadge + '</div></td>' +
-      '<td class="col-tracker">' + trackerBadge + '</td>' +
-      '<td class="col-status">' + statusIcon(item.status, item.error, item.error_streak) + '</td>' +
-      '<td class="col-time" title="' + escapeHtml(timeFull) + '">' + escapeHtml(timeShort) + '</td>' +
-      '<td class="plan-recheck-cell" data-recheck-short="' + escapeHtml(recheckShort) +
-      '" data-recheck-full="' + escapeHtml(recheckFull) + '">' +
-      '<span class="plan-recheck-text" title="' + escapeHtml(recheckFull) + '">' +
-      escapeHtml(recheckShort) + '</span></td>' +
-      '<td class="col-actions">' +
-      '<div class="release-actions">' +
-      redownloadButtonHtml(urlHash) +
-      planForceButtonHtml(urlHash, forced) +
-      '<button type="button" class="' + btnCls + '" ' +
-      'title="' + escapeHtml(btnTitle) + '" aria-label="' + escapeHtml(btnTitle) + '" ' +
-      'data-url="' + escapeHtml(item.url || '') + '" data-name="' + escapeHtml(item.name || '') +
-      '" data-hash="' + escapeHtml(urlHash) + '">' +
-      ignoreButtonIconsHtml(ignored) + '</button></div></td>' +
-      '</tr>';
+    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td><td class="col-time" title="${timeFull}">${timeShort}</td><td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}"><span class="plan-recheck-text" title="${recheckFull}">${recheckShort}</span></td><td class="col-actions"><div class="release-actions">${redownloadButtonHtml(urlHash)}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
   });
-  return releaseRows;
+  return html`${rows}`;
 }
 
 export function updateDashboardPagination(el, history) {
@@ -766,82 +690,7 @@ export function renderDashboard(el, status, history, stats) {
   const forceAllCls = 'btn btn-sm btn-ghost btn-icon btn-force-all' + (allForced ? ' is-active' : '');
   const mobileSearch = buildMobileNameSearchSlot();
 
-  el.innerHTML =
-    '<div class="page-header dash-page-header">' +
-    '<div class="page-header-row">' +
-    '<div class="dash-header-top">' +
-    '<h1 class="page-title">' + escapeHtml(t('dash.title')) + '</h1>' +
-    '<div class="dash-header-status-block">' +
-    '<div class="run-status" id="dash-run-status"></div>' +
-    '<span class="dash-meta-sep" aria-hidden="true">·</span>' +
-    '<span class="dash-last-updated text-muted" id="dash-last-updated"></span>' +
-    '</div></div>' +
-    '<div class="page-header-actions dash-header-actions">' +
-    '<div class="page-header-run-group">' +
-    '<button type="button" class="btn btn-stop" id="dash-stop-btn"' +
-    (effectiveRunning(status.running) ? '' : ' style="display:none"') +
-    ' data-i18n-aria="dash.stopCheck" aria-label="' + escapeHtml(t('dash.stopCheck')) +
-    '" title="' + escapeHtml(t('dash.stopCheck')) + '">' +
-    '<span data-icon="stop"></span>' +
-    '<span class="btn-stop-label">' + escapeHtml(t('dash.stop')) + '</span></button>' +
-    '<button type="button" class="btn ' + (effectiveRunning(status.running) ? 'btn-restart' : 'btn-primary') +
-    '" id="dash-run-btn">' + escapeHtml(effectiveRunning(status.running) ? t('dash.restartCheck') : t('dash.runCheck')) + '</button>' +
-    '</div></div></div></div>' +
-
-    renderAlertsHtml(status.alerts || []) +
-
-    '<div class="stat-grid">' +
-    nextRunStatCard(nextRuns) +
-    statCard(stats.total, t('dash.historyCount'), 'list', 'blue', 'all') +
-    statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error') +
-    statCard(stats.ignored, t('dash.ignored'), 'eyeOff', 'cyan', 'ignored') +
-    '</div>' +
-
-    '<div class="card">' +
-    '<div class="card-header releases-card-header' + mobileSearch.headerClass + '">' +
-    '<div class="card-header-toolbar">' +
-    '<div class="card-header-toolbar-shift">' +
-    '<div class="card-header-left">' +
-    '<h2 class="card-title">' + escapeHtml(t('dash.releasesTitle')) + '</h2>' +
-    '<button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="dash-refresh-btn"' +
-    ' data-i18n-aria="dash.refresh" aria-label="' + escapeHtml(t('dash.refresh')) + '"' +
-    ' title="' + escapeHtml(t('dash.refresh')) + '">' +
-    '<span data-icon="refresh"></span></button>' +
-    '</div>' +
-    '<div class="card-toolbar-pre-search">' + sortHtml +
-    '<button type="button" class="' + forceAllCls + '" id="dash-force-all-btn"' +
-    ' title="' + escapeHtml(forceAllTitle) + '" aria-label="' + escapeHtml(forceAllTitle) + '"' +
-    ' aria-pressed="' + (allForced ? 'true' : 'false') + '">' +
-    '<span data-icon="zapForceAll"></span></button>' +
-    '</div></div>' +
-    '<div class="card-toolbar-post-search">' +
-    mobileSearch.html +
-    filterHtml +
-    '</div></div></div>' +
-    '<div class="card-body-flush">' +
-    '<div class="table-wrap">' +
-    '<table class="table table-dash-releases">' +
-    '<thead><tr>' + buildNameColumnHeader() + '<th class="col-tracker">' +
-    escapeHtml(t('dash.col.tracker')) + '</th><th class="col-status">' +
-    '<span class="th-label-full">' + escapeHtml(t('dash.col.status')) + '</span>' +
-    '<span class="th-label-short">' + escapeHtml(t('dash.col.statusShort')) + '</span>' +
-    '</th><th class="col-time">' +
-    '<span class="th-label-full">' + escapeHtml(t('dash.col.checked')) + '</span>' +
-    '<span class="th-label-short">' + escapeHtml(t('dash.col.checkedShort')) + '</span>' +
-    '</th><th class="plan-recheck-cell">' +
-    '<span class="th-label-full">' + escapeHtml(t('dash.col.recheck')) + '</span>' +
-    '<span class="th-label-short">' + escapeHtml(t('dash.col.recheckShort')) + '</span>' +
-    '</th><th class="col-actions"></th></tr></thead>' +
-    '<tbody>' + releaseRows + '</tbody></table></div>' +
-    '</div>' +
-    '<div class="card-footer">' +
-    '<span class="text-muted">' + escapeHtml(t('dash.pagination', { from: from, to: to, total: total })) + '</span>' +
-    '<div class="pagination-controls">' +
-    buildPageSizeSelect(historyState.limit) +
-    '<div class="btn-group pagination-nav">' +
-    paginationButtons('hist-prev', 'hist-next', historyState.offset <= 0,
-      historyState.offset + pageLimit >= total) +
-    '</div></div></div>';
+  el.innerHTML = html`<div class="page-header dash-page-header"><div class="page-header-row"><div class="dash-header-top"><h1 class="page-title">${t('dash.title')}</h1><div class="dash-header-status-block"><div class="run-status" id="dash-run-status"></div><span class="dash-meta-sep" aria-hidden="true">·</span><span class="dash-last-updated text-muted" id="dash-last-updated"></span></div></div><div class="page-header-actions dash-header-actions"><div class="page-header-run-group"><button type="button" class="btn btn-stop" id="dash-stop-btn"${effectiveRunning(status.running) ? '' : html` style="display:none"`} data-i18n-aria="dash.stopCheck" aria-label="${t('dash.stopCheck')}" title="${t('dash.stopCheck')}"><span data-icon="stop"></span><span class="btn-stop-label">${t('dash.stop')}</span></button><button type="button" class="btn ${effectiveRunning(status.running) ? 'btn-restart' : 'btn-primary'}" id="dash-run-btn">${effectiveRunning(status.running) ? t('dash.restartCheck') : t('dash.runCheck')}</button></div></div></div></div>${renderAlertsHtml(status.alerts || [])}<div class="stat-grid">${nextRunStatCard(nextRuns)}${statCard(stats.updated, t('dash.filter.updated'), 'check', 'green', 'updated')}${statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error')}${statCard(stats.ignored, t('dash.ignored'), 'eyeOff', 'cyan', 'ignored')}</div><div class="card"><div class="card-header releases-card-header${mobileSearch.headerClass}"><div class="card-header-toolbar"><div class="card-header-toolbar-shift"><div class="card-header-left"><h2 class="card-title">${t('dash.releasesTitle')}</h2><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="dash-refresh-btn" data-i18n-aria="dash.refresh" aria-label="${t('dash.refresh')}" title="${t('dash.refresh')}"><span data-icon="refresh"></span></button></div><div class="card-toolbar-pre-search">${sortHtml}<button type="button" class="${forceAllCls}" id="dash-force-all-btn" title="${forceAllTitle}" aria-label="${forceAllTitle}" aria-pressed="${allForced ? 'true' : 'false'}"><span data-icon="zapForceAll"></span></button></div></div><div class="card-toolbar-post-search">${mobileSearch.html}${filterHtml}</div></div></div><div class="card-body-flush"><div class="table-wrap"><table class="table table-dash-releases"><thead><tr>${buildNameColumnHeader()}<th class="col-tracker">${t('dash.col.tracker')}</th><th class="col-status"><span class="th-label-full">${t('dash.col.status')}</span><span class="th-label-short">${t('dash.col.statusShort')}</span></th><th class="col-time"><span class="th-label-full">${t('dash.col.checked')}</span><span class="th-label-short">${t('dash.col.checkedShort')}</span></th><th class="plan-recheck-cell"><span class="th-label-full">${t('dash.col.recheck')}</span><span class="th-label-short">${t('dash.col.recheckShort')}</span></th><th class="col-actions"></th></tr></thead><tbody>${releaseRows}</tbody></table></div></div><div class="card-footer"><span class="text-muted">${t('dash.pagination', { from: from, to: to, total: total })}</span><div class="pagination-controls">${buildPageSizeSelect(historyState.limit)}<div class="btn-group pagination-nav">${paginationButtons('hist-prev', 'hist-next', historyState.offset <= 0, historyState.offset + pageLimit >= total)}</div></div></div>`;
 
   hydrateIcons(el);
   bindDashboardAlerts(el);

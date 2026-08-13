@@ -1,7 +1,7 @@
 import { fetchJSON, showToast } from './api.js';
 import { initCustomSelects, initPasswordToggles } from './components.js';
 import { hydrateIcons, icon } from './icons.js';
-import { escapeHtml, secureInputAttrs } from './util.js';
+import { html, secureInputAttrs } from './util.js';
 
 export let integrationsCache = null;
 
@@ -41,12 +41,12 @@ export function getProxyDownloadValue() {
 
 export async function loadIntegrations() {
   const el = document.getElementById('view-integrations');
-  el.innerHTML = '<div class="loading">' + escapeHtml(t('common.loading')) + '</div>';
+  el.innerHTML = html`<div class="loading">${t('common.loading')}</div>`;
   try {
     integrationsCache = await fetchJSON('/api/integrations');
     renderIntegrations(el, integrationsCache);
   } catch (err) {
-    el.innerHTML = '<div class="alert alert-danger">' + escapeHtml(err.message) + '</div>';
+    el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
     showToast(err.message, 'error');
   }
 }
@@ -57,68 +57,7 @@ export function renderIntegrations(el, data) {
   const p = data.proxy || {};
   const proxyParts = parseDownloadProxy(p.download_proxy || '');
 
-  el.innerHTML =
-    '<div class="page-header">' +
-    '<h1 class="page-title">' + escapeHtml(t('integrations.title')) + '</h1></div>' +
-    '<div class="grid-2">' +
-
-    '<div class="card">' +
-    '<div class="card-header"><h2 class="card-title">' + escapeHtml(t('integrations.qbit')) + '</h2></div>' +
-    '<div class="card-body" autocomplete="off">' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('integrations.host')) + '</label>' +
-    '<input type="text" class="input" id="qbit-host" autocomplete="off" name="qb-host-field" value="' + escapeHtml(q.host) + '"></div>' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('integrations.username')) + '</label>' +
-    '<input type="text" class="input" id="qbit-username" autocomplete="off" name="qb-user-field" value="' + escapeHtml(q.username) + '"></div>' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('integrations.password')) + '</label>' +
-    '<div class="input-password-wrap">' +
-    '<input id="qbit-password"' + secureInputAttrs('qb-secret') + ' value="' + escapeHtml(q.password) + '">' +
-    '<button type="button" class="input-password-toggle" aria-label="' + escapeHtml(t('trackers.showCredentials')) + '">' +
-    '<span data-icon="eye"></span></button></div></div>' +
-    '<div class="btn-group">' +
-    '<button type="button" class="btn btn-primary btn-save-int" data-section="qbit">' + escapeHtml(t('common.save')) + '</button>' +
-    '<button type="button" class="btn btn-ghost btn-test-int" data-kind="qbit">' + escapeHtml(t('integrations.test')) + '</button>' +
-    '<span class="test-result" data-kind="qbit"></span></div>' +
-    '</div></div>' +
-
-    '<div class="card">' +
-    '<div class="card-header"><h2 class="card-title">' + escapeHtml(t('integrations.flare')) + '</h2></div>' +
-    '<div class="card-body">' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('integrations.url')) + '</label>' +
-    '<input type="text" class="input" id="flare-url" value="' + escapeHtml(f.url) + '"></div>' +
-    '<div class="form-group"><label class="form-label">' + escapeHtml(t('integrations.timeout')) + '</label>' +
-    '<input type="number" class="input" id="flare-timeout" min="1" value="' + escapeHtml(f.timeout_ms || 0) + '"></div>' +
-    '<div class="btn-group">' +
-    '<button type="button" class="btn btn-primary btn-save-int" data-section="flaresolverr">' + escapeHtml(t('common.save')) + '</button>' +
-    '<button type="button" class="btn btn-ghost btn-test-int" data-kind="flaresolverr">' + escapeHtml(t('integrations.test')) + '</button>' +
-    '<span class="test-result" data-kind="flaresolverr"></span></div>' +
-    '</div></div>' +
-
-    '<div class="card">' +
-    '<div class="card-header"><h2 class="card-title">' + escapeHtml(t('integrations.proxy')) + '</h2></div>' +
-    '<div class="card-body">' +
-    '<div class="proxy-type-row">' +
-    '<div class="form-group">' +
-    '<label class="form-label" for="proxy-type">' + escapeHtml(t('integrations.proxyType')) + '</label>' +
-    '<select class="select" id="proxy-type">' +
-    '<option value="http"' + (proxyParts.type === 'http' ? ' selected' : '') + '>' +
-    escapeHtml(t('integrations.proxyTypeHttp')) + '</option>' +
-    '<option value="https"' + (proxyParts.type === 'https' ? ' selected' : '') + '>' +
-    escapeHtml(t('integrations.proxyTypeHttps')) + '</option>' +
-    '<option value="socks5"' + (proxyParts.type === 'socks5' ? ' selected' : '') + '>' +
-    escapeHtml(t('integrations.proxyTypeSocks5')) + '</option>' +
-    '</select></div>' +
-    '<div class="form-group">' +
-    '<label class="form-label" for="proxy-download">' + escapeHtml(t('integrations.proxyAddress')) + '</label>' +
-    '<input type="text" class="input" id="proxy-download" value="' +
-    escapeHtml(proxyParts.address) + '" placeholder="' + escapeHtml(t('integrations.downloadProxyPlaceholder')) + '">' +
-    '</div></div>' +
-    '<div class="btn-group">' +
-    '<button type="button" class="btn btn-primary btn-save-int" data-section="proxy">' + escapeHtml(t('common.save')) + '</button>' +
-    '<button type="button" class="btn btn-ghost btn-test-int" data-kind="proxy">' + escapeHtml(t('integrations.test')) + '</button>' +
-    '<span class="test-result" data-kind="proxy"></span></div>' +
-    '</div></div>' +
-
-    '</div>';
+  el.innerHTML = html`<div class="page-header"><h1 class="page-title">${t('integrations.title')}</h1></div><div class="grid-2"><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.qbit')}</h2></div><div class="card-body" autocomplete="off"><div class="form-group"><label class="form-label">${t('integrations.host')}</label><input type="text" class="input" id="qbit-host" autocomplete="off" name="qb-host-field" value="${q.host}"></div><div class="form-group"><label class="form-label">${t('integrations.username')}</label><input type="text" class="input" id="qbit-username" autocomplete="off" name="qb-user-field" value="${q.username}"></div><div class="form-group"><label class="form-label">${t('integrations.password')}</label><div class="input-password-wrap"><input id="qbit-password"${secureInputAttrs('qb-secret')} value="${q.password}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eye"></span></button></div></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="qbit">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="qbit">${t('integrations.test')}</button><span class="test-result" data-kind="qbit"></span></div></div></div><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.flare')}</h2></div><div class="card-body"><div class="form-group"><label class="form-label">${t('integrations.url')}</label><input type="text" class="input" id="flare-url" value="${f.url}"></div><div class="form-group"><label class="form-label">${t('integrations.timeout')}</label><input type="number" class="input" id="flare-timeout" min="1" value="${f.timeout_ms || 0}"></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="flaresolverr">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="flaresolverr">${t('integrations.test')}</button><span class="test-result" data-kind="flaresolverr"></span></div></div></div><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.proxy')}</h2></div><div class="card-body"><div class="proxy-type-row"><div class="form-group"><label class="form-label" for="proxy-type">${t('integrations.proxyType')}</label><select class="select" id="proxy-type"><option value="http"${proxyParts.type === 'http' ? ' selected' : ''}>${t('integrations.proxyTypeHttp')}</option><option value="https"${proxyParts.type === 'https' ? ' selected' : ''}>${t('integrations.proxyTypeHttps')}</option><option value="socks5"${proxyParts.type === 'socks5' ? ' selected' : ''}>${t('integrations.proxyTypeSocks5')}</option></select></div><div class="form-group"><label class="form-label" for="proxy-download">${t('integrations.proxyAddress')}</label><input type="text" class="input" id="proxy-download" value="${proxyParts.address}" placeholder="${t('integrations.downloadProxyPlaceholder')}"></div></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="proxy">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="proxy">${t('integrations.test')}</button><span class="test-result" data-kind="proxy"></span></div></div></div></div>`;
 
   el.querySelectorAll('.btn-save-int').forEach(function (btn) {
     btn.addEventListener('click', async function () {
@@ -154,7 +93,7 @@ export function renderIntegrations(el, data) {
     btn.addEventListener('click', async function () {
       const kind = btn.getAttribute('data-kind');
       const resultEl = el.querySelector('.test-result[data-kind="' + kind + '"]');
-      resultEl.innerHTML = '<span class="text-muted">' + escapeHtml(t('integrations.testing')) + '</span>';
+      resultEl.innerHTML = html`<span class="text-muted">${t('integrations.testing')}</span>`;
       btn.disabled = true;
       try {
         const config = getIntegrationTestConfig(kind);
@@ -163,13 +102,13 @@ export function renderIntegrations(el, data) {
           body: JSON.stringify({ kind: kind, config: config }),
         });
         if (res.ok) {
-          resultEl.innerHTML = '<span class="text-success">' + icon('check') + ' ' + escapeHtml(t('integrations.ok')) + '</span>';
+          resultEl.innerHTML = html`<span class="text-success">${icon('check')} ${t('integrations.ok')}</span>`;
           hydrateIcons(resultEl);
         } else {
-          resultEl.innerHTML = '<span class="text-danger">' + escapeHtml(res.error || t('integrations.error')) + '</span>';
+          resultEl.innerHTML = html`<span class="text-danger">${res.error || t('integrations.error')}</span>`;
         }
       } catch (err) {
-        resultEl.innerHTML = '<span class="text-danger">' + escapeHtml(err.message) + '</span>';
+        resultEl.innerHTML = html`<span class="text-danger">${err.message}</span>`;
       }
       btn.disabled = false;
     });

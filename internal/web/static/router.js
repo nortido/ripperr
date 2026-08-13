@@ -94,14 +94,10 @@ export function applyDashboardFilter(filterType) {
       historyState.ignored = true;
       historyState.status = '';
     }
-  } else if (filterType === 'error') {
-    if (!historyState.ignored && historyState.status === 'error') {
-      historyState.ignored = false;
-      historyState.status = '';
-    } else {
-      historyState.ignored = false;
-      historyState.status = 'error';
-    }
+  } else if (filterType && filterType !== 'all') {
+    const same = !historyState.ignored && historyState.status === filterType;
+    historyState.ignored = false;
+    historyState.status = same ? '' : filterType;
   } else {
     historyState.ignored = false;
     historyState.status = '';
