@@ -401,39 +401,32 @@ body:has(.app.page-scaled) {
   width: 22px;
   height: 22px;
   flex-shrink: 0;
-  border-radius: 6px;
-  transition: color var(--transition), background var(--transition);
+  transition: color var(--transition);
 }
 
 .nav-link:not(.active):hover .nav-icon[data-icon="dashboard"] {
   color: var(--hue-green);
-  background: var(--tint-green);
 }
 
 .nav-link:not(.active):hover .nav-icon[data-icon="server"] {
   color: var(--hue-blue);
-  background: var(--tint-blue);
 }
 
 .nav-link:not(.active):hover .nav-icon[data-icon="plug"] {
   color: var(--hue-violet);
-  background: var(--tint-violet);
 }
 
 .nav-link:not(.active):hover .nav-icon[data-icon="wrench"] {
   color: var(--hue-amber);
-  background: var(--tint-amber);
 }
 
 .nav-link:not(.active):hover .nav-icon[data-icon="logs"] {
   color: var(--hue-cyan);
-  background: var(--tint-cyan);
 }
 
 .nav-link:not(.active):hover .nav-icon[data-icon="sun"],
 .nav-link:not(.active):hover .nav-icon[data-icon="moon"] {
   color: var(--hue-teal);
-  background: var(--tint-teal);
 }
 
 .nav-icon svg {
