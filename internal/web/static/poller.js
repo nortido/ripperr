@@ -1,0 +1,46 @@
+import { currentView } from './router.js';
+
+// one poller per view: the timers run only while that view is open and the tab
+// is visible; tasks marked onResume also fire the moment the tab comes back
+export function createPoller(view, tasks) {
+  let timers = [];
+  let bound = false;
+
+  function clearTimers() {
+    timers.forEach(clearInterval);
+    timers = [];
+  }
+
+  function onVisibility() {
+    if (currentView !== view) return;
+    if (document.visibilityState !== 'visible') {
+      clearTimers();
+      return;
+    }
+    tasks.forEach(function (task) {
+      if (task.onResume) task.run();
+    });
+    start();
+  }
+
+  function start() {
+    if (currentView !== view || document.visibilityState !== 'visible') return;
+    if (!timers.length) {
+      timers = tasks.map(function (task) { return setInterval(task.run, task.ms); });
+    }
+    if (!bound) {
+      document.addEventListener('visibilitychange', onVisibility);
+      bound = true;
+    }
+  }
+
+  function stop() {
+    clearTimers();
+    if (bound) {
+      document.removeEventListener('visibilitychange', onVisibility);
+      bound = false;
+    }
+  }
+
+  return { start: start, stop: stop };
+}

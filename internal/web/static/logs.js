@@ -2,54 +2,19 @@ import { fetchJSON, showToast } from './api.js';
 import { initCustomSelects } from './components.js';
 import { triggerDryRun, updateDryRunButtonState } from './dashboard.js';
 import { hydrateIcons, icon } from './icons.js';
+import { createPoller } from './poller.js';
 import { currentView } from './router.js';
-import { escapeHtml, formatLogTime } from './util.js';
+import { escapeHtml, formatLogTime, updateRefreshedAt } from './util.js';
 
 export let logsState = { limit: 200 };
-export let logsPollTimer = null;
-export let logsVisibilityBound = false;
 export let logsFetchGen = 0;
 
 
-export function stopLogsPolling() {
-  if (logsPollTimer) {
-    clearInterval(logsPollTimer);
-    logsPollTimer = null;
-  }
-  if (logsVisibilityBound) {
-    document.removeEventListener('visibilitychange', onLogsVisibility);
-    logsVisibilityBound = false;
-  }
-}
-
-export function onLogsVisibility() {
-  if (currentView !== 'logs') return;
-  if (document.visibilityState === 'visible') {
-    refreshLogs(false);
-    ensureLogsPolling();
-  } else if (logsPollTimer) {
-    clearInterval(logsPollTimer);
-    logsPollTimer = null;
-  }
-}
-
-export function ensureLogsPolling() {
-  if (currentView !== 'logs' || document.visibilityState !== 'visible') return;
-  if (!logsPollTimer) logsPollTimer = setInterval(function () { refreshLogs(false); }, 10000);
-  if (!logsVisibilityBound) {
-    document.addEventListener('visibilitychange', onLogsVisibility);
-    logsVisibilityBound = true;
-  }
-}
-
-export function updateLogsRefreshedAt() {
-  const el = document.getElementById('logs-last-updated');
-  if (!el) return;
-  const time = new Date().toLocaleTimeString(localeTag(), {
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
-  el.textContent = t('logs.lastUpdated', { time: time });
-}
+const logsPoller = createPoller('logs', [
+  { run: function () { refreshLogs(false); }, ms: 10000, onResume: true },
+]);
+export const stopLogsPolling = logsPoller.stop;
+export const ensureLogsPolling = logsPoller.start;
 
 export async function loadLogs() {
   const el = document.getElementById('view-logs');
@@ -63,10 +28,10 @@ export async function loadLogs() {
     if (fetchGen !== logsFetchGen) return;
     if (hadContent) {
       renderLogsFeed(el, data);
-      updateLogsRefreshedAt();
+      updateRefreshedAt('logs-last-updated', 'logs.lastUpdated');
     } else {
       renderLogs(el, data);
-      updateLogsRefreshedAt();
+      updateRefreshedAt('logs-last-updated', 'logs.lastUpdated');
     }
     ensureLogsPolling();
   } catch (err) {
@@ -92,7 +57,7 @@ export async function refreshLogs(manual) {
     const data = await fetchJSON('/api/logs?limit=' + logsState.limit);
     if (fetchGen !== logsFetchGen) return;
     renderLogsFeed(el, data);
-    updateLogsRefreshedAt();
+    updateRefreshedAt('logs-last-updated', 'logs.lastUpdated');
     updateDryRunButtonState();
   } catch (_) { /* ponytail: silent refresh is best-effort */ }
 

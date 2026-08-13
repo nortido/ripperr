@@ -273,4 +273,11 @@ export function timezoneOptions(timezones, selected) {
   return html;
 }
 
-
+export function updateRefreshedAt(id, key) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const time = new Date().toLocaleTimeString(localeTag(), {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  el.textContent = t(key, { time: time });
+}

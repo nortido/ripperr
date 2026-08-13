@@ -201,6 +201,10 @@
   color: var(--danger);
 }
 
+.hist-filter-option-icon-broken {
+  color: var(--warning);
+}
+
 .hist-filter-option-icon-ignored {
   color: var(--hue-amber);
 }

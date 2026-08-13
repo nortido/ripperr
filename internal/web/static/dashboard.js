@@ -2,9 +2,10 @@ import { fetchJSON, showToast } from './api.js';
 import { activeErrorPopover, activeSlotsPopover, bindErrorBadges, bindHistFilterSelect, bindMobileNameSearch, bindNameFilter, bindNextRunStatCard, bindPageSizeSelect, buildHistFilters, buildMobileNameSearchSlot, buildNameColumnHeader, buildPageSizeSelect, buildSegmentControl, closePopovers, initSegmentControls, openCustomSelect, openHistFilterSelect, openNameFilterWrap, paginationButtons, updateSegmentThumb } from './components.js';
 import { hydrateIcons, icon } from './icons.js';
 import { refreshLogs } from './logs.js';
+import { createPoller } from './poller.js';
 import { applyDashboardFilter, currentView } from './router.js';
 import { historyState } from './state.js';
-import { alertIncidentKey, dismissAlertKey, escapeHtml, formatDateTime, formatRunSlot, formatTableTime, formatThenSlot, linkCell, pageSizeQueryLimit, pruneDismissedAlerts, statusIcon, trackerBadgeHtml, visibleAlerts } from './util.js';
+import { alertIncidentKey, dismissAlertKey, escapeHtml, formatDateTime, formatRunSlot, formatTableTime, formatThenSlot, linkCell, pageSizeQueryLimit, pruneDismissedAlerts, statusIcon, trackerBadgeHtml, updateRefreshedAt, visibleAlerts } from './util.js';
 
 export const STOP_PENDING_MS = 90000;
 
@@ -12,9 +13,6 @@ export const STOP_PENDING_MS = 90000;
 export let stopPending = false;
 export let stopPendingTimer = null;
 
-export let dashboardPollTimer = null;
-export let dashboardDataRefreshTimer = null;
-export let dashboardVisibilityBound = false;
 export let dashboardStatusSlots = [];
 export let dashboardRunning = false;
 export let dashboardDryRun = false;
@@ -64,58 +62,12 @@ export function dashboardHasActiveInteraction() {
   return false;
 }
 
-export function stopDashboardPolling() {
-  if (dashboardPollTimer) {
-    clearInterval(dashboardPollTimer);
-    dashboardPollTimer = null;
-  }
-  if (dashboardDataRefreshTimer) {
-    clearInterval(dashboardDataRefreshTimer);
-    dashboardDataRefreshTimer = null;
-  }
-  if (dashboardVisibilityBound) {
-    document.removeEventListener('visibilitychange', onDashboardVisibility);
-    dashboardVisibilityBound = false;
-  }
-}
-
-export function onDashboardVisibility() {
-  if (currentView !== 'dashboard') return;
-  if (document.visibilityState === 'visible') {
-    pollDashboardStatus();
-    ensureDashboardPolling();
-  } else {
-    if (dashboardPollTimer) {
-      clearInterval(dashboardPollTimer);
-      dashboardPollTimer = null;
-    }
-    if (dashboardDataRefreshTimer) {
-      clearInterval(dashboardDataRefreshTimer);
-      dashboardDataRefreshTimer = null;
-    }
-  }
-}
-
-export function ensureDashboardPolling() {
-  if (currentView !== 'dashboard' || document.visibilityState !== 'visible') return;
-  if (!dashboardPollTimer) dashboardPollTimer = setInterval(pollDashboardStatus, 5000);
-  if (!dashboardDataRefreshTimer) {
-    dashboardDataRefreshTimer = setInterval(function () { refreshDashboard(false); }, 30000);
-  }
-  if (!dashboardVisibilityBound) {
-    document.addEventListener('visibilitychange', onDashboardVisibility);
-    dashboardVisibilityBound = true;
-  }
-}
-
-export function updateDashboardRefreshedAt() {
-  const el = document.getElementById('dash-last-updated');
-  if (!el) return;
-  const time = new Date().toLocaleTimeString(localeTag(), {
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
-  el.textContent = t('dash.lastUpdated', { time: time });
-}
+const dashboardPoller = createPoller('dashboard', [
+  { run: pollDashboardStatus, ms: 5000, onResume: true },
+  { run: function () { refreshDashboard(false); }, ms: 30000 },
+]);
+export const stopDashboardPolling = dashboardPoller.stop;
+export const ensureDashboardPolling = dashboardPoller.start;
 
 export function isUrlIgnored(urlHash) {
   return !!(urlHash && ignoreHashesCache && ignoreHashesCache.has(urlHash));
@@ -559,7 +511,7 @@ export async function loadDashboard() {
     if (fetchGen !== dashboardFetchGen) return;
     syncPlanForceLocal((data.history && data.history.items) || []);
     renderDashboard(el, data.status, data.history, data.stats);
-    updateDashboardRefreshedAt();
+    updateRefreshedAt('dash-last-updated', 'dash.lastUpdated');
     ensureDashboardPolling();
   } catch (err) {
     el.innerHTML = '<div class="alert alert-danger">' + escapeHtml(err.message) + '</div>';
@@ -585,7 +537,7 @@ export async function refreshDashboard(manual) {
     if (!manual && dashboardHasActiveInteraction()) return;
     syncPlanForceLocal((data.history && data.history.items) || []);
     renderDashboard(el, data.status, data.history, data.stats);
-    updateDashboardRefreshedAt();
+    updateRefreshedAt('dash-last-updated', 'dash.lastUpdated');
   } catch (_) { /* ponytail: silent refresh is best-effort */ }
 
   if (manual) {
