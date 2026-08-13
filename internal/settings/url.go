@@ -76,24 +76,22 @@ func NormalizeAppIntegrations(cfg *config.App) error {
 	if cfg == nil {
 		return nil
 	}
-	if cfg.Manager != nil && strings.TrimSpace(cfg.Manager.QbitTorrent.Host) != "" {
+	if strings.TrimSpace(cfg.Manager.QbitTorrent.Host) != "" {
 		norm, err := EnsureScheme(cfg.Manager.QbitTorrent.Host, "http")
 		if err != nil {
 			return fmt.Errorf("qbit.host: %w", err)
 		}
 		cfg.Manager.QbitTorrent.Host = norm
 	}
-	if cfg.Flaresolverr != nil && strings.TrimSpace(cfg.Flaresolverr.Host) != "" {
+	if strings.TrimSpace(cfg.Flaresolverr.Host) != "" {
 		norm, err := EnsureScheme(cfg.Flaresolverr.Host, "http")
 		if err != nil {
 			return fmt.Errorf("flaresolverr.url: %w", err)
 		}
 		cfg.Flaresolverr.Host = norm
 	}
-	if cfg.Runner != nil {
-		if err := ValidateDownloadProxy(cfg.Runner.DownloadProxy); err != nil {
-			return fmt.Errorf("proxy.download_proxy: %w", err)
-		}
+	if err := ValidateDownloadProxy(cfg.Runner.DownloadProxy); err != nil {
+		return fmt.Errorf("proxy.download_proxy: %w", err)
 	}
 	return nil
 }

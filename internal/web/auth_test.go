@@ -15,7 +15,7 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 	srv := newTestServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = &config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
 		return cfg
 	}
 
@@ -81,7 +81,7 @@ func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 	srv := newTestServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = &config.Web{Listen: ":0", Enabled: true, LanBypass: false, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: false, TrustedProxy: false}
 		return cfg
 	}
 
@@ -141,7 +141,7 @@ func TestAuthLanBypass(t *testing.T) {
 	srv := newTestServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = &config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
 		return cfg
 	}
 
@@ -169,7 +169,7 @@ func TestAuthOpenUntilConfigured(t *testing.T) {
 	srv := newTestServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = &config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
 		return cfg
 	}
 
@@ -202,7 +202,7 @@ func TestLoginPageServed(t *testing.T) {
 	srv := newTestServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = &config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
 		return cfg
 	}
 

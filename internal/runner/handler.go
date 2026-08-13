@@ -61,7 +61,7 @@ type IHandler interface {
 }
 
 type handler struct {
-	mx             *sync.RWMutex
+	mx             helper.KeyedMutex
 	pushMu         sync.Mutex
 	config         model.HandlerConfig
 	idx            map[int]chan *task
@@ -96,7 +96,6 @@ func (h *handler) Run(ctx context.Context) {
 		return
 	}
 	h.gen = h.state.Reset()
-	h.mx = &sync.RWMutex{}
 	h.initTrackerChannels()
 	for ttid := range h.idx {
 		go h.trackerWorker(ctx, ttid, cherr)
@@ -397,8 +396,11 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		updated bool
 		tc      client.IClient
 	)
-	h.mx.Lock()
-	defer h.mx.Unlock()
+	// lock is per tracker: entries of different trackers are processed in parallel,
+	// entries of the same tracker strictly one after another.
+	mu := h.mx.Mutex(ttid)
+	mu.Lock()
+	defer mu.Unlock()
 
 	if tc, err = h.trackerService.GetCachedClient(ctx, ttid); err != nil {
 		if errors.Is(err, context.Canceled) {

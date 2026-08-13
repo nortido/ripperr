@@ -193,15 +193,15 @@ func newTestServer(store *fakeStore) *Server {
 
 func testEffective() config.App {
 	return config.App{
-		Log:     &config.Log{Level: "info"},
-		Runner:  &config.Runner{StartHour: 7, ListRefreshPerDay: 2, MonthThresholdDays: 1, HalfYearThresholdDays: 7, YearThresholdDays: 30, WatchTags: []string{"watch"}},
-		Tracker: &config.Tracker{},
-		Manager: &config.Manager{QbitTorrent: struct {
+		Log:     config.Log{Level: "info"},
+		Runner:  config.Runner{StartHour: 7, ListRefreshPerDay: 2, MonthThresholdDays: 1, HalfYearThresholdDays: 7, YearThresholdDays: 30, WatchTags: []string{"watch"}},
+		Tracker: config.Tracker{},
+		Manager: config.Manager{QbitTorrent: struct {
 			Host     string `env:"QBIT_URL, default=localhost:8068"`
 			Username string `env:"QBIT_USER, default=admin"`
 			Password string `env:"QBIT_PASS, default=adminadmin"`
 		}{}},
-		Flaresolverr: &config.Flaresolverr{MaxTimeout: 300000},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
 	}
 }
 

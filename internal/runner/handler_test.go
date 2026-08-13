@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"trackerr/internal/helper"
 	"trackerr/internal/model"
 	proxyModel "trackerr/internal/model/proxy"
 	runnerModel "trackerr/internal/model/runner"
@@ -690,7 +690,7 @@ func TestWorkerUnknownStatusWhenDateMissing(t *testing.T) {
 		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
 		storage:        store,
 		trackerService: &pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
-		mx:             &sync.RWMutex{},
+		mx:             helper.KeyedMutex{},
 	}
 	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
 	if err := h.worker(context.Background(), 1, e, nil); err != nil {
@@ -725,7 +725,7 @@ func TestTrackerWorkerRecoversFromPanic(t *testing.T) {
 		storage:        store,
 		trackerService: &panicPageTracker{pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page}},
 		state:          state,
-		mx:             &sync.RWMutex{},
+		mx:             helper.KeyedMutex{},
 		gen:            gen,
 	}
 	h.initTrackerChannels()
@@ -777,7 +777,7 @@ func TestWorkerSkipsCheckLogOnContextCanceled(t *testing.T) {
 	h := &handler{
 		storage:        store,
 		trackerService: &canceledTracker{safeFakeTracker: safeFakeTracker{id: 1}},
-		mx:             &sync.RWMutex{},
+		mx:             helper.KeyedMutex{},
 	}
 	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
 	if err := h.worker(context.Background(), 1, e, nil); err != nil {
@@ -883,7 +883,7 @@ func TestWorkerUnchangedOnAlreadyAdded(t *testing.T) {
 		trackerService: &updatingPageTracker{
 			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
 		},
-		mx: &sync.RWMutex{},
+		mx: helper.KeyedMutex{},
 	}
 	e := &model.Entry{
 		URL:       "https://example.com/t/1",
@@ -968,7 +968,7 @@ func runForceCheckWorkerTest(t *testing.T, forceCheck bool) (status string, subm
 			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
 			date:        pageDate,
 		},
-		mx: &sync.RWMutex{},
+		mx: helper.KeyedMutex{},
 	}
 	e := &model.Entry{
 		URL:       url,
@@ -1096,7 +1096,7 @@ func TestWorkerForceCheckPreservedOnSubmitError(t *testing.T) {
 			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
 			date:        pageDate,
 		},
-		mx: &sync.RWMutex{},
+		mx: helper.KeyedMutex{},
 	}
 	e := &model.Entry{
 		URL:       url,
@@ -1160,5 +1160,60 @@ func TestPushDryRunLimitsAndSkipsWrites(t *testing.T) {
 	case <-h.idx[1]:
 		t.Fatal("expected no more than 30 entries in dry run")
 	default:
+	}
+}
+
+// barrierTracker holds every Response until two of them are in flight at once.
+// With a per-tracker lock the two workers meet at the barrier; with one global
+// lock the second never gets in and the test times out.
+type barrierTracker struct {
+	safeFakeTracker
+	arrive  chan struct{}
+	proceed chan struct{}
+}
+
+func (b *barrierTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	return mockPageClient{}, nil
+}
+
+func (b *barrierTracker) Response(context.Context, int, string, bool) (*bytes.Buffer, error) {
+	b.arrive <- struct{}{}
+	<-b.proceed
+	return bytes.NewBufferString(strings.Repeat("x", 60)), nil
+}
+
+func TestWorkerLockIsPerTracker(t *testing.T) {
+	tr := &barrierTracker{
+		safeFakeTracker: safeFakeTracker{id: 1},
+		arrive:          make(chan struct{}, 2),
+		proceed:         make(chan struct{}),
+	}
+	h := &handler{
+		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:        &fakeStorage{},
+		trackerService: tr,
+	}
+
+	done := make(chan error, 2)
+	for _, ttid := range []int{1, 2} {
+		go func(id int) {
+			e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
+			done <- h.worker(context.Background(), id, e, nil)
+		}(ttid)
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-tr.arrive:
+		case <-time.After(5 * time.Second):
+			t.Fatal("only one worker reached the tracker: the lock is not per tracker")
+		}
+	}
+	close(tr.proceed)
+
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
 	}
 }

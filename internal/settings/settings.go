@@ -98,9 +98,6 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 }
 
 func applySchedule(cfg *config.App, o scheduleOverlay) {
-	if cfg.Runner == nil {
-		return
-	}
 	if o.StartHour != nil {
 		cfg.Runner.StartHour = *o.StartHour
 	}
@@ -130,23 +127,18 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	if o.Timezone != nil {
 		cfg.Runner.Timezone = *o.Timezone
 	}
-	if cfg.Manager != nil {
-		if o.DeleteEnabled != nil {
-			cfg.Manager.DeleteEnabled = *o.DeleteEnabled
-		}
-		if o.DeleteFilesEnabled != nil {
-			cfg.Manager.DeleteFilesEnabled = *o.DeleteFilesEnabled
-		}
-		if o.DeleteFilesCategories != nil {
-			cfg.Manager.DeleteFilesCategories = *o.DeleteFilesCategories
-		}
+	if o.DeleteEnabled != nil {
+		cfg.Manager.DeleteEnabled = *o.DeleteEnabled
+	}
+	if o.DeleteFilesEnabled != nil {
+		cfg.Manager.DeleteFilesEnabled = *o.DeleteFilesEnabled
+	}
+	if o.DeleteFilesCategories != nil {
+		cfg.Manager.DeleteFilesCategories = *o.DeleteFilesCategories
 	}
 }
 
 func applyTrackers(cfg *config.App, m map[string]trackerItemOverlay) {
-	if cfg.Tracker == nil {
-		return
-	}
 	applyOne := func(key string, f *trackerFields) {
 		if o, ok := m[key]; ok {
 			overlayTracker(o, f)
@@ -198,9 +190,6 @@ func applyTrackers(cfg *config.App, m map[string]trackerItemOverlay) {
 
 // ApplyTrackerKey overlays one tracker key onto cfg (partial patch; unset fields keep current values).
 func ApplyTrackerKey(cfg *config.App, key string, o trackerItemOverlay) {
-	if cfg.Tracker == nil {
-		return
-	}
 	applyOne := func(k string, f *trackerFields) {
 		if k == key {
 			overlayTracker(o, f)
@@ -301,26 +290,22 @@ func overlayTracker(o trackerItemOverlay, t *trackerFields) {
 }
 
 func applyIntegrations(cfg *config.App, o integrationsOverlay) {
-	if cfg.Manager != nil {
-		if o.Qbit.Host != nil {
-			cfg.Manager.QbitTorrent.Host = *o.Qbit.Host
-		}
-		if o.Qbit.Username != nil {
-			cfg.Manager.QbitTorrent.Username = *o.Qbit.Username
-		}
-		if o.Qbit.Password != nil {
-			cfg.Manager.QbitTorrent.Password = *o.Qbit.Password
-		}
+	if o.Qbit.Host != nil {
+		cfg.Manager.QbitTorrent.Host = *o.Qbit.Host
 	}
-	if cfg.Flaresolverr != nil {
-		if o.Flaresolverr.URL != nil {
-			cfg.Flaresolverr.Host = *o.Flaresolverr.URL
-		}
-		if o.Flaresolverr.TimeoutMS != nil {
-			cfg.Flaresolverr.MaxTimeout = *o.Flaresolverr.TimeoutMS
-		}
+	if o.Qbit.Username != nil {
+		cfg.Manager.QbitTorrent.Username = *o.Qbit.Username
 	}
-	if cfg.Runner != nil && o.Proxy.DownloadProxy != nil {
+	if o.Qbit.Password != nil {
+		cfg.Manager.QbitTorrent.Password = *o.Qbit.Password
+	}
+	if o.Flaresolverr.URL != nil {
+		cfg.Flaresolverr.Host = *o.Flaresolverr.URL
+	}
+	if o.Flaresolverr.TimeoutMS != nil {
+		cfg.Flaresolverr.MaxTimeout = *o.Flaresolverr.TimeoutMS
+	}
+	if o.Proxy.DownloadProxy != nil {
 		cfg.Runner.DownloadProxy = *o.Proxy.DownloadProxy
 	}
 }
@@ -351,11 +336,9 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		WatchTags:            cfg.Runner.WatchTags,
 		Timezone:             cfg.Runner.Timezone,
 	}
-	if cfg.Manager != nil {
-		s.DeleteEnabled = cfg.Manager.DeleteEnabled
-		s.DeleteFilesEnabled = cfg.Manager.DeleteFilesEnabled
-		s.DeleteFilesCategories = cfg.Manager.DeleteFilesCategories
-	}
+	s.DeleteEnabled = cfg.Manager.DeleteEnabled
+	s.DeleteFilesEnabled = cfg.Manager.DeleteFilesEnabled
+	s.DeleteFilesCategories = cfg.Manager.DeleteFilesCategories
 	if s.MonitoredCategories == nil {
 		s.MonitoredCategories = []string{}
 	}

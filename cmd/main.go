@@ -34,9 +34,7 @@ func main() {
 		logger.Error(err.Error())
 		return
 	}
-	if baseCfg.Runner != nil {
-		baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
-	}
+	baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
 	logger.SetLevel(baseCfg.Log.Level)
 
 	dbConn, db, err := connectDB(ctx, baseCfg)

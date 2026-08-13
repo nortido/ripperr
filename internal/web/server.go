@@ -134,7 +134,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scheduleLoc(cfg config.App) *time.Location {
-	if cfg.Runner == nil || cfg.Runner.Timezone == "" {
+	if cfg.Runner.Timezone == "" {
 		return nil
 	}
 	loc, err := time.LoadLocation(cfg.Runner.Timezone)

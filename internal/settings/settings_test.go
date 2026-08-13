@@ -27,15 +27,15 @@ func (f *fakeSettingsDB) SaveSetting(_ context.Context, key string, value json.R
 
 func TestApplyOverridesPartial(t *testing.T) {
 	cfg := config.App{
-		Log:     &config.Log{Level: "info"},
-		Runner:  &config.Runner{StartHour: 7, ListRefreshPerDay: 2, MonthThresholdDays: 1, HalfYearThresholdDays: 7, YearThresholdDays: 30, DownloadProxy: "http://env-proxy"},
-		Tracker: &config.Tracker{},
-		Manager: &config.Manager{QbitTorrent: struct {
+		Log:     config.Log{Level: "info"},
+		Runner:  config.Runner{StartHour: 7, ListRefreshPerDay: 2, MonthThresholdDays: 1, HalfYearThresholdDays: 7, YearThresholdDays: 30, DownloadProxy: "http://env-proxy"},
+		Tracker: config.Tracker{},
+		Manager: config.Manager{QbitTorrent: struct {
 			Host     string `env:"QBIT_URL, default=localhost:8068"`
 			Username string `env:"QBIT_USER, default=admin"`
 			Password string `env:"QBIT_PASS, default=adminadmin"`
 		}{Host: "qbit-env", Username: "u", Password: "p"}},
-		Flaresolverr: &config.Flaresolverr{Host: "flare-env", MaxTimeout: 300000},
+		Flaresolverr: config.Flaresolverr{Host: "flare-env", MaxTimeout: 300000},
 	}
 	cfg.Tracker.Rutracker.Domain = "rutracker.org"
 	cfg.Tracker.Rutracker.Enabled = true
@@ -77,11 +77,11 @@ func TestApplyOverridesPartial(t *testing.T) {
 
 func TestApplyOverridesCategories(t *testing.T) {
 	cfg := config.App{
-		Log:          &config.Log{Level: "info"},
-		Runner:       &config.Runner{StartHour: 7, AllowedCategories: []string{"env-cat"}},
-		Tracker:      &config.Tracker{},
-		Manager:      &config.Manager{DeleteFilesCategories: []string{"env-del"}},
-		Flaresolverr: &config.Flaresolverr{MaxTimeout: 300000},
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7, AllowedCategories: []string{"env-cat"}},
+		Tracker:      config.Tracker{},
+		Manager:      config.Manager{DeleteFilesCategories: []string{"env-del"}},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
 	}
 	db := &fakeSettingsDB{data: map[string]json.RawMessage{
 		"schedule": json.RawMessage(`{"monitored_categories":["movies"],"delete_files_categories":[]}`),
@@ -99,11 +99,11 @@ func TestApplyOverridesCategories(t *testing.T) {
 
 func TestApplyOverridesDeleteFlags(t *testing.T) {
 	cfg := config.App{
-		Log:          &config.Log{Level: "info"},
-		Runner:       &config.Runner{StartHour: 7},
-		Tracker:      &config.Tracker{},
-		Manager:      &config.Manager{DeleteEnabled: true, DeleteFilesEnabled: true},
-		Flaresolverr: &config.Flaresolverr{MaxTimeout: 300000},
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Tracker:      config.Tracker{},
+		Manager:      config.Manager{DeleteEnabled: true, DeleteFilesEnabled: true},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
 	}
 	db := &fakeSettingsDB{data: map[string]json.RawMessage{
 		"schedule": json.RawMessage(`{"delete_enabled":false,"delete_files_enabled":false}`),
@@ -204,11 +204,11 @@ func TestValidateTrackerMirrors(t *testing.T) {
 
 func TestApplyOverridesWatchTagsTimezone(t *testing.T) {
 	cfg := config.App{
-		Log:          &config.Log{Level: "info"},
-		Runner:       &config.Runner{StartHour: 7, WatchTags: []string{"watch"}},
-		Tracker:      &config.Tracker{},
-		Manager:      &config.Manager{},
-		Flaresolverr: &config.Flaresolverr{MaxTimeout: 300000},
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7, WatchTags: []string{"watch"}},
+		Tracker:      config.Tracker{},
+		Manager:      config.Manager{},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
 	}
 	db := &fakeSettingsDB{data: map[string]json.RawMessage{
 		"schedule": json.RawMessage(`{"watch_tags":["custom","track"],"timezone":"Europe/Moscow"}`),
@@ -226,11 +226,11 @@ func TestApplyOverridesWatchTagsTimezone(t *testing.T) {
 
 func TestApplyOverridesLegacyWatchTag(t *testing.T) {
 	cfg := config.App{
-		Log:          &config.Log{Level: "info"},
-		Runner:       &config.Runner{StartHour: 7, WatchTags: []string{"watch"}},
-		Tracker:      &config.Tracker{},
-		Manager:      &config.Manager{},
-		Flaresolverr: &config.Flaresolverr{MaxTimeout: 300000},
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7, WatchTags: []string{"watch"}},
+		Tracker:      config.Tracker{},
+		Manager:      config.Manager{},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
 	}
 	db := &fakeSettingsDB{data: map[string]json.RawMessage{
 		"schedule": json.RawMessage(`{"watch_tag":"legacy"}`),

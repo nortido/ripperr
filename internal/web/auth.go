@@ -145,13 +145,9 @@ func clearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
-// webConfig guards against a nil Web section: it is a pointer on config.App, and
-// a nil deref here would take down every API request through the middleware.
+// webConfig returns the Web section from the effective config; used by auth middleware.
 func (s *Server) webConfig() config.Web {
-	if cfg := s.effective(); cfg.Web != nil {
-		return *cfg.Web
-	}
-	return config.Web{LanBypass: true}
+	return s.effective().Web
 }
 
 func (s *Server) clientIP(r *http.Request) net.IP {
