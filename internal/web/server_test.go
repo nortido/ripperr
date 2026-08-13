@@ -60,7 +60,7 @@ func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry
 	return out
 }
 
-func (f *fakeStore) ListCheckLog(_ context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
+func (f *fakeStore) ListCheckLog(_ context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
 	ignoreSet := make(map[string]struct{}, len(f.ignore))
 	for _, e := range f.ignore {
 		ignoreSet[e.URLHash] = struct{}{}
@@ -68,7 +68,14 @@ func (f *fakeStore) ListCheckLog(_ context.Context, limit, offset int, statusFil
 	var filtered []storage.CheckLogEntry
 	nameNeedle := strings.ToLower(nameFilter)
 	for _, e := range dedupeCheckLogByName(f.checkLog) {
-		if statusFilter != "" && e.Status != statusFilter {
+		if statusFilter == "broken" {
+			if brokenStreak < 1 {
+				brokenStreak = 1
+			}
+			if e.ErrorStreak < brokenStreak {
+				continue
+			}
+		} else if statusFilter != "" && e.Status != statusFilter {
 			continue
 		}
 		if nameFilter != "" && !strings.Contains(strings.ToLower(e.ItemName), nameNeedle) {
@@ -1115,9 +1122,9 @@ type capturingStore struct {
 	lastLimit int
 }
 
-func (c *capturingStore) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
+func (c *capturingStore) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
 	c.lastLimit = limit
-	return c.fakeStore.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy, nameFilter)
+	return c.fakeStore.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy, nameFilter, brokenStreak)
 }
 
 func TestGetHistoryLimitCap(t *testing.T) {

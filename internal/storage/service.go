@@ -23,7 +23,7 @@ type postgres interface {
 	AddItem(ctx context.Context, item *storage.Item) (err error)
 	UpdateItem(ctx context.Context, item *storage.Item) (err error)
 	AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -45,7 +45,7 @@ type IClient interface {
 	GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error)
 	SaveItem(ctx context.Context, item *runner.HistoryItem) (err error)
 	AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -156,8 +156,8 @@ func (s *service) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry)
 	return s.pg.AddCheckLog(ctx, entry)
 }
 
-func (s *service) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
-	return s.pg.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy, nameFilter)
+func (s *service) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
+	return s.pg.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy, nameFilter, brokenStreak)
 }
 
 func (s *service) ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error) {

@@ -91,6 +91,7 @@ type Runner struct {
 	MonthThresholdDays    int      `env:"RUNNER_FIRST_MONTH_UPDATE_THRESHOLD, default=1"`
 	HalfYearThresholdDays int      `env:"RUNNER_HALF_YEAR_UPDATE_THRESHOLD, default=7"`
 	YearThresholdDays     int      `env:"RUNNER_YEAR_UPDATE_THRESHOLD, default=30"`
+	ErrorStreakThreshold  int      `env:"RUNNER_ERROR_STREAK_THRESHOLD, default=3"`
 	ListRefreshPerDay     int      `env:"RUNNER_LIST_REFRESH_PER_DAY, default=2"`
 	StartHour             int      `env:"RUNNER_START_HOUR, default=7"`
 	HttpTimeout           int64    `env:"RUNNER_HTTP_TIMEOUT, default=30"`

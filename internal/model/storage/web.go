@@ -11,6 +11,7 @@ type CheckLogEntry struct {
 	TrackerTypeID int
 	Status        string
 	Error         string
+	ErrorStreak   int
 	RecheckAt     *time.Time
 	ForceCheck    bool
 }

@@ -29,7 +29,7 @@ type IClient interface {
 	AddItem(ctx context.Context, item *storage.Item) (err error)
 	UpdateItem(ctx context.Context, item *storage.Item) (err error)
 	AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS trackerr.check_log (
     error text NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS check_log_checked_at_idx ON trackerr.check_log (checked_at DESC);
+
+ALTER TABLE trackerr.check_log ADD COLUMN IF NOT EXISTS error_streak int NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS trackerr.ignore (
     url_hash text PRIMARY KEY,
@@ -182,22 +184,23 @@ func (c *client) UpdateItem(ctx context.Context, item *storage.Item) (err error)
 
 func (c *client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error {
 	_, err := c.db.Exec(ctx,
-		`INSERT INTO trackerr.check_log (url_hash, item_name, item_url, tracker_type_id, status, error)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO trackerr.check_log (url_hash, item_name, item_url, tracker_type_id, status, error, error_streak)
+		 VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $5 = 'error' THEN 1 ELSE 0 END)
 		 ON CONFLICT (url_hash) DO UPDATE SET
 		     checked_at = NOW(),
 		     item_name = EXCLUDED.item_name,
 		     item_url = EXCLUDED.item_url,
 		     tracker_type_id = EXCLUDED.tracker_type_id,
 		     status = EXCLUDED.status,
-		     error = EXCLUDED.error`,
+		     error = EXCLUDED.error,
+		     error_streak = CASE WHEN EXCLUDED.status = 'error' THEN trackerr.check_log.error_streak + 1 ELSE 0 END`,
 		entry.URLHash, entry.ItemName, entry.ItemURL, entry.TrackerTypeID, entry.Status, entry.Error)
 	return err
 }
 
-func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error) {
+func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
 	var total int
-	from := `(SELECT DISTINCT ON (LOWER(TRIM(item_name))) id, checked_at, url_hash, item_name, item_url, tracker_type_id, status, error
+	from := `(SELECT DISTINCT ON (LOWER(TRIM(item_name))) id, checked_at, url_hash, item_name, item_url, tracker_type_id, status, error, error_streak
 		FROM trackerr.check_log
 		ORDER BY LOWER(TRIM(item_name)), checked_at DESC, id DESC) c`
 	join := " LEFT JOIN trackerr.history h ON h.url_hash = c.url_hash"
@@ -205,13 +208,20 @@ func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilt
 		join += " INNER JOIN trackerr.ignore i ON i.url_hash = c.url_hash"
 	}
 	countQ := "SELECT COUNT(*) FROM " + from + join
-	listQ := `SELECT c.id, c.checked_at, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error,
+	listQ := `SELECT c.id, c.checked_at, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
 	          h.recheck_at, COALESCE(h.force_check, false)
 	          FROM ` + from + join
 	args := []any{}
 	n := 1
 	var where []string
-	if statusFilter != "" {
+	if statusFilter == "broken" {
+		if brokenStreak < 1 {
+			brokenStreak = 1
+		}
+		where = append(where, "c.error_streak >= $"+itoa(n))
+		n++
+		args = append(args, brokenStreak)
+	} else if statusFilter != "" {
 		where = append(where, "c.status = $"+itoa(n))
 		n++
 		args = append(args, statusFilter)
@@ -243,7 +253,7 @@ func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilt
 	var items []storage.CheckLogEntry
 	for rows.Next() {
 		var e storage.CheckLogEntry
-		if err = rows.Scan(&e.ID, &e.CheckedAt, &e.URLHash, &e.ItemName, &e.ItemURL, &e.TrackerTypeID, &e.Status, &e.Error, &e.RecheckAt, &e.ForceCheck); err != nil {
+		if err = rows.Scan(&e.ID, &e.CheckedAt, &e.URLHash, &e.ItemName, &e.ItemURL, &e.TrackerTypeID, &e.Status, &e.Error, &e.ErrorStreak, &e.RecheckAt, &e.ForceCheck); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, e)

@@ -1224,7 +1224,7 @@ function linkCell(name, url) {
   return '<span class="release-link"' + titleAttr + '>' + label + '</span>';
 }
 
-function statusIcon(status, error) {
+function statusIcon(status, error, streak) {
   let cls = 'status-icon';
   let iconName = 'help';
   let label = status || t('common.emDash');
@@ -1250,9 +1250,13 @@ function statusIcon(status, error) {
   const dataErr = status === 'error' && error
     ? ' data-error="' + err + '" class="' + cls + ' status-error-badge"'
     : ' class="' + cls + '"';
+  const badge = streak > 1
+    ? '<span class="streak-badge" title="' + escapeHtml(t('dash.streakTitle').replace('{n}', String(streak))) +
+      '">' + escapeHtml(String(streak)) + '</span>'
+    : '';
   return (
     '<span' + dataErr + ' title="' + title + '" aria-label="' + title + '">' +
-    icon(iconName) + '</span>'
+    icon(iconName) + '</span>' + badge
   );
 }
 
@@ -1626,6 +1630,7 @@ function getHistFilterOptions() {
     { v: 'unchanged', icon: 'minus', label: t('dash.filter.unchanged'), activeClass: 'active-muted' },
     { v: 'unknown', icon: 'help', label: t('dash.filter.unknown'), activeClass: 'active-warning' },
     { v: 'error', icon: 'xCircle', label: t('dash.filter.error'), activeClass: 'active-danger' },
+    { v: 'broken', icon: 'warning', label: t('dash.filter.broken'), activeClass: 'active-warning' },
     { v: 'ignored', icon: 'eyeOff', label: t('dash.inIgnore'), activeClass: 'active-ignored', isIgnored: true },
   ];
 }
@@ -2554,7 +2559,10 @@ function buildReleaseRows(histItems) {
       ? 'btn btn-icon-only btn-unignore btn-ignore-item btn-action-ignore'
       : 'btn btn-icon-only btn-ignore btn-ignore-item btn-action-ignore';
     const btnTitle = ignored ? t('dash.fromIgnore') : t('dash.toIgnore');
-    const rowCls = forced ? ' class="plan-row-force"' : '';
+    let rowClsValue = '';
+    if (forced) rowClsValue = 'plan-row-force';
+    if (item.broken) rowClsValue = rowClsValue ? rowClsValue + ' release-row-broken' : 'release-row-broken';
+    const rowCls = rowClsValue ? ' class="' + rowClsValue + '"' : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
     releaseRows +=
       '<tr' + rowCls + ' data-release-hash="' + escapeHtml(urlHash) + '">' +
@@ -2562,7 +2570,7 @@ function buildReleaseRows(histItems) {
       '<div class="release-title-wrap">' + linkCell(item.name, item.url) + '</div>' +
       '<div class="release-foot">' + trackerBadge + '</div></td>' +
       '<td class="col-tracker">' + trackerBadge + '</td>' +
-      '<td class="col-status">' + statusIcon(item.status, item.error) + '</td>' +
+      '<td class="col-status">' + statusIcon(item.status, item.error, item.error_streak) + '</td>' +
       '<td class="col-time" title="' + escapeHtml(timeFull) + '">' + escapeHtml(timeShort) + '</td>' +
       '<td class="plan-recheck-cell" data-recheck-short="' + escapeHtml(recheckShort) +
       '" data-recheck-full="' + escapeHtml(recheckFull) + '">' +
@@ -3039,6 +3047,10 @@ function renderSchedule(el, sch, suggestions, qbitDown, timezones) {
     '<label class="form-label" for="threshold_year">' + escapeHtml(t('settings.thresholdYear')) + '</label>' +
     '<input type="number" class="input" id="threshold_year" min="1" value="' +
     escapeHtml(sch.threshold_year) + '"></div>' +
+    '<div class="form-group">' +
+    '<label class="form-label" for="error_streak_threshold">' + escapeHtml(t('settings.errorStreakThreshold')) + '</label>' +
+    '<input type="number" class="input" id="error_streak_threshold" min="1" value="' +
+    escapeHtml(sch.error_streak_threshold || 3) + '"></div>' +
     '</div>' +
     '<hr class="form-divider">' +
     '<div class="form-group">' +
@@ -3136,6 +3148,7 @@ function renderSchedule(el, sch, suggestions, qbitDown, timezones) {
       threshold_month: parseInt(document.getElementById('threshold_month').value, 10),
       threshold_half_year: parseInt(document.getElementById('threshold_half_year').value, 10),
       threshold_year: parseInt(document.getElementById('threshold_year').value, 10),
+      error_streak_threshold: parseInt(document.getElementById('error_streak_threshold').value, 10),
       delete_enabled: document.getElementById('delete_enabled').checked,
       delete_files_enabled: document.getElementById('delete_files_enabled').checked,
       monitored_categories: monitoredInput.getValues(),

@@ -17,6 +17,7 @@ type Schedule struct {
 	ThresholdMonth        int      `json:"threshold_month"`
 	ThresholdHalfYear     int      `json:"threshold_half_year"`
 	ThresholdYear         int      `json:"threshold_year"`
+	ErrorStreakThreshold  int      `json:"error_streak_threshold"`
 	MonitoredCategories   []string `json:"monitored_categories"`
 	DeleteFilesCategories []string `json:"delete_files_categories"`
 }
@@ -44,6 +45,9 @@ func ValidateSchedule(s *Schedule) error {
 	}
 	if s.ThresholdMonth < 1 || s.ThresholdHalfYear < 1 || s.ThresholdYear < 1 {
 		return fmt.Errorf("thresholds must be >= 1")
+	}
+	if s.ErrorStreakThreshold != 0 && s.ErrorStreakThreshold < 1 {
+		return fmt.Errorf("error_streak_threshold must be >= 1")
 	}
 	s.MonitoredCategories = normalizeStringList(s.MonitoredCategories)
 	s.DeleteFilesCategories = normalizeStringList(s.DeleteFilesCategories)
@@ -108,12 +112,21 @@ func ValidateSchedulePatch(o scheduleOverlay) error {
 	if o.ThresholdYear == nil {
 		return fmt.Errorf("threshold_year is required")
 	}
+	// optional: absent in documents saved before the field existed
+	errorStreakThreshold := 3
+	if o.ErrorStreakThreshold != nil {
+		if *o.ErrorStreakThreshold < 1 {
+			return fmt.Errorf("error_streak_threshold must be >= 1")
+		}
+		errorStreakThreshold = *o.ErrorStreakThreshold
+	}
 	s := Schedule{
-		StartHour:         *o.StartHour,
-		ListRefreshPerDay: *o.ListRefreshPerDay,
-		ThresholdMonth:    *o.ThresholdMonth,
-		ThresholdHalfYear: *o.ThresholdHalfYear,
-		ThresholdYear:     *o.ThresholdYear,
+		StartHour:            *o.StartHour,
+		ListRefreshPerDay:    *o.ListRefreshPerDay,
+		ThresholdMonth:       *o.ThresholdMonth,
+		ThresholdHalfYear:    *o.ThresholdHalfYear,
+		ThresholdYear:        *o.ThresholdYear,
+		ErrorStreakThreshold: errorStreakThreshold,
 	}
 	if o.MonitoredCategories != nil {
 		s.MonitoredCategories = *o.MonitoredCategories

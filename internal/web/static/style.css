@@ -1706,8 +1706,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 
   html:not(.mobile-layout) .table-dash-releases .col-status {
-    width: 56px;
-    max-width: 56px;
+    width: 76px;
+    max-width: 76px;
     padding-left: 8px;
     padding-right: 8px;
   }
@@ -1793,8 +1793,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 
   .table-dash-releases .col-status {
-    width: 72px;
-    max-width: 72px;
+    width: 92px;
+    max-width: 92px;
   }
 }
 
@@ -2034,8 +2034,8 @@ a.release-link:hover {
 }
 
 .table-dash-releases .col-status {
-  width: 64px;
-  max-width: 64px;
+  width: 84px;
+  max-width: 84px;
   text-align: center;
 }
 
@@ -2069,8 +2069,8 @@ td.plan-recheck-cell {
 
 @media (min-width: 1200px) {
   .table-dash-releases th.col-status {
-    width: 80px;
-    max-width: 80px;
+    width: 100px;
+    max-width: 100px;
     white-space: normal;
     overflow: hidden;
     text-overflow: clip;
@@ -2104,8 +2104,8 @@ td.plan-recheck-cell {
   }
 
   .table-dash-releases .col-status {
-    width: 80px;
-    max-width: 80px;
+    width: 100px;
+    max-width: 100px;
   }
 
   .table-dash-releases .col-time {
@@ -2385,6 +2385,27 @@ td.plan-recheck-cell {
   background: var(--danger-bg);
   color: var(--danger);
   cursor: pointer;
+}
+
+.streak-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--warning);
+  background: var(--warning-bg);
+  vertical-align: middle;
+}
+
+.table-dash-releases tr.release-row-broken .col-name {
+  box-shadow: inset 2px 0 0 var(--warning);
 }
 
 .dash-alerts {
@@ -3466,8 +3487,8 @@ html.mobile-layout .table-dash-releases .plan-recheck-cell {
 
 html.mobile-layout .table-dash-releases .col-status {
   grid-area: status;
-  width: 72px;
-  max-width: 72px;
+  width: 92px;
+  max-width: 92px;
   padding: 0;
   height: auto;
   border: none;

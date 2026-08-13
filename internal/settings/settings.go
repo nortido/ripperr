@@ -20,6 +20,7 @@ type scheduleOverlay struct {
 	ThresholdMonth        *int      `json:"threshold_month"`
 	ThresholdHalfYear     *int      `json:"threshold_half_year"`
 	ThresholdYear         *int      `json:"threshold_year"`
+	ErrorStreakThreshold  *int      `json:"error_streak_threshold"`
 	DeleteEnabled         *bool     `json:"delete_enabled"`
 	DeleteFilesEnabled    *bool     `json:"delete_files_enabled"`
 	MonitoredCategories   *[]string `json:"monitored_categories"`
@@ -114,6 +115,9 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	}
 	if o.ThresholdYear != nil {
 		cfg.Runner.YearThresholdDays = *o.ThresholdYear
+	}
+	if o.ErrorStreakThreshold != nil {
+		cfg.Runner.ErrorStreakThreshold = *o.ErrorStreakThreshold
 	}
 	if o.MonitoredCategories != nil {
 		cfg.Runner.AllowedCategories = *o.MonitoredCategories
@@ -329,6 +333,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		ThresholdMonth        int      `json:"threshold_month"`
 		ThresholdHalfYear     int      `json:"threshold_half_year"`
 		ThresholdYear         int      `json:"threshold_year"`
+		ErrorStreakThreshold  int      `json:"error_streak_threshold"`
 		DeleteEnabled         bool     `json:"delete_enabled"`
 		DeleteFilesEnabled    bool     `json:"delete_files_enabled"`
 		MonitoredCategories   []string `json:"monitored_categories"`
@@ -336,14 +341,15 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		WatchTags             []string `json:"watch_tags"`
 		Timezone              string   `json:"timezone"`
 	}{
-		StartHour:           cfg.Runner.StartHour,
-		ListRefreshPerDay:   cfg.Runner.ListRefreshPerDay,
-		ThresholdMonth:      cfg.Runner.MonthThresholdDays,
-		ThresholdHalfYear:   cfg.Runner.HalfYearThresholdDays,
-		ThresholdYear:       cfg.Runner.YearThresholdDays,
-		MonitoredCategories: cfg.Runner.AllowedCategories,
-		WatchTags:           cfg.Runner.WatchTags,
-		Timezone:            cfg.Runner.Timezone,
+		StartHour:            cfg.Runner.StartHour,
+		ListRefreshPerDay:    cfg.Runner.ListRefreshPerDay,
+		ThresholdMonth:       cfg.Runner.MonthThresholdDays,
+		ThresholdHalfYear:    cfg.Runner.HalfYearThresholdDays,
+		ThresholdYear:        cfg.Runner.YearThresholdDays,
+		ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
+		MonitoredCategories:  cfg.Runner.AllowedCategories,
+		WatchTags:            cfg.Runner.WatchTags,
+		Timezone:             cfg.Runner.Timezone,
 	}
 	if cfg.Manager != nil {
 		s.DeleteEnabled = cfg.Manager.DeleteEnabled
@@ -520,6 +526,9 @@ func mergeScheduleOverlay(dst, src scheduleOverlay) scheduleOverlay {
 	}
 	if src.ThresholdYear != nil {
 		dst.ThresholdYear = src.ThresholdYear
+	}
+	if src.ErrorStreakThreshold != nil {
+		dst.ErrorStreakThreshold = src.ErrorStreakThreshold
 	}
 	if src.MonitoredCategories != nil {
 		dst.MonitoredCategories = src.MonitoredCategories

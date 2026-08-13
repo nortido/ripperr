@@ -31,7 +31,7 @@ var staticFS embed.FS
 
 type store interface {
 	Ping(ctx context.Context) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
@@ -310,7 +310,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if len(nameFilter) > 200 {
 		nameFilter = nameFilter[:200]
 	}
-	items, total, err := s.db.ListCheckLog(r.Context(), limit, offset, status, ignoredOnly, sortBy, nameFilter)
+	brokenStreak := s.effective().Runner.ErrorStreakThreshold
+	items, total, err := s.db.ListCheckLog(r.Context(), limit, offset, status, ignoredOnly, sortBy, nameFilter, brokenStreak)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -331,6 +332,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			"tracker_name": trackerName(e.TrackerTypeID),
 			"status":       e.Status,
 			"error":        e.Error,
+			"error_streak": e.ErrorStreak,
+			// the threshold lives in the schedule settings, so the flag is
+			// resolved here rather than re-derived by every client
+			"broken": brokenStreak >= 1 && e.ErrorStreak >= brokenStreak,
 			"recheck_at":   recheckAt,
 			"force_check":  e.ForceCheck,
 		}
