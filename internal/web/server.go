@@ -30,6 +30,7 @@ import (
 var staticFS embed.FS
 
 type store interface {
+	Ping(ctx context.Context) error
 	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string) ([]storage.CheckLogEntry, int, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
@@ -65,6 +66,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 		panic("static: " + err.Error())
 	}
 	mux.Handle("/", staticHandler)
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/timezones", s.handleGetTimezones)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
@@ -72,6 +74,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/plan/{hash}/force", withMaxBody(s.handlePlanForce))
 	mux.HandleFunc("POST /api/plan/force-all", withMaxBody(s.handlePlanForceAll))
+	mux.HandleFunc("POST /api/history/{hash}/redownload", withMaxBody(s.handleRedownload))
 	mux.HandleFunc("GET /api/categories", s.handleGetCategories)
 	mux.HandleFunc("GET /api/schedule", s.handleGetSchedule)
 	mux.HandleFunc("PUT /api/schedule", withMaxBody(s.handlePutSchedule))
@@ -113,6 +116,17 @@ func withMaxBody(h http.HandlerFunc) http.HandlerFunc {
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 		h(w, r)
 	}
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	err := s.db.Ping(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "error", "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) scheduleLoc(cfg config.App) *time.Location {
@@ -350,6 +364,53 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"updated": n})
+}
+
+func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
+	urlHash := r.PathValue("hash")
+	if urlHash == "" {
+		writeError(w, http.StatusBadRequest, "hash required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+
+	cfg := s.effective()
+	qbc, err := qbitClientFactory(model.ManagerConfig{
+		Host:     cfg.Manager.QbitTorrent.Host,
+		Username: cfg.Manager.QbitTorrent.Username,
+		Password: cfg.Manager.QbitTorrent.Password,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	entries, err := qbc.List(ctx, model.FilterOptions{})
+	if err != nil && !errors.Is(err, model.ErrPartialList) {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	var entry *model.Entry
+	for _, e := range entries {
+		if storagePkg.URLHash(e.URL) == urlHash {
+			entry = e
+			break
+		}
+	}
+	if entry == nil {
+		writeError(w, http.StatusNotFound, "torrent not found in qbittorrent")
+		return
+	}
+
+	if err = qbc.ForceRedownload(ctx, entry.Hash); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
@@ -631,9 +692,11 @@ func (s *Server) testResult(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// qbitCategoriesClient lists qBittorrent categories; tests may replace qbitClientFactory.
+// qbitCategoriesClient interfaces with qBittorrent; tests may replace qbitClientFactory.
 type qbitCategoriesClient interface {
 	GetCategories(ctx context.Context) ([]string, error)
+	List(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error)
+	ForceRedownload(ctx context.Context, torrentHash string) error
 }
 
 // ponytail: per-request factory — no long-lived shared qbit client in HTTP handlers

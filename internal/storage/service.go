@@ -15,6 +15,7 @@ import (
 
 type postgres interface {
 	Bootstrap(ctx context.Context) error
+	Ping(ctx context.Context) error
 	GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error)
 	AddTracker(ctx context.Context, tracker *storage.Tracker) (err error)
 	UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error)
@@ -38,6 +39,7 @@ type postgres interface {
 
 type IClient interface {
 	Bootstrap(ctx context.Context) error
+	Ping(ctx context.Context) error
 	GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error)
 	SaveTracker(ctx context.Context, source *tracker.Tracker) (err error)
 	GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error)
@@ -63,6 +65,10 @@ type service struct {
 
 func (s *service) Bootstrap(ctx context.Context) error {
 	return s.pg.Bootstrap(ctx)
+}
+
+func (s *service) Ping(ctx context.Context) error {
+	return s.pg.Ping(ctx)
 }
 
 func (s *service) GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error) {

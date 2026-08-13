@@ -21,6 +21,7 @@ const (
 
 type IClient interface {
 	Bootstrap(ctx context.Context) error
+	Ping(ctx context.Context) error
 	GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error)
 	AddTracker(ctx context.Context, tracker *storage.Tracker) (err error)
 	UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error)
@@ -396,6 +397,10 @@ WHERE `+checkLogExists)
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+func (c *client) Ping(ctx context.Context) error {
+	return c.db.Ping(ctx)
 }
 
 func itoa(n int) string {

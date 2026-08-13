@@ -67,6 +67,8 @@
   --btn-icon-sm: 16px;
   --btn-border-w: 1px;
   --btn-gap: 8px;
+  --row-actions-gap: 4px;
+  --row-actions-w: calc((var(--btn-h-sm) * 3) + (var(--row-actions-gap) * 2));
   --nav-h: 48px;
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --sidebar-w: 260px;
@@ -1530,8 +1532,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 }
 
 .table-dash-releases .col-actions {
-  width: 94px;
-  max-width: 94px;
+  width: calc(var(--row-actions-w) + 22px);
+  max-width: calc(var(--row-actions-w) + 22px);
   padding-right: 14px;
   text-align: right;
   white-space: nowrap;
@@ -1542,7 +1544,7 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--row-actions-gap);
 }
 
 .table-dash-releases {
@@ -1639,8 +1641,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 
   html:not(.mobile-layout) .table-dash-releases .col-actions {
-    width: 94px;
-    max-width: 94px;
+    width: calc(var(--row-actions-w) + 22px);
+    max-width: calc(var(--row-actions-w) + 22px);
     padding-left: 8px;
     padding-right: 14px;
   }
@@ -1675,8 +1677,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 
   html:not(.mobile-layout) .table-dash-releases .col-actions {
-    width: 94px;
-    max-width: 94px;
+    width: calc(var(--row-actions-w) + 22px);
+    max-width: calc(var(--row-actions-w) + 22px);
     padding-right: 14px;
   }
 
@@ -2629,6 +2631,32 @@ td.plan-recheck-cell {
   display: inline-flex;
 }
 
+.btn-action-redownload {
+  color: var(--hue-violet);
+  border-color: transparent;
+  background: transparent;
+}
+
+.btn-action-redownload:hover:not(:disabled) {
+  color: var(--hue-violet);
+  border-color: var(--hue-violet);
+  background: var(--tint-violet);
+  box-shadow: none;
+}
+
+.btn-action-redownload.is-spinning svg {
+  animation: refresh-spin 0.8s linear infinite;
+}
+
+.table-dash-releases tr.is-redownloading {
+  animation: redownload-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes redownload-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.85; }
+}
+
 .btn-plan-force {
   color: var(--hue-amber);
   border-color: transparent;
@@ -3307,7 +3335,7 @@ html.mobile-layout .table-dash-releases tbody tr {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
   height: auto;
-  grid-template-columns: auto minmax(0, 1fr) 72px;
+  grid-template-columns: auto minmax(0, 1fr) var(--row-actions-w);
   grid-template-areas:
     "name name status"
     "time recheck actions";
@@ -3398,8 +3426,8 @@ html.mobile-layout .table-dash-releases .col-status {
 
 html.mobile-layout .table-dash-releases .col-actions {
   grid-area: actions;
-  width: 72px;
-  max-width: 72px;
+  width: var(--row-actions-w);
+  max-width: var(--row-actions-w);
   padding: 0;
   height: auto;
   border: none;

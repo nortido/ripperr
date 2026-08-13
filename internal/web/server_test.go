@@ -19,6 +19,7 @@ import (
 	"trackerr/internal/model/tracker"
 	"trackerr/internal/runner"
 	"trackerr/internal/settings"
+	storagePkg "trackerr/internal/storage"
 	"trackerr/internal/system/logger"
 )
 
@@ -27,6 +28,7 @@ type fakeStore struct {
 	ignore     []storage.IgnoreEntry
 	settings   map[string]json.RawMessage
 	forceItems map[string]bool
+	pingErr    error
 }
 
 func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
@@ -173,6 +175,10 @@ func (f *fakeStore) GetTracker(context.Context, int) (*tracker.Tracker, error) {
 	return &tracker.Tracker{}, nil
 }
 
+func (f *fakeStore) Ping(context.Context) error {
+	return f.pingErr
+}
+
 func newTestServer(store *fakeStore) *Server {
 	return New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
 }
@@ -192,8 +198,10 @@ func testEffective() config.App {
 }
 
 type fakeQbitClient struct {
-	cats []string
-	err  error
+	cats               []string
+	entries            []*model.Entry
+	err                error
+	forceRedownloadErr error
 }
 
 func (f *fakeQbitClient) GetCategories(context.Context) ([]string, error) {
@@ -201,6 +209,17 @@ func (f *fakeQbitClient) GetCategories(context.Context) ([]string, error) {
 		return nil, f.err
 	}
 	return f.cats, nil
+}
+
+func (f *fakeQbitClient) List(context.Context, model.FilterOptions) ([]*model.Entry, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.entries, nil
+}
+
+func (f *fakeQbitClient) ForceRedownload(context.Context, string) error {
+	return f.forceRedownloadErr
 }
 
 func TestStaticCacheHeaders(t *testing.T) {
@@ -1051,5 +1070,122 @@ func TestRequestBodyTooLarge(t *testing.T) {
 	withMaxBody(srv.handlePutSchedule)(w, req)
 	if w.Code != http.StatusBadRequest && w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 400 or 413", w.Code)
+	}
+}
+
+func TestHealthzSuccess(t *testing.T) {
+	store := &fakeStore{pingErr: nil}
+	srv := newTestServer(store)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	srv.handleHealthz(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["status"] != "ok" {
+		t.Fatalf("status = %q, want ok", resp["status"])
+	}
+}
+
+func TestHealthzDatabaseError(t *testing.T) {
+	store := &fakeStore{pingErr: fmt.Errorf("connection failed")}
+	srv := newTestServer(store)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	srv.handleHealthz(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", w.Code)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["status"] != "error" {
+		t.Fatalf("status = %q, want error", resp["status"])
+	}
+	if resp["error"] != "connection failed" {
+		t.Fatalf("error = %q, want connection failed", resp["error"])
+	}
+}
+
+func TestHandleRedownload(t *testing.T) {
+	fakeQbitFactory := func(entries []*model.Entry, forceRedownloadErr error) func(model.ManagerConfig) (qbitCategoriesClient, error) {
+		return func(_ model.ManagerConfig) (qbitCategoriesClient, error) {
+			return &fakeQbitClient{
+				entries:            entries,
+				forceRedownloadErr: forceRedownloadErr,
+			}, nil
+		}
+	}
+
+	orig := qbitClientFactory
+	defer func() { qbitClientFactory = orig }()
+
+	store := &fakeStore{}
+	srv := newTestServer(store)
+
+	// Test success
+	testURL := "https://rutracker.org/forum/viewtopic.php?t=123"
+	testURLHash := storagePkg.URLHash(testURL)
+	entries := []*model.Entry{
+		{
+			URL:  testURL,
+			Hash: "abc123",
+			Name: "Test Torrent",
+		},
+	}
+
+	qbitClientFactory = fakeQbitFactory(entries, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
+	req.SetPathValue("hash", testURLHash)
+	w := httptest.NewRecorder()
+	srv.handleRedownload(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]bool
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp["ok"] {
+		t.Fatal("ok should be true")
+	}
+
+	// Test torrent not found
+	qbitClientFactory = fakeQbitFactory(nil, nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
+	req.SetPathValue("hash", testURLHash)
+	w = httptest.NewRecorder()
+	srv.handleRedownload(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatal(err)
+	}
+	if errResp["error"] != "torrent not found in qbittorrent" {
+		t.Fatalf("error = %q, want torrent not found in qbittorrent", errResp["error"])
+	}
+
+	// Test ForceRedownload error
+	entries = []*model.Entry{
+		{
+			URL:  testURL,
+			Hash: "abc123",
+			Name: "Test Torrent",
+		},
+	}
+	qbitClientFactory = fakeQbitFactory(entries, fmt.Errorf("redownload failed"))
+	req = httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
+	req.SetPathValue("hash", testURLHash)
+	w = httptest.NewRecorder()
+	srv.handleRedownload(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502, body: %s", w.Code, w.Body.String())
 	}
 }

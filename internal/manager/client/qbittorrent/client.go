@@ -29,6 +29,7 @@ type IClient interface {
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
 	GetCategories(ctx context.Context) ([]string, error)
+	ForceRedownload(ctx context.Context, torrentHash string) error
 }
 
 type client struct {

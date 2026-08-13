@@ -46,6 +46,7 @@ const ICONS = {
   chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>',
   chevronRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+  rotateCw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
   eyeClosed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><path d="M5 14.5c2.2-1.5 11.8-1.5 14 0"/></svg>',
   eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
@@ -606,6 +607,16 @@ function syncPlanForceLocal(items) {
     const hash = item.url_hash || '';
     if (hash) planForceLocal[hash] = !!item.force_check;
   });
+}
+
+function redownloadButtonHtml(hash) {
+  const btnTitle = escapeHtml(t('dash.redownload'));
+  return (
+    '<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" ' +
+    'title="' + btnTitle + '" aria-label="' + btnTitle + '" ' +
+    'data-hash="' + escapeHtml(hash) + '">' +
+    '<span data-icon="rotateCw"></span></button>'
+  );
 }
 
 function planForceButtonHtml(hash, forced) {
@@ -2518,6 +2529,7 @@ function buildReleaseRows(histItems) {
       escapeHtml(recheckShort) + '</span></td>' +
       '<td class="col-actions">' +
       '<div class="release-actions">' +
+      redownloadButtonHtml(urlHash) +
       planForceButtonHtml(urlHash, forced) +
       '<button type="button" class="' + btnCls + '" ' +
       'title="' + escapeHtml(btnTitle) + '" aria-label="' + escapeHtml(btnTitle) + '" ' +
@@ -2626,6 +2638,42 @@ function bindDashboardReleaseRows(root) {
       } catch (err) {
         showToast(err.message, 'error');
         btn.disabled = false;
+      }
+    });
+  });
+
+  el.querySelectorAll('.btn-redownload').forEach(function (btn) {
+    if (btn.dataset.redownloadBound) return;
+    btn.dataset.redownloadBound = '1';
+    btn.addEventListener('click', async function () {
+      const hash = btn.getAttribute('data-hash');
+      if (!hash) return;
+      const row = btn.closest('tr');
+      const reEnable = [];
+      if (row) {
+        row.querySelectorAll('button').forEach(function (b) {
+          if (!b.disabled) {
+            reEnable.push(b);
+            b.disabled = true;
+          }
+        });
+        row.classList.add('is-redownloading');
+      } else {
+        btn.disabled = true;
+      }
+      btn.classList.add('is-spinning');
+      try {
+        await fetchJSON('/api/history/' + encodeURIComponent(hash) + '/redownload', {
+          method: 'POST',
+        });
+        showToast(t('dash.redownloadDone'), 'success');
+        await loadDashboard();
+      } catch (err) {
+        showToast(err.message, 'error');
+        btn.classList.remove('is-spinning');
+        if (row) row.classList.remove('is-redownloading');
+        reEnable.forEach(function (b) { b.disabled = false; });
+        if (!row) btn.disabled = false;
       }
     });
   });
