@@ -46,7 +46,7 @@ const ICONS = {
   chevronLeft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>',
   chevronRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
-  rotateCw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+  rotateCw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 4 20 10 14 10"/><path d="M20 12a8 8 0 1 1-2.34-5.66L20 10"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
   eyeClosed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><path d="M5 14.5c2.2-1.5 11.8-1.5 14 0"/></svg>',
   eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
@@ -93,6 +93,7 @@ let dashboardDataRefreshTimer = null;
 let dashboardVisibilityBound = false;
 let dashboardStatusSlots = [];
 let dashboardRunning = false;
+let dashboardDryRun = false;
 let dashboardFetchGen = 0;
 let planForceLocal = Object.create(null);
 let ignoreHashesCache = null;
@@ -670,11 +671,15 @@ function updateRunStatusUI(running) {
   if (statusEl) {
     statusEl.innerHTML =
       '<span class="run-status-dot' + (running ? ' run-status-dot-active' : '') + '"></span>' +
-      '<span class="run-status-label">' + escapeHtml(running ? t('dash.statusRunning') : t('dash.statusIdle')) + '</span>';
+      '<span class="run-status-label">' +
+      escapeHtml(running ? (dashboardDryRun ? t('dash.statusDryRunning') : t('dash.statusRunning')) : t('dash.statusIdle')) +
+      '</span>';
   }
   if (runBtn) {
     if (stopPending) {
       runBtn.disabled = true;
+      runBtn.className = 'btn btn-primary';
+      runBtn.textContent = t('dash.runCheck');
       runBtn.title = t('dash.stopPending');
       runBtn.setAttribute('aria-label', t('dash.stopPending'));
     } else {
@@ -730,7 +735,8 @@ async function pollDashboardStatus() {
   if (currentView !== 'dashboard' || document.visibilityState !== 'visible') return;
   try {
     const status = await fetchJSON('/api/status');
-    if (!status.running) setStopPending(false);
+    setStopPending(!!status.stopping);
+    dashboardDryRun = !!status.dry_run;
     updateRunStatusUI(effectiveRunning(status.running));
     updateNextRunCard(status.next_runs || []);
     dashboardAlerts = status.alerts || [];
@@ -2780,7 +2786,8 @@ function renderDashboard(el, status, history, stats) {
   hydrateIcons(el);
   bindDashboardAlerts(el);
   bindNextRunStatCard(el, nextRuns);
-  if (!status.running) setStopPending(false);
+  setStopPending(!!status.stopping);
+  dashboardDryRun = !!status.dry_run;
   updateRunStatusUI(effectiveRunning(status.running));
   dashboardStatusSlots = nextRuns;
   dashboardAlerts = status.alerts || [];
@@ -3772,6 +3779,7 @@ async function refreshLogs(manual) {
     if (fetchGen !== logsFetchGen) return;
     renderLogsFeed(el, data);
     updateLogsRefreshedAt();
+    updateDryRunButtonState();
   } catch (_) { /* ponytail: silent refresh is best-effort */ }
 
   if (manual) {
@@ -3818,6 +3826,9 @@ function renderLogs(el, data) {
     '<h1 class="page-title">' + escapeHtml(t('logs.title')) + '</h1>' +
     '<div class="page-header-actions">' +
     '<span class="text-muted logs-last-updated" id="logs-last-updated"></span>' +
+    '<button type="button" class="btn btn-sm btn-ghost" id="logs-dryrun-btn" ' +
+    'title="' + escapeHtml(t('logs.dryRunHint')) + '">' +
+    escapeHtml(t('logs.dryRun')) + '</button>' +
     '<button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="logs-refresh-btn"' +
     ' aria-label="' + escapeHtml(t('logs.refresh')) + '">' +
     '<span data-icon="refresh"></span></button>' +
@@ -3846,6 +3857,52 @@ function renderLogs(el, data) {
       loadLogs();
     });
   }
+
+  const dryRunBtn = el.querySelector('#logs-dryrun-btn');
+  if (dryRunBtn) {
+    dryRunBtn.addEventListener('click', function () { triggerDryRun(dryRunBtn); });
+  }
+
+  updateDryRunButtonState();
+}
+
+async function triggerDryRun(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dry: true }),
+    });
+    const text = await res.text();
+    let data = null;
+    if (text) {
+      try { data = JSON.parse(text); } catch (_) { /* ignore */ }
+    }
+    if (res.status === 202) {
+      showToast(t('logs.dryRunStarted'), 'success');
+      refreshLogs(true);
+    } else if (res.status === 409) {
+      showToast((data && data.error) || t('dash.checkAlreadyRunning'), 'info');
+    } else {
+      showToast(data && data.error ? data.error : 'HTTP ' + res.status, 'error');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    updateDryRunButtonState();
+  }
+}
+
+async function updateDryRunButtonState() {
+  const btn = document.getElementById('logs-dryrun-btn');
+  if (!btn) return;
+  try {
+    const status = await fetchJSON('/api/status');
+    const busy = !!(status.running || status.stopping);
+    btn.disabled = busy;
+    btn.title = busy ? t('logs.dryRunBusy') : t('logs.dryRunHint');
+  } catch (_) { /* ponytail: best-effort */ }
 }
 
 function getIntegrationTestConfig(kind) {

@@ -123,7 +123,7 @@ func TestRestartFlagSurvivesTriggerConsumption(t *testing.T) {
 	s := NewState()
 	s.MarkRestart()
 	select {
-	case s.trigger <- struct{}{}:
+	case s.trigger <- false:
 	default:
 	}
 	select {
@@ -134,5 +134,46 @@ func TestRestartFlagSurvivesTriggerConsumption(t *testing.T) {
 	s.Reset()
 	if !s.ConsumeRestart() {
 		t.Fatal("restart flag must survive trigger consumption by old runner")
+	}
+}
+
+func TestStateRequestDryRun(t *testing.T) {
+	s := NewState()
+	if !s.RequestDryRun() {
+		t.Fatal("expected RequestDryRun to succeed")
+	}
+	select {
+	case dry := <-s.Trigger():
+		if !dry {
+			t.Fatal("expected dry flag on trigger")
+		}
+	default:
+		t.Fatal("expected queued trigger")
+	}
+	if !s.RequestRun() {
+		t.Fatal("expected RequestRun to succeed")
+	}
+	select {
+	case dry := <-s.Trigger():
+		if dry {
+			t.Fatal("expected normal run flag on trigger")
+		}
+	default:
+		t.Fatal("expected queued trigger")
+	}
+}
+
+func TestStateStoppingClearedByReset(t *testing.T) {
+	s := NewState()
+	if s.Stopping() {
+		t.Fatal("fresh state must not be stopping")
+	}
+	s.MarkStopping()
+	if !s.Stopping() {
+		t.Fatal("expected stopping after MarkStopping")
+	}
+	s.Reset()
+	if s.Stopping() {
+		t.Fatal("Reset must clear stopping")
 	}
 }

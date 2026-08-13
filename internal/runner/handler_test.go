@@ -153,13 +153,13 @@ func TestPushFiltersByWatchTags(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx); err != nil {
+	if err := h.push(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case e := <-h.idx[1]:
-		if e.URL != matched {
-			t.Fatalf("queued %q, want %q", e.URL, matched)
+	case tk := <-h.idx[1]:
+		if tk.entry.URL != matched {
+			t.Fatalf("queued %q, want %q", tk.entry.URL, matched)
 		}
 	default:
 		t.Fatal("expected matched entry to be queued")
@@ -190,7 +190,7 @@ func TestPushEmptyWatchTagsIncludesAll(t *testing.T) {
 		<-h.idx[1]
 		<-h.idx[1]
 	}()
-	if err := h.push(ctx); err != nil {
+	if err := h.push(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -207,7 +207,7 @@ func TestPushSkipsIgnored(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx); err != nil {
+	if err := h.push(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -234,13 +234,13 @@ func TestPushDedupesSameName(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx); err != nil {
+	if err := h.push(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case e := <-h.idx[1]:
-		if e.URL != earlyURL {
-			t.Fatalf("queued %q, want earliest %q", e.URL, earlyURL)
+	case tk := <-h.idx[1]:
+		if tk.entry.URL != earlyURL {
+			t.Fatalf("queued %q, want earliest %q", tk.entry.URL, earlyURL)
 		}
 	default:
 		t.Fatal("expected entry to be queued")
@@ -355,13 +355,13 @@ func TestPushContinuesOnPartialList(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx); err != nil {
+	if err := h.push(ctx, false); err != nil {
 		t.Fatalf("push err = %v, want nil", err)
 	}
 	select {
-	case e := <-h.idx[1]:
-		if e.URL != matched {
-			t.Fatalf("queued %q, want %q", e.URL, matched)
+	case tk := <-h.idx[1]:
+		if tk.entry.URL != matched {
+			t.Fatalf("queued %q, want %q", tk.entry.URL, matched)
 		}
 	default:
 		t.Fatal("expected matched entry to be queued")
@@ -469,7 +469,7 @@ func TestPushMarksRunning(t *testing.T) {
 		<-h.idx[1]
 		state.End(h.gen)
 	}()
-	if err := h.push(context.Background()); err != nil {
+	if err := h.push(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -693,7 +693,7 @@ func TestWorkerUnknownStatusWhenDateMissing(t *testing.T) {
 		mx:             &sync.RWMutex{},
 	}
 	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
-	if err := h.worker(context.Background(), 1, e); err != nil {
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.logs) != 1 {
@@ -736,7 +736,7 @@ func TestTrackerWorkerRecoversFromPanic(t *testing.T) {
 
 	h.state.Begin(h.gen)
 	e := &model.Entry{URL: "https://example.com/t/1", Name: "panic-test", URLHash: "abc", Timestamp: timePtr(time.Now().Add(-time.Hour))}
-	h.idx[1] <- e
+	h.idx[1] <- &task{entry: e}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for state.Running() && time.Now().Before(deadline) {
@@ -780,7 +780,7 @@ func TestWorkerSkipsCheckLogOnContextCanceled(t *testing.T) {
 		mx:             &sync.RWMutex{},
 	}
 	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
-	if err := h.worker(context.Background(), 1, e); err != nil {
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
 		t.Fatalf("worker err = %v, want nil", err)
 	}
 	if len(store.logs) != 0 {
@@ -797,7 +797,7 @@ func TestGetHistorySkipsFutureRecheckAt(t *testing.T) {
 			},
 		},
 	}
-	hi, err := h.getHistory(context.Background(), url)
+	hi, err := h.getHistory(context.Background(), url, false)
 	if err != errSkipped {
 		t.Fatalf("err = %v, want errSkipped", err)
 	}
@@ -815,7 +815,7 @@ func TestGetHistoryForceCheckBypassesRecheckAt(t *testing.T) {
 			},
 		},
 	}
-	hi, err := h.getHistory(context.Background(), url)
+	hi, err := h.getHistory(context.Background(), url, false)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -891,7 +891,7 @@ func TestWorkerUnchangedOnAlreadyAdded(t *testing.T) {
 		URLHash:   "abc",
 		Timestamp: &old,
 	}
-	if err := h.worker(context.Background(), 1, e); err != nil {
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.logs) != 1 {
@@ -975,10 +975,10 @@ func runForceCheckWorkerTest(t *testing.T, forceCheck bool) (status string, subm
 		Name:      "test",
 		Timestamp: &oldAddition,
 	}
-	if err := h.buildEntry(context.Background(), e); err != nil {
+	if err := h.buildEntry(context.Background(), e, false); err != nil {
 		t.Fatalf("buildEntry err = %v", err)
 	}
-	if err := h.worker(context.Background(), 1, e); err != nil {
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
 		t.Fatalf("worker err = %v", err)
 	}
 	if len(store.logs) != 1 {
@@ -1006,7 +1006,7 @@ func TestBuildEntryForceCheckKeepsTorrentTimestamp(t *testing.T) {
 		},
 	}
 	e := &model.Entry{URL: url, Timestamp: &oldAddition}
-	if err := h.buildEntry(context.Background(), e); err != nil {
+	if err := h.buildEntry(context.Background(), e, false); err != nil {
 		t.Fatal(err)
 	}
 	if !e.Update {
@@ -1103,10 +1103,10 @@ func TestWorkerForceCheckPreservedOnSubmitError(t *testing.T) {
 		Name:      "test",
 		Timestamp: &oldAddition,
 	}
-	if err := h.buildEntry(context.Background(), e); err != nil {
+	if err := h.buildEntry(context.Background(), e, false); err != nil {
 		t.Fatalf("buildEntry err = %v", err)
 	}
-	if err := h.worker(context.Background(), 1, e); err == nil {
+	if err := h.worker(context.Background(), 1, e, nil); err == nil {
 		t.Fatal("expected worker error")
 	}
 	if store.saveCalls != 0 {
@@ -1117,5 +1117,48 @@ func TestWorkerForceCheckPreservedOnSubmitError(t *testing.T) {
 	}
 	if store.logs[0].Status != "error" {
 		t.Fatalf("status = %q, want error", store.logs[0].Status)
+	}
+}
+
+func TestPushDryRunLimitsAndSkipsWrites(t *testing.T) {
+	entries := make([]*model.Entry, 35)
+	for i := 0; i < 35; i++ {
+		entries[i] = &model.Entry{
+			URL:  fmt.Sprintf("https://example.com/t/%d", i),
+			Name: fmt.Sprintf("Entry %d", i),
+			Tag:  "watch",
+		}
+	}
+	h := &handler{
+		config:         model.HandlerConfig{WatchTags: []string{"watch"}},
+		manager:        &fakeManager{all: entries},
+		storage:        &fakeStorage{},
+		trackerService: &fakeTracker{id: 1},
+		state:          NewState(),
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h.gen = h.state.Reset()
+	if err := h.push(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 30; i++ {
+		select {
+		case tk := <-h.idx[1]:
+			if tk.report == nil {
+				t.Fatal("expected report to be non-nil in dry run")
+			}
+		default:
+			t.Fatalf("expected 30 tasks, got %d", i)
+		}
+	}
+
+	select {
+	case <-h.idx[1]:
+		t.Fatal("expected no more than 30 entries in dry run")
+	default:
 	}
 }

@@ -157,6 +157,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"now":       now.Format(time.RFC3339),
 		"next_runs": strSlots,
 		"running":   s.runnerState != nil && s.runnerState.Running(),
+		"dry_run":   s.runnerState != nil && s.runnerState.DryRunning(),
+		"stopping":  s.runnerState != nil && s.runnerState.Stopping(),
 		"alerts":    statusAlerts(s.alerts),
 	})
 }
@@ -235,9 +237,15 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Restart bool `json:"restart"`
 		Stop    bool `json:"stop"`
+		Dry     bool `json:"dry"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	if s.runnerState != nil && s.runnerState.Stopping() {
+		writeError(w, http.StatusConflict, "check is stopping")
+		return
 	}
 
 	if req.Stop {
@@ -246,6 +254,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.runnerState.DrainTrigger()
+		s.runnerState.MarkStopping()
 		s.reload()
 		writeJSON(w, http.StatusAccepted, map[string]any{"stopped": true})
 		return
@@ -262,6 +271,16 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "check already running")
 		return
 	}
+
+	if req.Dry {
+		if s.runnerState != nil && !s.runnerState.RequestDryRun() {
+			writeError(w, http.StatusConflict, "check already queued")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"started": true, "dry_run": true})
+		return
+	}
+
 	if s.runnerState != nil && !s.runnerState.RequestRun() {
 		writeError(w, http.StatusConflict, "check already queued")
 		return

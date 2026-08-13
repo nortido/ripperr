@@ -64,12 +64,19 @@ type handler struct {
 	mx             *sync.RWMutex
 	pushMu         sync.Mutex
 	config         model.HandlerConfig
-	idx            map[int]chan *model.Entry
+	idx            map[int]chan *task
 	manager        manager
 	storage        storage
 	trackerService trackerService
 	state          *State
 	gen            uint32
+}
+
+// task carries an entry to a tracker worker. A non-nil report means the entry
+// belongs to a dry run and must not produce any writes.
+type task struct {
+	entry  *model.Entry
+	report *dryReport
 }
 
 func (h *handler) Run(ctx context.Context) {
@@ -95,7 +102,7 @@ func (h *handler) Run(ctx context.Context) {
 		go h.trackerWorker(ctx, ttid, cherr)
 	}
 	if h.state.ConsumeRestart() {
-		go h.runPush(ctx, pt, cherr)
+		go h.runPush(ctx, pt, cherr, false)
 	}
 	for {
 		select {
@@ -105,30 +112,30 @@ func (h *handler) Run(ctx context.Context) {
 			if !errors.Is(err, context.Canceled) {
 				logger.Error(err.Error())
 			}
-		case <-h.state.Trigger():
+		case dry := <-h.state.Trigger():
 			if h.state.Running() {
 				logger.Info("run already in progress")
 				continue
 			}
-			go h.runPush(ctx, pt, cherr)
+			go h.runPush(ctx, pt, cherr, dry)
 		case <-pt.C:
 			if h.state.Running() {
 				pt.Reset(time.Until(h.nextRun(time.Now())))
 				continue
 			}
-			go h.runPush(ctx, pt, cherr)
+			go h.runPush(ctx, pt, cherr, false)
 		}
 	}
 }
 
-func (h *handler) runPush(ctx context.Context, pt *time.Timer, cherr chan error) {
+func (h *handler) runPush(ctx context.Context, pt *time.Timer, cherr chan error, dry bool) {
 	if !h.pushMu.TryLock() {
 		pt.Reset(time.Until(h.nextRun(time.Now())))
 		return
 	}
 	defer h.pushMu.Unlock()
 
-	if pushErr := h.push(ctx); pushErr != nil {
+	if pushErr := h.push(ctx, dry); pushErr != nil {
 		select {
 		case <-ctx.Done():
 		case cherr <- pushErr:
@@ -156,17 +163,19 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 		select {
 		case <-ctx.Done():
 			return
-		case e := <-h.idx[ttid]:
+		case tk := <-h.idx[ttid]:
+			e := tk.entry
 			var err error
 			func() {
 				defer h.state.End(h.gen)
+				defer tk.report.done()
 				defer func() {
 					if r := recover(); r != nil {
 						logger.Error(fmt.Sprintf("panic processing %q: %v\n%s", e.Name, r, debug.Stack()))
-						h.logCheck(ctx, e, ttid, "error", fmt.Sprintf("panic: %v", r))
+						h.logCheck(ctx, e, ttid, "error", fmt.Sprintf("panic: %v", r), tk.report)
 					}
 				}()
-				err = h.worker(ctx, ttid, e)
+				err = h.worker(ctx, ttid, e, tk.report)
 			}()
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -202,15 +211,23 @@ func (h *handler) requestInterval(ttid int) time.Duration {
 }
 
 func (h *handler) initTrackerChannels() {
-	h.idx = make(map[int]chan *model.Entry, len(h.trackerService.CachedList()))
+	h.idx = make(map[int]chan *task, len(h.trackerService.CachedList()))
 	for ttid := range h.trackerService.CachedList() {
-		h.idx[ttid] = make(chan *model.Entry, 4096)
+		h.idx[ttid] = make(chan *task, 4096)
 	}
 }
 
-func (h *handler) push(ctx context.Context) (err error) {
+func (h *handler) push(ctx context.Context, dry bool) (err error) {
 	h.state.Begin(h.gen)
 	defer h.state.End(h.gen)
+
+	var rep *dryReport
+	if dry {
+		rep = newDryReport(h.state)
+		h.state.setDry(true)
+		logger.Info(fmt.Sprintf("dry-run started: up to %d entries, nothing will be written", dryRunLimit))
+		defer rep.release()
+	}
 
 	var (
 		entries   []*model.Entry
@@ -233,8 +250,10 @@ func (h *handler) push(ctx context.Context) (err error) {
 		}
 		winners[helper.NormalizeReleaseName(e.Name)] = storagePkg.URLHash(e.URL)
 	}
-	if err = h.storage.PurgeDuplicateNames(ctx, winners); err != nil {
-		logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
+	if !dry {
+		if err = h.storage.PurgeDuplicateNames(ctx, winners); err != nil {
+			logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
+		}
 	}
 	if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
 		return
@@ -249,7 +268,7 @@ func (h *handler) push(ctx context.Context) (err error) {
 		if len(h.config.WatchTags) > 0 && !entryMatchesWatchTags(entries[i].Tag, h.config.WatchTags) {
 			continue
 		}
-		if err = h.buildEntry(ctx, entries[i]); err == errSkipped {
+		if err = h.buildEntry(ctx, entries[i], dry); err == errSkipped {
 			err = nil
 			continue
 		} else if err != nil {
@@ -261,15 +280,22 @@ func (h *handler) push(ctx context.Context) (err error) {
 		if _, ignored := ignoreSet[entries[i].URLHash]; ignored {
 			continue
 		}
+		if dry && rep.queued.Load() >= dryRunLimit {
+			break
+		}
 		h.state.Begin(h.gen)
+		rep.add()
 		select {
 		case <-ctx.Done():
 			h.state.End(h.gen)
+			rep.done()
 			return
-		case h.idx[t] <- entries[i]:
+		case h.idx[t] <- &task{entry: entries[i], report: rep}:
 		}
 	}
-	h.purgeStaleHistory(ctx)
+	if !dry {
+		h.purgeStaleHistory(ctx)
+	}
 	return
 }
 
@@ -328,10 +354,10 @@ func (h *handler) purgeStaleHistory(ctx context.Context) {
 	}
 }
 
-func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
+func (h *handler) buildEntry(ctx context.Context, e *model.Entry, dry bool) (err error) {
 	var hi *runnerModel.HistoryItem
 
-	if hi, err = h.getHistory(ctx, e.URL); err != nil {
+	if hi, err = h.getHistory(ctx, e.URL, dry); err != nil {
 		return
 	}
 	e.URLHash = hi.URLHash
@@ -346,12 +372,15 @@ func (h *handler) buildEntry(ctx context.Context, e *model.Entry) (err error) {
 	return
 }
 
-func (h *handler) getHistory(ctx context.Context, link string) (hi *runnerModel.HistoryItem, err error) {
+func (h *handler) getHistory(ctx context.Context, link string, dry bool) (hi *runnerModel.HistoryItem, err error) {
 	// TODO: cache history
 	if hi, err = h.storage.GetItem(ctx, link); err != nil {
 		return
 	}
 	if !hi.Exists {
+		return
+	}
+	if dry {
 		return
 	}
 	if hi.RecheckAt != nil && time.Now().Before(*hi.RecheckAt) && !hi.ForceCheck {
@@ -363,7 +392,7 @@ func (h *handler) getHistory(ctx context.Context, link string) (hi *runnerModel.
 	return
 }
 
-func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err error) {
+func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dryReport) (err error) {
 	var (
 		updated bool
 		tc      client.IClient
@@ -376,56 +405,77 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry) (err err
 			logger.Info("processing interrupted")
 			return nil
 		}
-		h.logCheck(ctx, e, ttid, "error", err.Error())
+		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 		return
 	}
 	var dateMissing bool
 	var pageDate *time.Time
-	if updated, dateMissing, pageDate, err = h.checkPage(ctx, ttid, tc, e); err != nil {
+	if updated, dateMissing, pageDate, err = h.checkPage(ctx, ttid, tc, e, rep); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("processing interrupted")
 			return nil
 		}
-		h.logCheck(ctx, e, ttid, "error", err.Error())
+		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 		return
 	}
 	if dateMissing {
-		if _, clearErr := h.storage.SetForceCheck(ctx, e.URLHash, false); clearErr != nil {
-			logger.Error(fmt.Sprintf("force_check clear failed: %v", clearErr))
+		if rep == nil {
+			if _, clearErr := h.storage.SetForceCheck(ctx, e.URLHash, false); clearErr != nil {
+				logger.Error(fmt.Sprintf("force_check clear failed: %v", clearErr))
+			}
 		}
-		h.logCheck(ctx, e, ttid, "unknown", "")
+		h.logCheck(ctx, e, ttid, "unknown", "", rep)
 		return
 	}
 	if !updated {
-		logger.Info(fmt.Sprint("skipped: ", e.Name))
-		h.logCheck(ctx, e, ttid, "unchanged", "")
+		if rep == nil {
+			logger.Info(fmt.Sprint("skipped: ", e.Name))
+		}
+		h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 		return
 	}
-	if err = h.submit(ctx, ttid, tc, e); err != nil {
+	if err = h.submit(ctx, ttid, tc, e, rep); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("processing interrupted")
 			return nil
 		}
 		if errors.Is(err, model.ErrAlreadyAdded) {
 			logger.Info(fmt.Sprint("already in qbittorrent, skipped: ", e.Name))
-			h.logCheck(ctx, e, ttid, "unchanged", "")
+			h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 			return nil
 		}
 		err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
-		h.logCheck(ctx, e, ttid, "error", err.Error())
+		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 		return
 	}
-	if err = h.saveHistory(ctx, ttid, e, pageDate); err != nil {
-		h.logCheck(ctx, e, ttid, "error", err.Error())
-		return
+	if rep == nil {
+		if err = h.saveHistory(ctx, ttid, e, pageDate); err != nil {
+			h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
+			return
+		}
 	}
-	logger.Info(fmt.Sprint("updated: ", e.Name))
-	h.logCheck(ctx, e, ttid, "updated", "")
+	if rep == nil {
+		logger.Info(fmt.Sprint("updated: ", e.Name))
+	}
+	h.logCheck(ctx, e, ttid, "updated", "", rep)
 
 	return
 }
 
-func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status, errMsg string) {
+func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status, errMsg string, rep *dryReport) {
+	if rep != nil {
+		rep.count(status)
+		verb := status
+		if status == "updated" {
+			verb = "would update"
+		}
+		msg := fmt.Sprintf("dry-run: %s: %s", verb, e.Name)
+		if errMsg != "" {
+			msg += ": " + errMsg
+		}
+		logger.Info(msg)
+		return
+	}
 	if logErr := h.storage.AddCheckLog(ctx, &storageModel.CheckLogEntry{
 		URLHash:       e.URLHash,
 		ItemName:      e.Name,
@@ -438,7 +488,7 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 	}
 }
 
-func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry) (res bool, dateMissing bool, pageDate *time.Time, err error) {
+func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (res bool, dateMissing bool, pageDate *time.Time, err error) {
 	var (
 		cur        *time.Time
 		b          *bytes.Buffer
@@ -467,7 +517,9 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 		e.Magnet = tc.ParseMagnet(b, encoded)
 		return
 	}
-	err = h.saveHistory(ctx, ttid, e, cur)
+	if rep == nil {
+		err = h.saveHistory(ctx, ttid, e, cur)
+	}
 	return
 }
 
@@ -489,7 +541,10 @@ func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc client.IClien
 	return
 }
 
-func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *model.Entry) (err error) {
+func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (err error) {
+	if rep != nil {
+		return nil
+	}
 	opts := model.ManagerAddFileOptions{
 		Name:           e.Name,
 		Hash:           e.Hash,

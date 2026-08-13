@@ -6,14 +6,16 @@ import (
 
 // State is shared across reloads: manual run trigger, activity counter, restart flag.
 type State struct {
-	trigger chan struct{}
-	active  atomic.Int32
-	gen     atomic.Uint32
-	restart atomic.Bool
+	trigger  chan bool
+	active   atomic.Int32
+	gen      atomic.Uint32
+	restart  atomic.Bool
+	dry      atomic.Bool
+	stopping atomic.Bool
 }
 
 func NewState() *State {
-	return &State{trigger: make(chan struct{}, 1)}
+	return &State{trigger: make(chan bool, 1)}
 }
 
 func (s *State) Running() bool {
@@ -32,7 +34,7 @@ func (s *State) End(gen uint32) {
 	}
 }
 
-func (s *State) Trigger() <-chan struct{} {
+func (s *State) Trigger() <-chan bool {
 	if s == nil {
 		return nil
 	}
@@ -45,11 +47,47 @@ func (s *State) RequestRun() bool {
 		return false
 	}
 	select {
-	case s.trigger <- struct{}{}:
+	case s.trigger <- false:
 		return true
 	default:
 		return false
 	}
+}
+
+// RequestDryRun queues a manual dry run if nothing is active.
+func (s *State) RequestDryRun() bool {
+	if s == nil || s.Running() {
+		return false
+	}
+	select {
+	case s.trigger <- true:
+		return true
+	default:
+		return false
+	}
+}
+
+// DryRunning reports whether the current run is a dry run.
+func (s *State) DryRunning() bool {
+	return s != nil && s.dry.Load()
+}
+
+func (s *State) setDry(v bool) {
+	if s != nil {
+		s.dry.Store(v)
+	}
+}
+
+// MarkStopping records that a stop was requested; cleared when the next runner starts.
+func (s *State) MarkStopping() {
+	if s != nil {
+		s.stopping.Store(true)
+	}
+}
+
+// Stopping reports whether a stop was requested and the runner has not restarted yet.
+func (s *State) Stopping() bool {
+	return s != nil && s.stopping.Load()
 }
 
 // Reset clears the activity counter and bumps generation so stale Begin/End are ignored.
@@ -59,6 +97,8 @@ func (s *State) Reset() uint32 {
 		return 0
 	}
 	s.active.Store(0)
+	s.dry.Store(false)
+	s.stopping.Store(false)
 	return s.gen.Add(1)
 }
 

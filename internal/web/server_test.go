@@ -637,6 +637,34 @@ func TestPostRunAlreadyQueued(t *testing.T) {
 	}
 }
 
+func TestPostRunDry(t *testing.T) {
+	state := runner.NewState()
+	srv := New(&fakeStore{}, func() {}, testEffective, ":0", state, nil)
+
+	body := []byte(`{"dry":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/run", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleRun(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", w.Code)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["started"] != true || resp["dry_run"] != true {
+		t.Fatalf("resp = %v", resp)
+	}
+	select {
+	case dry := <-state.Trigger():
+		if !dry {
+			t.Fatal("expected dry flag on trigger")
+		}
+	default:
+		t.Fatal("expected trigger queued")
+	}
+}
+
 func TestPostRunRestart(t *testing.T) {
 	state := runner.NewState()
 	reloaded := false
@@ -1187,5 +1215,39 @@ func TestHandleRedownload(t *testing.T) {
 	srv.handleRedownload(w, req)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502, body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPostRunStopBlocksFurtherRuns(t *testing.T) {
+	state := runner.NewState()
+	srv := New(&fakeStore{}, func() {}, testEffective, ":0", state, nil)
+	gen := state.Reset()
+	state.Begin(gen)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/run", bytes.NewReader([]byte(`{"stop":true}`)))
+	w := httptest.NewRecorder()
+	srv.handleRun(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("stop status = %d, want 202", w.Code)
+	}
+	if !state.Stopping() {
+		t.Fatal("expected stopping flag after stop")
+	}
+
+	for _, body := range []string{`{"stop":true}`, `{"restart":true}`, `{"dry":true}`, `{}`} {
+		req = httptest.NewRequest(http.MethodPost, "/api/run", bytes.NewReader([]byte(body)))
+		w = httptest.NewRecorder()
+		srv.handleRun(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("body %s: status = %d, want 409", body, w.Code)
+		}
+	}
+
+	state.Reset()
+	req = httptest.NewRequest(http.MethodPost, "/api/run", nil)
+	w = httptest.NewRecorder()
+	srv.handleRun(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("after reset status = %d, want 202", w.Code)
 	}
 }
