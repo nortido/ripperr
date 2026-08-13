@@ -831,6 +831,54 @@ body:has(.app.page-scaled) {
   bottom: calc(100% + 4px);
 }
 
+@keyframes hist-filter-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes hist-filter-pop-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+.hist-filter-panel {
+  transform-origin: top right;
+}
+
+.hist-filter-select.open-up .hist-filter-panel {
+  transform-origin: bottom right;
+}
+
+.hist-filter-select.open .hist-filter-panel {
+  animation: hist-filter-pop-in 0.16s cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* the panel stays visible while closing: JS defers `hidden` until the
+   animation ends (HIST_FILTER_CLOSE_MS in app.js) */
+.hist-filter-select.is-closing .hist-filter-panel {
+  animation: hist-filter-pop-out 0.13s cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hist-filter-select.open .hist-filter-panel,
+  .hist-filter-select.is-closing .hist-filter-panel {
+    animation-duration: 0.001ms;
+  }
+}
+
 .hist-filter-option {
   display: flex;
   align-items: center;
@@ -1348,7 +1396,11 @@ html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-s
   opacity: 0;
 }
 
-html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.open {
+/* is-closing keeps the lift while the panel animates out: this wrap is its own
+   stacking context, so dropping back to z-index 2 mid-animation would slide the
+   panel under the toolbar siblings. */
+html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.open,
+html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.is-closing {
   z-index: 301;
 }
 
