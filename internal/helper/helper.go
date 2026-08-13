@@ -49,4 +49,3 @@ func TimeFromRusDate(t string, timeformat string) (result *time.Time) {
 
 	return
 }
-

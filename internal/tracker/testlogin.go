@@ -122,23 +122,12 @@ func testLoginAttrs(cfg config.App, key string, tid int, dbAttrs *trackerModel.T
 		*attrs = *dbAttrs
 		attrs.Exists = true
 	}
-	switch key {
-	case "rutracker":
-		attrs.Credentials = cfg.Tracker.Rutracker.Credentials
-		attrs.Publicity = cfg.Tracker.Rutracker.Publicity
-	case "kinozal":
-		attrs.Credentials = cfg.Tracker.Kinozal.Credentials
-		attrs.Cookies = helper.ParseCookies(cfg.Tracker.Kinozal.Cookies)
-		attrs.Publicity = cfg.Tracker.Kinozal.Publicity
-	case "rutor":
-		attrs.Publicity = cfg.Tracker.Rutor.Publicity
-	case "teamhd":
-		attrs.Cookies = helper.ParseCookies(cfg.Tracker.TeamHD.Cookies)
-		attrs.Publicity = cfg.Tracker.TeamHD.Publicity
-	case "nnm":
-		attrs.Credentials = cfg.Tracker.NNM.Credentials
-		attrs.Cookies = helper.ParseCookies(cfg.Tracker.NNM.Cookies)
-		attrs.Publicity = cfg.Tracker.NNM.Publicity
+	// settings win over the stored session, empty included: the test must check
+	// what the form holds, not fall back to cookies a previous login left in the DB
+	if it := cfg.Tracker.ByKey(key); it != nil {
+		attrs.Credentials = it.Credentials
+		attrs.Cookies = helper.ParseCookies(it.Cookies)
+		attrs.Publicity = it.Publicity
 	}
 	return attrs
 }

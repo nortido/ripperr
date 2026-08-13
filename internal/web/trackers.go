@@ -33,16 +33,10 @@ func trackerName(id int) string {
 }
 
 func trackerProxyType(cfg config.App, key string) int {
-	switch key {
-	case "rutracker":
-		return cfg.Tracker.Rutracker.ProxyType
-	case "kinozal":
-		return cfg.Tracker.Kinozal.ProxyType
-	case "nnm":
-		return cfg.Tracker.NNM.ProxyType
-	default:
-		return 0
+	if it := cfg.Tracker.ByKey(key); it != nil {
+		return it.ProxyType
 	}
+	return 0
 }
 
 func effectiveTrackerProxyType(cfg config.App, key string, configPatch json.RawMessage) int {

@@ -17,72 +17,52 @@ type Manager struct {
 	MinutesToReconnect    int      `env:"MANAGER_MINUTES_TO_RECONNECT, default=5"`
 }
 
+// TrackerItem is one tracker's settings. Per-tracker env names come from the
+// prefix on each Tracker field; the defaults live in DefaultApp because a shared
+// type cannot carry a different `default=` per instance. `overwrite` is what lets
+// an env var win over the pre-filled default (go-envconfig otherwise skips a
+// field that is already non-zero).
+type TrackerItem struct {
+	Name         string   `json:"name" env:"NAME, overwrite"`
+	Domain       string   `json:"domain" env:"DOMAIN, overwrite"`
+	ActiveDomain string   `json:"active_domain"` // DB-only override
+	Mirrors      []string `json:"mirrors"`       // DB-only override
+	Credentials  string   `json:"credentials" env:"CREDENTIALS, overwrite"`
+	Publicity    string   `json:"publicity" env:"PUBLICITY, overwrite"`
+	LoginURL     string   `json:"login_url" env:"LOGIN_URL, overwrite"`
+	DownloadURL  string   `json:"download_url" env:"DOWNLOAD_URL, overwrite"`
+	HourLimit    int      `json:"hour_limit" env:"HOUR_LIMIT, overwrite"`
+	ProxyType    int      `json:"proxy_type" env:"PROXY_TYPE, overwrite"`
+	Cookies      string   `json:"cookies" env:"COOKIES, overwrite"`
+	Enabled      bool     `json:"enabled" env:"ENABLED, overwrite"`
+}
+
 type Tracker struct {
-	Rutracker struct {
-		Name         string   `env:"TRACKER_RUTRACKER_NAME, default=rutracker"`
-		Domain       string   `env:"TRACKER_RUTRACKER_DOMAIN, default=rutracker.org"`
-		ActiveDomain string   // DB-only override
-		Mirrors      []string // DB-only override
-		Credentials  string   `env:"TRACKER_RUTRACKER_CREDENTIALS, default="`
-		Publicity    string   `env:"TRACKER_RUTRACKER_PUBLICITY, default=private"`
-		LoginURL     string   `env:"TRACKER_RUTRACKER_LOGIN_URL, default=https://rutracker.org/forum/login.php"`
-		DownloadURL  string   `env:"TRACKER_RUTRACKER_DOWNLOAD_URL, default=https://rutracker.org/forum/dl.php?t="`
-		HourLimit    int      `env:"TRACKER_RUTRACKER_HOUR_LIMIT, default=20"`
-		ProxyType    int      `env:"TRACKER_RUTRACKER_PROXY_TYPE, default=1"`
-		Enabled      bool     `env:"TRACKER_RUTRACKER_ENABLED, default=true"`
+	Rutracker TrackerItem `env:", prefix=TRACKER_RUTRACKER_"`
+	Kinozal   TrackerItem `env:", prefix=TRACKER_KINOZAL_"`
+	Rutor     TrackerItem `env:", prefix=TRACKER_RUTOR_"`
+	NNM       TrackerItem `env:", prefix=TRACKER_NNM_"`
+	TeamHD    TrackerItem `env:", prefix=TRACKER_TEAMHD_"`
+}
+
+// TrackerKeys lists tracker keys in UI order.
+var TrackerKeys = []string{"rutracker", "kinozal", "rutor", "teamhd", "nnm"}
+
+// ByKey returns the item for a tracker key, or nil for an unknown key.
+func (t *Tracker) ByKey(key string) *TrackerItem {
+	switch key {
+	case "rutracker":
+		return &t.Rutracker
+	case "kinozal":
+		return &t.Kinozal
+	case "rutor":
+		return &t.Rutor
+	case "teamhd":
+		return &t.TeamHD
+	case "nnm":
+		return &t.NNM
 	}
-	Kinozal struct {
-		Name         string   `env:"TRACKER_KINOZAL_NAME, default=kinozal"`
-		Domain       string   `env:"TRACKER_KINOZAL_DOMAIN, default=kinozal.tv"`
-		ActiveDomain string   // DB-only override
-		Mirrors      []string // DB-only override
-		Credentials  string   `env:"TRACKER_KINOZAL_CREDENTIALS, default="`
-		Publicity    string   `env:"TRACKER_KINOZAL_PUBLICITY, default=private"`
-		LoginURL     string   `env:"TRACKER_KINOZAL_LOGIN_URL, default=https://kinozal.tv/takelogin.php"`
-		DownloadURL  string   `env:"TRACKER_KINOZAL_DOWNLOAD_URL, default=https://kinozal.tv/download.php?id="`
-		HourLimit    int      `env:"TRACKER_KINOZAL_HOUR_LIMIT, default=30"`
-		ProxyType    int      `env:"TRACKER_KINOZAL_PROXY_TYPE, default=1"`
-		Cookies      string   `env:"TRACKER_KINOZAL_COOKIES, default="`
-		Enabled      bool     `env:"TRACKER_KINOZAL_ENABLED, default=true"`
-	}
-	Rutor struct {
-		Name         string   `env:"TRACKER_RUTOR_NAME, default=rutor"`
-		Domain       string   `env:"TRACKER_RUTOR_DOMAIN, default=rutor.is"`
-		ActiveDomain string   // DB-only override
-		Mirrors      []string // DB-only override
-		Publicity    string   `env:"TRACKER_RUTOR_PUBLICITY, default=public"`
-		DownloadURL  string   `env:"TRACKER_RUTOR_DOWNLOAD_URL, default=https://d.rutor.info/download/"`
-		HourLimit    int      `env:"TRACKER_RUTOR_HOUR_LIMIT, default=30"`
-		Enabled      bool     `env:"TRACKER_RUTOR_ENABLED, default=true"`
-	}
-		ActiveDomain string   // DB-only override
-		Mirrors      []string // DB-only override
-	}
-	NNM struct {
-		Name         string   `env:"TRACKER_NNM_NAME, default=nnm"`
-		Domain       string   `env:"TRACKER_NNM_DOMAIN, default=nnmclub.to"`
-		ActiveDomain string   // DB-only override
-		Mirrors      []string // DB-only override
-		Credentials  string   `env:"TRACKER_NNM_CREDENTIALS, default="`
-		Publicity    string   `env:"TRACKER_NNM_PUBLICITY, default=private"`
-		LoginURL     string   `env:"TRACKER_NNM_LOGIN_URL, default=https://nnmclub.to/forum/login.php"`
-		DownloadURL  string   `env:"TRACKER_NNM_DOWNLOAD_URL, default=https://nnmclub.to/forum/download.php?id="`
-		HourLimit    int      `env:"TRACKER_NNM_HOUR_LIMIT, default=25"`
-		Cookies      string   `env:"TRACKER_NNM_COOKIES, default="`
-		ProxyType    int      `env:"TRACKER_NNM_PROXY_TYPE, default=1"`
-		Enabled      bool     `env:"TRACKER_NNM_ENABLED, default=true"`
-	}
-	TeamHD struct {
-		Name         string   `env:"TRACKER_TEAMHD_NAME, default=teamhd"`
-		Domain       string   `env:"TRACKER_TEAMHD_DOMAIN, default=teamhd.org"`
-		ActiveDomain string   // DB-only override
-		Mirrors      []string // DB-only override
-		Publicity    string   `env:"TRACKER_TEAMHD_PUBLICITY, default=private"`
-		DownloadURL  string   `env:"TRACKER_TEAMHD_DOWNLOAD_URL, default=https://teamhd.org/download.php?id="`
-		HourLimit    int      `env:"TRACKER_TEAMHD_HOUR_LIMIT, default=25"`
-		Cookies      string   `env:"TRACKER_TEAMHD_COOKIES, default="`
-		Enabled      bool     `env:"TRACKER_TEAMHD_ENABLED, default=true"`
-	}
+	return nil
 }
 
 type Runner struct {

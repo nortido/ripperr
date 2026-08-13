@@ -121,6 +121,7 @@ WHERE id IN (
         FROM trackerr.check_log
     ) dedup_name WHERE rn > 1
 );
+CREATE UNIQUE INDEX IF NOT EXISTS check_log_item_name_uidx ON trackerr.check_log (LOWER(TRIM(item_name))) WHERE TRIM(item_name) <> '';
 `)
 	return err
 }
@@ -184,6 +185,15 @@ func (c *client) UpdateItem(ctx context.Context, item *storage.Item) (err error)
 }
 
 func (c *client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error {
+	// the upsert arbiter is url_hash, so a same-name row under a different hash
+	// (release moved to a new topic) would trip check_log_item_name_uidx: drop it first
+	if strings.TrimSpace(entry.ItemName) != "" {
+		if _, err := c.db.Exec(ctx,
+			`DELETE FROM trackerr.check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM($1)) AND url_hash <> $2`,
+			entry.ItemName, entry.URLHash); err != nil {
+			return err
+		}
+	}
 	_, err := c.db.Exec(ctx,
 		`INSERT INTO trackerr.check_log (url_hash, item_name, item_url, tracker_type_id, status, error, error_streak)
 		 VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $5 = 'error' THEN 1 ELSE 0 END)
@@ -201,9 +211,7 @@ func (c *client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 
 func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
 	var total int
-	from := `(SELECT DISTINCT ON (LOWER(TRIM(item_name))) id, checked_at, url_hash, item_name, item_url, tracker_type_id, status, error, error_streak
-		FROM trackerr.check_log
-		ORDER BY LOWER(TRIM(item_name)), checked_at DESC, id DESC) c`
+	from := `trackerr.check_log c`
 	join := " LEFT JOIN trackerr.history h ON h.url_hash = c.url_hash"
 	if ignoredOnly {
 		join += " INNER JOIN trackerr.ignore i ON i.url_hash = c.url_hash"

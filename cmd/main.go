@@ -29,7 +29,7 @@ func main() {
 	ctx, stop := signalNotify()
 	defer stop()
 
-	var baseCfg config.App
+	baseCfg := config.DefaultApp()
 	if err := envconfig.Process(ctx, &baseCfg); err != nil {
 		logger.Error(err.Error())
 		return

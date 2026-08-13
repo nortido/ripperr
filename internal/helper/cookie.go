@@ -105,4 +105,3 @@ func CookiesString(ck []*http.Cookie) string {
 	}
 	return b.String()
 }
-

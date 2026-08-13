@@ -138,154 +138,28 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	}
 }
 
+// applyTrackerOverlay overlays a patch onto one tracker: marshal drops the nil
+// pointers (omitempty), so Unmarshal only touches the keys the patch defines.
+func applyTrackerOverlay(item *config.TrackerItem, o trackerItemOverlay) error {
+	b, err := json.Marshal(o)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, item)
+}
+
 func applyTrackers(cfg *config.App, m map[string]trackerItemOverlay) {
-	applyOne := func(key string, f *trackerFields) {
-		if o, ok := m[key]; ok {
-			overlayTracker(o, f)
+	for key, o := range m {
+		if it := cfg.Tracker.ByKey(key); it != nil {
+			_ = applyTrackerOverlay(it, o)
 		}
 	}
-	applyOne("rutracker", &trackerFields{
-		Enabled: &cfg.Tracker.Rutracker.Enabled, Domain: &cfg.Tracker.Rutracker.Domain,
-		ActiveDomain: &cfg.Tracker.Rutracker.ActiveDomain,
-		Mirrors:      &cfg.Tracker.Rutracker.Mirrors,
-		HourLimit:    &cfg.Tracker.Rutracker.HourLimit, ProxyType: &cfg.Tracker.Rutracker.ProxyType,
-		LoginURL: &cfg.Tracker.Rutracker.LoginURL, DownloadURL: &cfg.Tracker.Rutracker.DownloadURL,
-		Credentials: &cfg.Tracker.Rutracker.Credentials, Publicity: &cfg.Tracker.Rutracker.Publicity,
-	})
-	applyOne("kinozal", &trackerFields{
-		Enabled: &cfg.Tracker.Kinozal.Enabled, Domain: &cfg.Tracker.Kinozal.Domain,
-		ActiveDomain: &cfg.Tracker.Kinozal.ActiveDomain,
-		Mirrors:      &cfg.Tracker.Kinozal.Mirrors,
-		HourLimit:    &cfg.Tracker.Kinozal.HourLimit, ProxyType: &cfg.Tracker.Kinozal.ProxyType,
-		LoginURL: &cfg.Tracker.Kinozal.LoginURL, DownloadURL: &cfg.Tracker.Kinozal.DownloadURL,
-		Credentials: &cfg.Tracker.Kinozal.Credentials, Cookies: &cfg.Tracker.Kinozal.Cookies,
-		Publicity: &cfg.Tracker.Kinozal.Publicity,
-	})
-	applyOne("rutor", &trackerFields{
-		Enabled: &cfg.Tracker.Rutor.Enabled, Domain: &cfg.Tracker.Rutor.Domain,
-		ActiveDomain: &cfg.Tracker.Rutor.ActiveDomain,
-		Mirrors:      &cfg.Tracker.Rutor.Mirrors,
-		HourLimit:    &cfg.Tracker.Rutor.HourLimit, DownloadURL: &cfg.Tracker.Rutor.DownloadURL,
-		Publicity: &cfg.Tracker.Rutor.Publicity,
-	})
-	applyOne(&trackerFields{
-	})
-	applyOne("nnm", &trackerFields{
-		Enabled: &cfg.Tracker.NNM.Enabled, Domain: &cfg.Tracker.NNM.Domain,
-		ActiveDomain: &cfg.Tracker.NNM.ActiveDomain,
-		Mirrors:      &cfg.Tracker.NNM.Mirrors,
-		HourLimit:    &cfg.Tracker.NNM.HourLimit, ProxyType: &cfg.Tracker.NNM.ProxyType,
-		LoginURL: &cfg.Tracker.NNM.LoginURL, DownloadURL: &cfg.Tracker.NNM.DownloadURL,
-		Credentials: &cfg.Tracker.NNM.Credentials, Cookies: &cfg.Tracker.NNM.Cookies,
-		Publicity: &cfg.Tracker.NNM.Publicity,
-	})
-	applyOne("teamhd", &trackerFields{
-		Enabled: &cfg.Tracker.TeamHD.Enabled, Domain: &cfg.Tracker.TeamHD.Domain,
-		ActiveDomain: &cfg.Tracker.TeamHD.ActiveDomain,
-		Mirrors:      &cfg.Tracker.TeamHD.Mirrors,
-		HourLimit:    &cfg.Tracker.TeamHD.HourLimit, DownloadURL: &cfg.Tracker.TeamHD.DownloadURL,
-		Cookies: &cfg.Tracker.TeamHD.Cookies, Publicity: &cfg.Tracker.TeamHD.Publicity,
-	})
 }
 
 // ApplyTrackerKey overlays one tracker key onto cfg (partial patch; unset fields keep current values).
 func ApplyTrackerKey(cfg *config.App, key string, o trackerItemOverlay) {
-	applyOne := func(k string, f *trackerFields) {
-		if k == key {
-			overlayTracker(o, f)
-		}
-	}
-	applyOne("rutracker", &trackerFields{
-		Enabled: &cfg.Tracker.Rutracker.Enabled, Domain: &cfg.Tracker.Rutracker.Domain,
-		ActiveDomain: &cfg.Tracker.Rutracker.ActiveDomain,
-		Mirrors:      &cfg.Tracker.Rutracker.Mirrors,
-		HourLimit:    &cfg.Tracker.Rutracker.HourLimit, ProxyType: &cfg.Tracker.Rutracker.ProxyType,
-		LoginURL: &cfg.Tracker.Rutracker.LoginURL, DownloadURL: &cfg.Tracker.Rutracker.DownloadURL,
-		Credentials: &cfg.Tracker.Rutracker.Credentials, Publicity: &cfg.Tracker.Rutracker.Publicity,
-	})
-	applyOne("kinozal", &trackerFields{
-		Enabled: &cfg.Tracker.Kinozal.Enabled, Domain: &cfg.Tracker.Kinozal.Domain,
-		ActiveDomain: &cfg.Tracker.Kinozal.ActiveDomain,
-		Mirrors:      &cfg.Tracker.Kinozal.Mirrors,
-		HourLimit:    &cfg.Tracker.Kinozal.HourLimit, ProxyType: &cfg.Tracker.Kinozal.ProxyType,
-		LoginURL: &cfg.Tracker.Kinozal.LoginURL, DownloadURL: &cfg.Tracker.Kinozal.DownloadURL,
-		Credentials: &cfg.Tracker.Kinozal.Credentials, Cookies: &cfg.Tracker.Kinozal.Cookies,
-		Publicity: &cfg.Tracker.Kinozal.Publicity,
-	})
-	applyOne("rutor", &trackerFields{
-		Enabled: &cfg.Tracker.Rutor.Enabled, Domain: &cfg.Tracker.Rutor.Domain,
-		ActiveDomain: &cfg.Tracker.Rutor.ActiveDomain,
-		Mirrors:      &cfg.Tracker.Rutor.Mirrors,
-		HourLimit:    &cfg.Tracker.Rutor.HourLimit, DownloadURL: &cfg.Tracker.Rutor.DownloadURL,
-		Publicity: &cfg.Tracker.Rutor.Publicity,
-	})
-	applyOne(&trackerFields{
-	})
-	applyOne("nnm", &trackerFields{
-		Enabled: &cfg.Tracker.NNM.Enabled, Domain: &cfg.Tracker.NNM.Domain,
-		ActiveDomain: &cfg.Tracker.NNM.ActiveDomain,
-		Mirrors:      &cfg.Tracker.NNM.Mirrors,
-		HourLimit:    &cfg.Tracker.NNM.HourLimit, ProxyType: &cfg.Tracker.NNM.ProxyType,
-		LoginURL: &cfg.Tracker.NNM.LoginURL, DownloadURL: &cfg.Tracker.NNM.DownloadURL,
-		Credentials: &cfg.Tracker.NNM.Credentials, Cookies: &cfg.Tracker.NNM.Cookies,
-		Publicity: &cfg.Tracker.NNM.Publicity,
-	})
-	applyOne("teamhd", &trackerFields{
-		Enabled: &cfg.Tracker.TeamHD.Enabled, Domain: &cfg.Tracker.TeamHD.Domain,
-		ActiveDomain: &cfg.Tracker.TeamHD.ActiveDomain,
-		Mirrors:      &cfg.Tracker.TeamHD.Mirrors,
-		HourLimit:    &cfg.Tracker.TeamHD.HourLimit, DownloadURL: &cfg.Tracker.TeamHD.DownloadURL,
-		Cookies: &cfg.Tracker.TeamHD.Cookies, Publicity: &cfg.Tracker.TeamHD.Publicity,
-	})
-}
-
-type trackerFields struct {
-	Enabled      *bool
-	Domain       *string
-	ActiveDomain *string
-	Mirrors      *[]string
-	HourLimit    *int
-	ProxyType    *int
-	LoginURL     *string
-	DownloadURL  *string
-	Credentials  *string
-	Cookies      *string
-	Publicity    *string
-}
-
-func overlayTracker(o trackerItemOverlay, t *trackerFields) {
-	if o.Enabled != nil {
-		*t.Enabled = *o.Enabled
-	}
-	if o.Domain != nil {
-		*t.Domain = *o.Domain
-	}
-	if o.ActiveDomain != nil {
-		*t.ActiveDomain = *o.ActiveDomain
-	}
-	if o.Mirrors != nil {
-		*t.Mirrors = *o.Mirrors
-	}
-	if o.HourLimit != nil {
-		*t.HourLimit = *o.HourLimit
-	}
-	if o.ProxyType != nil && t.ProxyType != nil {
-		*t.ProxyType = *o.ProxyType
-	}
-	if o.LoginURL != nil && t.LoginURL != nil {
-		*t.LoginURL = *o.LoginURL
-	}
-	if o.DownloadURL != nil && t.DownloadURL != nil {
-		*t.DownloadURL = *o.DownloadURL
-	}
-	if o.Credentials != nil && t.Credentials != nil {
-		*t.Credentials = *o.Credentials
-	}
-	if o.Cookies != nil && t.Cookies != nil {
-		*t.Cookies = *o.Cookies
-	}
-	if o.Publicity != nil {
-		*t.Publicity = *o.Publicity
+	if it := cfg.Tracker.ByKey(key); it != nil {
+		_ = applyTrackerOverlay(it, o)
 	}
 }
 
@@ -378,27 +252,13 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	return b
 }
 
-// TrackersJSON returns effective tracker settings merged from env + DB overlay document.
-func TrackersJSON(ctx context.Context, cfg *config.App, db settingsDB) (json.RawMessage, error) {
-	type item struct {
-		Enabled      bool     `json:"enabled"`
-		Domain       string   `json:"domain"`
-		ActiveDomain string   `json:"active_domain"`
-		Mirrors      []string `json:"mirrors"`
-		HourLimit    int      `json:"hour_limit"`
-		ProxyType    int      `json:"proxy_type"`
-		LoginURL     string   `json:"login_url"`
-		DownloadURL  string   `json:"download_url"`
-		Credentials  string   `json:"credentials"`
-		Cookies      string   `json:"cookies"`
-		Publicity    string   `json:"publicity"`
-	}
-	m := map[string]item{
-		"rutracker": {cfg.Tracker.Rutracker.Enabled, cfg.Tracker.Rutracker.Domain, cfg.Tracker.Rutracker.ActiveDomain, cfg.Tracker.Rutracker.Mirrors, cfg.Tracker.Rutracker.HourLimit, cfg.Tracker.Rutracker.ProxyType, cfg.Tracker.Rutracker.LoginURL, cfg.Tracker.Rutracker.DownloadURL, cfg.Tracker.Rutracker.Credentials, "", cfg.Tracker.Rutracker.Publicity},
-		"kinozal":   {cfg.Tracker.Kinozal.Enabled, cfg.Tracker.Kinozal.Domain, cfg.Tracker.Kinozal.ActiveDomain, cfg.Tracker.Kinozal.Mirrors, cfg.Tracker.Kinozal.HourLimit, cfg.Tracker.Kinozal.ProxyType, cfg.Tracker.Kinozal.LoginURL, cfg.Tracker.Kinozal.DownloadURL, cfg.Tracker.Kinozal.Credentials, cfg.Tracker.Kinozal.Cookies, cfg.Tracker.Kinozal.Publicity},
-		"rutor":     {cfg.Tracker.Rutor.Enabled, cfg.Tracker.Rutor.Domain, cfg.Tracker.Rutor.ActiveDomain, cfg.Tracker.Rutor.Mirrors, cfg.Tracker.Rutor.HourLimit, 0, "", cfg.Tracker.Rutor.DownloadURL, "", "", cfg.Tracker.Rutor.Publicity},
-		"nnm":       {cfg.Tracker.NNM.Enabled, cfg.Tracker.NNM.Domain, cfg.Tracker.NNM.ActiveDomain, cfg.Tracker.NNM.Mirrors, cfg.Tracker.NNM.HourLimit, cfg.Tracker.NNM.ProxyType, cfg.Tracker.NNM.LoginURL, cfg.Tracker.NNM.DownloadURL, cfg.Tracker.NNM.Credentials, cfg.Tracker.NNM.Cookies, cfg.Tracker.NNM.Publicity},
-		"teamhd":    {cfg.Tracker.TeamHD.Enabled, cfg.Tracker.TeamHD.Domain, cfg.Tracker.TeamHD.ActiveDomain, cfg.Tracker.TeamHD.Mirrors, cfg.Tracker.TeamHD.HourLimit, 0, "", cfg.Tracker.TeamHD.DownloadURL, "", cfg.Tracker.TeamHD.Cookies, cfg.Tracker.TeamHD.Publicity},
+// TrackersEffective returns per-key tracker settings merged from env + the DB overlay document.
+func TrackersEffective(ctx context.Context, cfg *config.App, db settingsDB) (map[string]config.TrackerItem, error) {
+	m := make(map[string]config.TrackerItem, len(config.TrackerKeys))
+	for _, key := range config.TrackerKeys {
+		if it := cfg.Tracker.ByKey(key); it != nil {
+			m[key] = *it
+		}
 	}
 	if raw, ok, err := db.GetSetting(ctx, pg.SettingTrackers); err != nil {
 		return nil, err
@@ -412,38 +272,8 @@ func TrackersJSON(ctx context.Context, cfg *config.App, db settingsDB) (json.Raw
 			if !exists {
 				continue
 			}
-			if o.Enabled != nil {
-				it.Enabled = *o.Enabled
-			}
-			if o.Domain != nil {
-				it.Domain = *o.Domain
-			}
-			if o.ActiveDomain != nil {
-				it.ActiveDomain = *o.ActiveDomain
-			}
-			if o.Mirrors != nil {
-				it.Mirrors = *o.Mirrors
-			}
-			if o.HourLimit != nil {
-				it.HourLimit = *o.HourLimit
-			}
-			if o.ProxyType != nil {
-				it.ProxyType = *o.ProxyType
-			}
-			if o.LoginURL != nil {
-				it.LoginURL = *o.LoginURL
-			}
-			if o.DownloadURL != nil {
-				it.DownloadURL = *o.DownloadURL
-			}
-			if o.Credentials != nil {
-				it.Credentials = *o.Credentials
-			}
-			if o.Cookies != nil {
-				it.Cookies = *o.Cookies
-			}
-			if o.Publicity != nil {
-				it.Publicity = *o.Publicity
+			if err = applyTrackerOverlay(&it, o); err != nil {
+				return nil, err
 			}
 			m[k] = it
 		}
@@ -454,7 +284,7 @@ func TrackersJSON(ctx context.Context, cfg *config.App, db settingsDB) (json.Raw
 			m[k] = it
 		}
 	}
-	return json.Marshal(m)
+	return m, nil
 }
 
 // mergePatch overlays filled fields from patch onto dst: during marshal nil-pointers
