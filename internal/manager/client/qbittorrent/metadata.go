@@ -118,13 +118,8 @@ func (c *client) addMagnetWithComment(ctx context.Context, magnet string, opts m
 		if !errors.Is(err, errFetchMetadataUnsupported) && !errors.Is(err, errMetadataFetchTimeout) {
 			return
 		}
-		logger.Warn(fmt.Sprintf("qbit metadata fetch: %s, building torrent locally", err))
-		data, err = torrentmeta.TorrentFromMagnet(ctx, magnet, opts.Comment)
-		if err != nil {
-			logger.Warn(fmt.Sprintf("local torrent build: %s, adding without comment", err))
-			return c.addMagnetURLVerified(ctx, magnet, opts)
-		}
-		return c.addTorrentVerified(ctx, data, opts)
+		logger.Warn(fmt.Sprintf("qbit metadata fetch: %s, adding without comment", err))
+		return c.addMagnetURLVerified(ctx, magnet, opts)
 	}
 	return c.addTorrentWithComment(ctx, data, opts)
 }

@@ -14,15 +14,11 @@ func DedupeEntriesByName(entries []*model.Entry) []*model.Entry {
 	if len(entries) == 0 {
 		return entries
 	}
-	type pick struct {
-		entry *model.Entry
-	}
-	best := make(map[string]pick, len(entries))
+	best := make(map[string]*model.Entry, len(entries))
 	for _, e := range entries {
 		key := NormalizeReleaseName(e.Name)
-		cur, ok := best[key]
-		if !ok || entryWins(e, cur.entry) {
-			best[key] = pick{entry: e}
+		if cur, ok := best[key]; !ok || entryWins(e, cur) {
+			best[key] = e
 		}
 	}
 	out := make([]*model.Entry, 0, len(best))
@@ -32,7 +28,7 @@ func DedupeEntriesByName(entries []*model.Entry) []*model.Entry {
 		if _, ok := seen[key]; ok {
 			continue
 		}
-		if best[key].entry == e {
+		if best[key] == e {
 			out = append(out, e)
 			seen[key] = struct{}{}
 		}

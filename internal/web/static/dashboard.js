@@ -18,6 +18,10 @@ export let dashboardRunning = false;
 export let dashboardDryRun = false;
 
 export let dashboardFetchGen = 0;
+// imported bindings are read-only, so other modules bump the generation through this
+export function nextDashboardFetchGen() {
+  return ++dashboardFetchGen;
+}
 export let planForceLocal = Object.create(null);
 export let ignoreHashesCache = null;
 
@@ -382,7 +386,7 @@ export async function triggerStopCheck() {
 
 
 export function statCard(value, label, iconName, variant, filterType) {
-  const iconCls = 'stat-icon stat-icon-' + (variant || 'blue');
+  const iconCls = 'stat-icon stat-icon-' + variant;
   let filterCls = '';
   let filterAttr = '';
   if (filterType) {

@@ -61,7 +61,7 @@ func main() {
 	}
 
 	effective := func() config.App {
-		cfg := baseCfg.Clone()
+		cfg := baseCfg // структура копируется по значению, срезы в секциях overlay всегда переприсваивает
 		if err := settings.ApplyOverrides(context.Background(), &cfg, db); err != nil {
 			logger.Error(err.Error())
 		}
@@ -85,7 +85,7 @@ func main() {
 
 	first := true
 	for {
-		cfg := baseCfg.Clone()
+		cfg := baseCfg // структура копируется по значению, срезы в секциях overlay всегда переприсваивает
 		if err := settings.ApplyOverrides(ctx, &cfg, db); err != nil {
 			logger.Error(err.Error())
 		}

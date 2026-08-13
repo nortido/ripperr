@@ -228,11 +228,6 @@
   color: var(--hue-green);
 }
 
-.stat-icon-blue {
-  background: var(--tint-blue);
-  color: var(--hue-blue);
-}
-
 .stat-icon-cyan {
   background: var(--tint-cyan);
   color: var(--hue-cyan);

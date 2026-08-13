@@ -2,11 +2,8 @@ package helper
 
 import (
 	"net/http"
-	"net/textproto"
 	"strings"
 	"time"
-
-	"golang.org/x/net/http/httpguts"
 )
 
 func cookieDomain(domain string) string {
@@ -34,30 +31,18 @@ func EnrichCookies(cookies []*http.Cookie, domain string, ttl time.Duration) {
 	}
 }
 
+// ParseCookies разбирает значение заголовка Cookie. Куки приходят из настроек,
+// набранных руками, поэтому пары режем сами и мусорные пропускаем: http.ParseCookie
+// на первой же паре без "=" (хоть на висящей в конце ";") возвращает ошибку и ни
+// одной куки. Валидацию имени и значения по-прежнему делает она.
 func ParseCookies(line string) (cookies []*http.Cookie) {
-	var part string
-
-	if len(line) == 0 {
-		return
-	}
-	line = textproto.TrimString(line)
-
-	for len(line) > 0 { // continue since we have rest
-		part, line, _ = strings.Cut(line, ";")
-		part = textproto.TrimString(part)
-		if part == "" {
+	for _, part := range strings.Split(line, ";") {
+		if part = strings.TrimSpace(part); part == "" {
 			continue
 		}
-		name, val, _ := strings.Cut(part, "=")
-		name = textproto.TrimString(name)
-		if !isCookieNameValid(name) {
-			continue
+		if parsed, err := http.ParseCookie(part); err == nil {
+			cookies = append(cookies, parsed...)
 		}
-		val, ok := parseCookieValue(val, true)
-		if !ok {
-			continue
-		}
-		cookies = append(cookies, &http.Cookie{Name: name, Value: val})
 	}
 	return
 }
@@ -121,30 +106,3 @@ func CookiesString(ck []*http.Cookie) string {
 	return b.String()
 }
 
-func isCookieNameValid(raw string) bool {
-	if raw == "" {
-		return false
-	}
-	return strings.IndexFunc(raw, isNotToken) < 0
-}
-
-func isNotToken(r rune) bool {
-	return !httpguts.IsTokenRune(r)
-}
-
-func parseCookieValue(raw string, allowDoubleQuote bool) (string, bool) {
-	// Strip the quotes, if present.
-	if allowDoubleQuote && len(raw) > 1 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		raw = raw[1 : len(raw)-1]
-	}
-	for i := 0; i < len(raw); i++ {
-		if !validCookieValueByte(raw[i]) {
-			return "", false
-		}
-	}
-	return raw, true
-}
-
-func validCookieValueByte(b byte) bool {
-	return 0x20 <= b && b < 0x7f && b != '"' && b != ';' && b != '\\'
-}

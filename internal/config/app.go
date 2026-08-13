@@ -10,9 +10,3 @@ type App struct {
 	DB           Storage
 	Web          Web
 }
-
-// Clone returns a shallow copy. Struct is copied by value; slice fields (in nested sections)
-// are shared but never mutated in place—overlays always assign fresh slices.
-func (a App) Clone() App {
-	return a
-}

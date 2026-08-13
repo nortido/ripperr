@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -54,10 +55,6 @@ type storage interface {
 	DeleteItem(ctx context.Context, urlHash string) error
 	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
-}
-
-type IHandler interface {
-	Run(ctx context.Context)
 }
 
 type handler struct {
@@ -261,7 +258,7 @@ func (h *handler) push(ctx context.Context, dry bool) (err error) {
 		if entries[i].URL == "" {
 			continue
 		}
-		if len(h.config.Categories) > 0 && !helper.InArray(entries[i].Category, h.config.Categories) {
+		if len(h.config.Categories) > 0 && !slices.Contains(h.config.Categories, entries[i].Category) {
 			continue
 		}
 		if len(h.config.WatchTags) > 0 && !entryMatchesWatchTags(entries[i].Tag, h.config.WatchTags) {
@@ -304,7 +301,7 @@ func entryMatchesWatchTags(entryTags string, watchTags []string) bool {
 		if t == "" {
 			continue
 		}
-		if helper.InArray(t, watchTags) {
+		if slices.Contains(watchTags, t) {
 			return true
 		}
 	}
@@ -638,7 +635,7 @@ func (h *handler) getRecheckAt(tm *time.Time) (result *time.Time) {
 	return &tt
 }
 
-func NewRunner(tracker trackerService, manager manager, storage storage, config model.HandlerConfig, state *State) IHandler {
+func NewRunner(tracker trackerService, manager manager, storage storage, config model.HandlerConfig, state *State) *handler {
 	return &handler{
 		trackerService: tracker,
 		manager:        manager,

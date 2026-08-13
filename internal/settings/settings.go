@@ -15,47 +15,47 @@ type settingsDB interface {
 }
 
 type scheduleOverlay struct {
-	StartHour             *int      `json:"start_hour"`
-	ListRefreshPerDay     *int      `json:"list_refresh_per_day"`
-	ThresholdMonth        *int      `json:"threshold_month"`
-	ThresholdHalfYear     *int      `json:"threshold_half_year"`
-	ThresholdYear         *int      `json:"threshold_year"`
-	ErrorStreakThreshold  *int      `json:"error_streak_threshold"`
-	DeleteEnabled         *bool     `json:"delete_enabled"`
-	DeleteFilesEnabled    *bool     `json:"delete_files_enabled"`
-	MonitoredCategories   *[]string `json:"monitored_categories"`
-	DeleteFilesCategories *[]string `json:"delete_files_categories"`
-	WatchTags             *[]string `json:"watch_tags"`
-	WatchTag              *string   `json:"watch_tag"` // legacy read-only
-	Timezone              *string   `json:"timezone"`
+	StartHour             *int      `json:"start_hour,omitempty"`
+	ListRefreshPerDay     *int      `json:"list_refresh_per_day,omitempty"`
+	ThresholdMonth        *int      `json:"threshold_month,omitempty"`
+	ThresholdHalfYear     *int      `json:"threshold_half_year,omitempty"`
+	ThresholdYear         *int      `json:"threshold_year,omitempty"`
+	ErrorStreakThreshold  *int      `json:"error_streak_threshold,omitempty"`
+	DeleteEnabled         *bool     `json:"delete_enabled,omitempty"`
+	DeleteFilesEnabled    *bool     `json:"delete_files_enabled,omitempty"`
+	MonitoredCategories   *[]string `json:"monitored_categories,omitempty"`
+	DeleteFilesCategories *[]string `json:"delete_files_categories,omitempty"`
+	WatchTags             *[]string `json:"watch_tags,omitempty"`
+	WatchTag              *string   `json:"watch_tag,omitempty"` // legacy read-only
+	Timezone              *string   `json:"timezone,omitempty"`
 }
 
 type trackerItemOverlay struct {
-	Enabled      *bool     `json:"enabled"`
-	Domain       *string   `json:"domain"`
-	ActiveDomain *string   `json:"active_domain"`
-	Mirrors      *[]string `json:"mirrors"`
-	HourLimit    *int      `json:"hour_limit"`
-	ProxyType    *int      `json:"proxy_type"`
-	LoginURL     *string   `json:"login_url"`
-	DownloadURL  *string   `json:"download_url"`
-	Credentials  *string   `json:"credentials"`
-	Cookies      *string   `json:"cookies"`
-	Publicity    *string   `json:"publicity"`
+	Enabled      *bool     `json:"enabled,omitempty"`
+	Domain       *string   `json:"domain,omitempty"`
+	ActiveDomain *string   `json:"active_domain,omitempty"`
+	Mirrors      *[]string `json:"mirrors,omitempty"`
+	HourLimit    *int      `json:"hour_limit,omitempty"`
+	ProxyType    *int      `json:"proxy_type,omitempty"`
+	LoginURL     *string   `json:"login_url,omitempty"`
+	DownloadURL  *string   `json:"download_url,omitempty"`
+	Credentials  *string   `json:"credentials,omitempty"`
+	Cookies      *string   `json:"cookies,omitempty"`
+	Publicity    *string   `json:"publicity,omitempty"`
 }
 
 type integrationsOverlay struct {
 	Qbit struct {
-		Host     *string `json:"host"`
-		Username *string `json:"username"`
-		Password *string `json:"password"`
+		Host     *string `json:"host,omitempty"`
+		Username *string `json:"username,omitempty"`
+		Password *string `json:"password,omitempty"`
 	} `json:"qbit"`
 	Flaresolverr struct {
-		URL       *string `json:"url"`
-		TimeoutMS *int    `json:"timeout_ms"`
+		URL       *string `json:"url,omitempty"`
+		TimeoutMS *int    `json:"timeout_ms,omitempty"`
 	} `json:"flaresolverr"`
 	Proxy struct {
-		DownloadProxy *string `json:"download_proxy"`
+		DownloadProxy *string `json:"download_proxy,omitempty"`
 	} `json:"proxy"`
 }
 
@@ -457,82 +457,14 @@ func TrackersJSON(ctx context.Context, cfg *config.App, db settingsDB) (json.Raw
 	return json.Marshal(m)
 }
 
-func mergeTrackerOverlay(dst, src trackerItemOverlay) trackerItemOverlay {
-	if src.Enabled != nil {
-		dst.Enabled = src.Enabled
+// mergePatch overlays filled fields from patch onto dst: during marshal nil-pointers
+// are dropped (omitempty), so Unmarshal only touches keys that the patch defines.
+func mergePatch[T any](dst *T, patch T) error {
+	b, err := json.Marshal(patch)
+	if err != nil {
+		return err
 	}
-	if src.Domain != nil {
-		dst.Domain = src.Domain
-	}
-	if src.ActiveDomain != nil {
-		dst.ActiveDomain = src.ActiveDomain
-	}
-	if src.Mirrors != nil {
-		dst.Mirrors = src.Mirrors
-	}
-	if src.HourLimit != nil {
-		dst.HourLimit = src.HourLimit
-	}
-	if src.ProxyType != nil {
-		dst.ProxyType = src.ProxyType
-	}
-	if src.LoginURL != nil {
-		dst.LoginURL = src.LoginURL
-	}
-	if src.DownloadURL != nil {
-		dst.DownloadURL = src.DownloadURL
-	}
-	if src.Credentials != nil {
-		dst.Credentials = src.Credentials
-	}
-	if src.Cookies != nil {
-		dst.Cookies = src.Cookies
-	}
-	if src.Publicity != nil {
-		dst.Publicity = src.Publicity
-	}
-	return dst
-}
-
-func mergeScheduleOverlay(dst, src scheduleOverlay) scheduleOverlay {
-	if src.StartHour != nil {
-		dst.StartHour = src.StartHour
-	}
-	if src.ListRefreshPerDay != nil {
-		dst.ListRefreshPerDay = src.ListRefreshPerDay
-	}
-	if src.ThresholdMonth != nil {
-		dst.ThresholdMonth = src.ThresholdMonth
-	}
-	if src.ThresholdHalfYear != nil {
-		dst.ThresholdHalfYear = src.ThresholdHalfYear
-	}
-	if src.ThresholdYear != nil {
-		dst.ThresholdYear = src.ThresholdYear
-	}
-	if src.ErrorStreakThreshold != nil {
-		dst.ErrorStreakThreshold = src.ErrorStreakThreshold
-	}
-	if src.MonitoredCategories != nil {
-		dst.MonitoredCategories = src.MonitoredCategories
-	}
-	if src.DeleteEnabled != nil {
-		dst.DeleteEnabled = src.DeleteEnabled
-	}
-	if src.DeleteFilesEnabled != nil {
-		dst.DeleteFilesEnabled = src.DeleteFilesEnabled
-	}
-	if src.DeleteFilesCategories != nil {
-		dst.DeleteFilesCategories = src.DeleteFilesCategories
-	}
-	if src.WatchTags != nil {
-		dst.WatchTags = src.WatchTags
-		dst.WatchTag = nil
-	}
-	if src.Timezone != nil {
-		dst.Timezone = src.Timezone
-	}
-	return dst
+	return json.Unmarshal(b, dst)
 }
 
 // MergeSchedule merges a patch into the stored schedule document.
@@ -552,34 +484,17 @@ func MergeSchedule(ctx context.Context, db interface {
 			return err
 		}
 	}
-	merged := mergeScheduleOverlay(existing, overlay)
-	out, err := json.Marshal(merged)
+	if err = mergePatch(&existing, overlay); err != nil {
+		return err
+	}
+	if overlay.WatchTags != nil {
+		existing.WatchTag = nil
+	}
+	out, err := json.Marshal(existing)
 	if err != nil {
 		return err
 	}
 	return db.SaveSetting(ctx, pg.SettingSchedule, out)
-}
-
-func mergeIntegrationsOverlay(dst, src integrationsOverlay) integrationsOverlay {
-	if src.Qbit.Host != nil {
-		dst.Qbit.Host = src.Qbit.Host
-	}
-	if src.Qbit.Username != nil {
-		dst.Qbit.Username = src.Qbit.Username
-	}
-	if src.Qbit.Password != nil {
-		dst.Qbit.Password = src.Qbit.Password
-	}
-	if src.Flaresolverr.URL != nil {
-		dst.Flaresolverr.URL = src.Flaresolverr.URL
-	}
-	if src.Flaresolverr.TimeoutMS != nil {
-		dst.Flaresolverr.TimeoutMS = src.Flaresolverr.TimeoutMS
-	}
-	if src.Proxy.DownloadProxy != nil {
-		dst.Proxy.DownloadProxy = src.Proxy.DownloadProxy
-	}
-	return dst
 }
 
 // MergeTrackerKey merges one tracker key into the stored trackers document.
@@ -602,7 +517,11 @@ func MergeTrackerKey(ctx context.Context, db interface {
 	if m == nil {
 		m = make(map[string]trackerItemOverlay)
 	}
-	m[key] = mergeTrackerOverlay(m[key], overlay)
+	item := m[key]
+	if err = mergePatch(&item, overlay); err != nil {
+		return err
+	}
+	m[key] = item
 	out, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -627,8 +546,10 @@ func MergeIntegrations(ctx context.Context, db interface {
 			return err
 		}
 	}
-	merged := mergeIntegrationsOverlay(existing, overlay)
-	out, err := json.Marshal(merged)
+	if err = mergePatch(&existing, overlay); err != nil {
+		return err
+	}
+	out, err := json.Marshal(existing)
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,5 @@
 import { fetchJSON, showToast } from './api.js';
-import { buildHistoryQuery, dashboardFetchGen, loadDashboard, syncPlanForceLocal, updateDashboardTable } from './dashboard.js';
+import { buildHistoryQuery, dashboardFetchGen, loadDashboard, nextDashboardFetchGen, syncPlanForceLocal, updateDashboardTable } from './dashboard.js';
 import { ICONS, hydrateIcons, icon } from './icons.js';
 import { syncDashboardFilterHash } from './router.js';
 import { historyState } from './state.js';
@@ -660,7 +660,7 @@ export async function applyNameFilter(value) {
     loadDashboard();
     return;
   }
-  const fetchGen = ++dashboardFetchGen;
+  const fetchGen = nextDashboardFetchGen();
   try {
     const history = await fetchJSON(buildHistoryQuery());
     if (fetchGen !== dashboardFetchGen) return;

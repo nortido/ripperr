@@ -39,16 +39,6 @@ type db interface {
 	SaveTracker(ctx context.Context, source *tracker.Tracker) (err error)
 }
 
-type IService interface {
-	BuildCache(ctx context.Context) (err error)
-	CachedList() (res map[int]client.ITracker)
-	GetID(url string) (id int)
-	GetHourLimit(ttid int) (limit int)
-	GetCachedClient(ctx context.Context, ttid int) (tc client.IClient, err error)
-	Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error)
-	DestroyFlareSessions()
-}
-
 type CachedTracker struct {
 	client.IClient
 	Created time.Time
@@ -411,7 +401,7 @@ func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLo
 	return
 }
 
-func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig, alerts *breakeralerts.Registry) IService {
+func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig, alerts *breakeralerts.Registry) *service {
 	handlerRegistry := make(map[int]client.ITracker)
 	if conf.Rutracker.Enabled {
 		handlerRegistry[RutrackerID] = rutracker.New(conf.Rutracker)

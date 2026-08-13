@@ -141,7 +141,7 @@ export function getIntegrationTestConfig(kind) {
 }
 
 export function buildIntegrationsDoc() {
-  const base = integrationsCache ? JSON.parse(JSON.stringify(integrationsCache)) : {};
+  const base = integrationsCache ? structuredClone(integrationsCache) : {};
   if (!base.qbit) base.qbit = {};
   if (!base.flaresolverr) base.flaresolverr = {};
   if (!base.proxy) base.proxy = {};

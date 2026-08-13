@@ -16,21 +16,12 @@ type client interface {
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
 }
 
-type IManager interface {
-	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
-	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
-}
-
 type manager struct {
 	client client
 }
 
-func (m *manager) GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error) {
-	if entries, err = m.client.List(ctx, opts); err != nil {
-		return
-	}
-	return
+func (m *manager) GetEntries(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error) {
+	return m.client.List(ctx, opts)
 }
 
 func (m *manager) Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
@@ -81,7 +72,7 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 	return del()
 }
 
-func NewManager(client client) IManager {
+func NewManager(client client) *manager {
 	return &manager{
 		client: client,
 	}
