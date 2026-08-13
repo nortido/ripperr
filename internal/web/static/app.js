@@ -199,7 +199,20 @@ function trackerDisplayDomain(tracker) {
 
 const TRACKER_HUE_COUNT = 6;
 
+// the tracker set is fixed, so the hues are assigned by hand: hashing put // rutracker and teamhd on the same one. The four common trackers take the hues
+// that are furthest apart (blue, violet, amber, pink), leaving the two adjacent
+// blue-greens to the rare ones. 0 teal, 1 cyan, 2 blue, 3 violet, 4 amber, 5 pink
+const TRACKER_HUES = {
+  rutracker: 2,
+  nnm: 3,
+  kinozal: 4,
+  rutor: 0,
+  teamhd: 1,
+};
+
 function trackerNameHueIndex(name) {
+  const known = TRACKER_HUES[(name || '').toLowerCase()];
+  if (known !== undefined) return known;
   let h = 0;
   const s = name || '';
   for (let i = 0; i < s.length; i++) {
