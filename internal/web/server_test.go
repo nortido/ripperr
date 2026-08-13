@@ -274,7 +274,7 @@ func TestStaticCacheHeaders(t *testing.T) {
 	srv := newTestServer(&fakeStore{})
 	handler := srv.srv.Handler
 
-	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	req := httptest.NewRequest(http.MethodGet, "/base.css", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -288,7 +288,7 @@ func TestStaticCacheHeaders(t *testing.T) {
 		t.Fatal("ETag empty")
 	}
 
-	req2 := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/base.css", nil)
 	req2.Header.Set("If-None-Match", etag)
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)

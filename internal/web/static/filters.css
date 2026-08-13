@@ -1,0 +1,1164 @@
+/* history filter dropdown */
+
+.hist-filter-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.hist-filter-trigger {
+  position: relative;
+  max-width: 100%;
+}
+
+.hist-filter-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hue-cyan);
+  pointer-events: none;
+}
+
+.hist-filter-trigger.btn-icon {
+  position: relative;
+}
+
+.hist-filter-trigger.active-neutral {
+  background: var(--hover);
+  color: var(--text);
+  border-color: var(--border-subtle);
+}
+
+.hist-filter-trigger.active-success {
+  color: var(--success);
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+.hist-filter-trigger.active-muted {
+  color: var(--tint-warm);
+  border-color: var(--border-subtle);
+  background: var(--tint-warm-bg);
+}
+
+.hist-filter-trigger.active-warning {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.hist-filter-trigger.active-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.hist-filter-trigger.active-ignored {
+  color: var(--hue-amber);
+  border-color: var(--hue-amber);
+  background: var(--tint-amber);
+}
+
+.hist-filter-panel {
+  position: absolute;
+  right: 0;
+  left: auto;
+  top: calc(100% + 4px);
+  z-index: 300;
+  min-width: 12rem;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-dropdown);
+  padding: 4px;
+}
+
+.hist-filter-select.open-up .hist-filter-panel {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+@keyframes hist-filter-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes hist-filter-pop-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+.hist-filter-panel {
+  transform-origin: top right;
+}
+
+.hist-filter-select.open-up .hist-filter-panel {
+  transform-origin: bottom right;
+}
+
+.hist-filter-select.open .hist-filter-panel {
+  animation: hist-filter-pop-in 0.16s cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* the panel stays visible while closing: JS defers `hidden` until the
+   animation ends (HIST_FILTER_CLOSE_MS in app.js) */
+.hist-filter-select.is-closing .hist-filter-panel {
+  animation: hist-filter-pop-out 0.13s cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hist-filter-select.open .hist-filter-panel,
+  .hist-filter-select.is-closing .hist-filter-panel {
+    animation-duration: 0.001ms;
+  }
+}
+
+.hist-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.hist-filter-option:nth-child(even) {
+  background: var(--table-stripe);
+}
+
+.hist-filter-option:hover {
+  background: var(--hover);
+}
+
+.hist-filter-option.is-selected {
+  font-weight: 500;
+}
+
+.hist-filter-check {
+  display: flex;
+  align-items: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--success);
+}
+
+.hist-filter-check svg {
+  width: 16px;
+  height: 16px;
+}
+
+.hist-filter-option-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.hist-filter-option-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.hist-filter-option-icon-spacer {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.hist-filter-option-icon-updated {
+  color: var(--success);
+}
+
+.hist-filter-option-icon-unchanged {
+  color: var(--tint-warm);
+}
+
+.hist-filter-option-icon-unknown {
+  color: var(--warning);
+}
+
+.hist-filter-option-icon-error {
+  color: var(--danger);
+}
+
+.hist-filter-option-icon-ignored {
+  color: var(--hue-amber);
+}
+
+.hist-filter-option-label {
+  line-height: 1.2;
+}
+
+/* name column filter */
+
+.name-filter-wrap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+html:not(.mobile-layout) .name-filter-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+.th-name-filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+html:not(.mobile-layout) .th-name-filter-label {
+  width: 100%;
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+.th-name-filter-label:hover {
+  color: var(--text);
+}
+
+.th-name-filter-label:hover .th-name-filter-search {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.th-name-filter-search {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.th-name-filter-search svg {
+  width: 12px;
+  height: 12px;
+}
+
+.th-name-filter-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--hue-cyan);
+}
+
+.th-name-filter-icon-active svg {
+  width: 11px;
+  height: 11px;
+}
+
+.table-dash-releases th.col-name.is-active .th-name-filter-label {
+  color: var(--hue-cyan);
+}
+
+html:not(.mobile-layout) .name-filter-wrap.is-open .th-name-filter-label {
+  transform: translateX(100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .name-filter-wrap.is-open .th-name-filter-label {
+  display: none;
+}
+
+.name-filter-inline {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+
+html.mobile-layout .name-filter-inline {
+  display: none;
+}
+
+html.mobile-layout .name-filter-wrap.is-open .name-filter-inline {
+  display: flex;
+}
+
+html:not(.mobile-layout) .name-filter-inline {
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.mobile-layout) .th-name-filter-label,
+  html:not(.mobile-layout) .name-filter-inline {
+    transition-duration: 0.001ms;
+  }
+}
+
+.name-filter-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  padding: 0 0 2px;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  appearance: none;
+}
+
+.name-filter-input::-webkit-search-cancel-button,
+.name-filter-input::-webkit-search-decoration {
+  display: none;
+  appearance: none;
+}
+
+.name-filter-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.name-filter-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent-from);
+  box-shadow: none;
+}
+
+.name-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+
+.name-filter-clear:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.name-filter-clear svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* mobile card toolbar name search */
+
+.btn.btn-mobile-name-search {
+  display: none;
+  position: relative;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.btn.btn-mobile-name-search.is-active {
+  color: var(--hue-cyan);
+}
+
+.mobile-name-search-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hue-cyan);
+  pointer-events: none;
+}
+
+.mobile-name-search-slot {
+  display: none;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* search/close button pair: a fixed-position stack, only its icon cross-fades.
+   Promoted out of .mobile-name-search-slot so its own box geometry never
+   depends on the slot's (animated) width. */
+.mobile-name-search-toggle {
+  display: none;
+}
+
+.mobile-name-search-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  order: 1;
+  width: 0;
+  min-width: 0;
+  flex: 0 0 0;
+  opacity: 0;
+  overflow: hidden;
+  visibility: hidden;
+  transition:
+    flex 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+.releases-card-header .card-header-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.card-header-toolbar-shift {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.card-toolbar-pre-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.card-toolbar-post-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/*
+ * Mobile releases-card-header toolbar: name-search open/close animation.
+ *
+ * Geometry model (all lengths relative to .card-header-toolbar, the single
+ * positioning root — .card-toolbar-post-search is left `position: static`
+ * on purpose so it never becomes an alternate containing block):
+ *
+ *   T = .card-header-toolbar content width
+ *   buttons-w = btn-h-sm + gap + btn-h-sm            (name-search button + filter button)
+ *   content-right = buttons-w + gap                  (reserved strip on the right)
+ *   W = T - content-right                             (width of the sliding panes)
+ *
+ * .card-header-toolbar-shift (title/refresh/sort/force-all) and
+ * .mobile-name-search-slot (the search-input field) are both pinned to the
+ * exact same box — left: 0; right: content-right — at all times, in every
+ * state (idle, animating, expanded). Only `transform: translateX()` and
+ * `opacity` move them; nothing about their box (position/left/right/width)
+ * ever changes, so the two states are true time-reverses of each other and
+ * the two panes' edges stay perfectly adjacent (never overlapping, never
+ * gapping) at every point of the animation, regardless of easing, because
+ * both use the same `right` reserve and mirrored translateX(±100%).
+ *
+ * .mobile-name-search-toggle (the search button and close button, stacked
+ * in the same spot) and .hist-filter-select (filter button) are pinned with
+ * a constant `right` offset in EVERY state. The search button and the close
+ * button never move at all — they occupy the same box and cross-fade via
+ * opacity/visibility only (no display swap, no layout shift). The filter
+ * button is the only fixed-position element that itself animates away
+ * (transform + opacity, taken out of flow in both states, no max-width/flex).
+ */
+
+html.mobile-layout .releases-card-header .card-header-toolbar {
+  --mobile-toolbar-buttons-w: calc(var(--btn-h-sm) + 8px + var(--btn-h-sm));
+  --mobile-toolbar-content-right: calc(var(--mobile-toolbar-buttons-w) + 8px);
+  display: flex;
+  align-items: center;
+  position: relative;
+  overflow: visible;
+  height: var(--btn-h-sm);
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .card-header-toolbar,
+html.mobile-layout .releases-card-header.is-search-animating .card-header-toolbar {
+  overflow: hidden;
+}
+
+html.mobile-layout .releases-card-header .card-toolbar-post-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+
+html.mobile-layout .releases-card-header .card-header-toolbar-shift,
+html.mobile-layout .releases-card-header .mobile-name-search-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  right: var(--mobile-toolbar-content-right);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+html.mobile-layout .releases-card-header .card-header-toolbar-shift {
+  gap: 8px;
+  z-index: 1;
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+/* .card-header-toolbar-shift is squeezed into a fixed-height (--btn-h-sm)
+   absolutely-positioned box; without a nowrap guard a long release-card
+   title would wrap to a second line and get clipped instead of shrinking
+   the flex row, so it must ellipsize on one line here. */
+html.mobile-layout .releases-card-header .card-header-toolbar-shift .card-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .card-header-toolbar-shift {
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .releases-card-header .mobile-name-search-slot {
+  display: flex;
+  z-index: 1;
+  transform: translateX(100%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-slot {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+html.mobile-layout .mobile-name-search-field {
+  order: initial;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  opacity: 1;
+  visibility: visible;
+  transition: none;
+}
+
+html.mobile-layout .mobile-name-search-field .mobile-name-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* filter button: fixed at the toolbar's right edge in every state; when the
+   name-search field is open it is the one element that leaves, via
+   transform + opacity only (never max-width), taken out of flow always. */
+html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  width: var(--btn-h-sm);
+  transform: translateX(0);
+  opacity: 1;
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-search > .hist-filter-select {
+  transform: translateX(calc(100% + 8px));
+  opacity: 0;
+}
+
+/* is-closing keeps the lift while the panel animates out: this wrap is its own
+   stacking context, so dropping back to z-index 2 mid-animation would slide the
+   panel under the toolbar siblings. */
+html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.open,
+html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.is-closing {
+  z-index: 301;
+}
+
+/* search button / close button: constant position in every state — the
+   search button must never move a single pixel. Both buttons are stacked
+   in the same box; only the icon cross-fades via opacity/visibility. */
+html.mobile-layout .btn.btn-mobile-name-search {
+  display: inline-flex;
+}
+
+html.mobile-layout .releases-card-header .mobile-name-search-toggle {
+  display: flex;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--btn-h-sm) + 8px);
+  z-index: 2;
+  width: var(--btn-h-sm);
+  align-items: center;
+}
+
+html.mobile-layout .mobile-name-search-toggle .btn-mobile-name-search,
+html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+  position: absolute;
+  inset: 0;
+  width: var(--btn-h-sm);
+  height: var(--btn-h-sm);
+  min-width: var(--btn-h-sm);
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+html.mobile-layout .mobile-name-search-toggle .btn-mobile-name-search {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+  display: inline-flex;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  border: none;
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear:hover {
+  background: var(--hover);
+  border: none;
+  border-color: transparent;
+}
+
+html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear svg {
+  width: var(--btn-icon-sm);
+  height: var(--btn-icon-sm);
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-toggle .btn-mobile-name-search {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.32s;
+}
+
+html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+/* Lock out all interaction while mid-transition. These selectors must win
+   over the steady-state `pointer-events: auto` rules above despite equal
+   specificity — an explicitly declared value always beats one inherited
+   from an .is-search-animating ancestor, so each target is listed
+   explicitly here (not relied on via inheritance), and this block is kept
+   last in the cascade so it wins the tie. */
+html.mobile-layout .releases-card-header.is-search-animating .card-header-toolbar-shift,
+html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-slot,
+html.mobile-layout .releases-card-header.is-search-animating .card-toolbar-post-search > .hist-filter-select,
+html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-toggle .btn-mobile-name-search,
+html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.mobile-layout .releases-card-header .card-header-toolbar-shift,
+  html.mobile-layout .releases-card-header .mobile-name-search-slot,
+  html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select,
+  html.mobile-layout .mobile-name-search-toggle .btn-mobile-name-search,
+  html.mobile-layout .mobile-name-search-toggle .btn.mobile-name-filter-clear {
+    transition-duration: 0.001ms;
+  }
+}
+
+.seg-ctrl {
+  --seg-pad: 3px;
+  position: relative;
+  box-sizing: border-box;
+  display: inline-grid;
+  grid-template-columns: repeat(var(--seg-count, 2), 1fr);
+  align-items: stretch;
+  min-height: var(--btn-h-sm);
+  padding: var(--seg-pad);
+  border: var(--btn-border-w) solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--seg-track-bg);
+  gap: 0;
+}
+
+.seg-ctrl-thumb {
+  position: absolute;
+  top: var(--seg-pad);
+  left: var(--seg-pad);
+  bottom: var(--seg-pad);
+  width: calc((100% - var(--seg-pad) * 2) / var(--seg-count, 2));
+  border-radius: calc(var(--radius) - var(--btn-border-w) - var(--seg-pad));
+  background: var(--seg-thumb-bg);
+  border: var(--btn-border-w) solid var(--seg-thumb-border);
+  box-shadow: var(--seg-thumb-shadow);
+  pointer-events: none;
+  z-index: 0;
+  transform: translateX(0);
+  transition: transform 180ms ease;
+}
+
+.seg-ctrl-btn {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  width: 100%;
+  min-height: calc(var(--btn-h-sm) - (var(--seg-pad) * 2) - (var(--btn-border-w) * 2));
+  padding: 4px 10px;
+  border: none;
+  border-radius: calc(var(--radius) - var(--btn-border-w) - var(--seg-pad));
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--transition);
+}
+
+.seg-ctrl-btn svg {
+  width: var(--btn-icon-sm);
+  height: var(--btn-icon-sm);
+}
+
+.seg-ctrl-btn:hover {
+  color: var(--text);
+}
+
+.seg-ctrl-btn.active {
+  color: var(--text);
+}
+
+.seg-ctrl-btn:focus {
+  outline: none;
+}
+
+.seg-ctrl-btn:focus-visible {
+  outline: 2px solid var(--accent-from);
+  outline-offset: 2px;
+}
+
+.table-dash-releases .col-actions {
+  width: calc(var(--row-actions-w) + 22px);
+  max-width: calc(var(--row-actions-w) + 22px);
+  padding-right: 14px;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.release-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--row-actions-gap);
+}
+
+.table-dash-releases {
+  table-layout: fixed;
+}
+
+.table-dash-releases .col-tracker {
+  width: 128px;
+  max-width: 128px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.table-dash-releases .col-tracker .tracker-badge {
+  margin-left: 0;
+  max-width: none;
+}
+
+.table-dash-releases .col-time {
+  width: 110px;
+  max-width: 110px;
+}
+
+.table-dash-releases .plan-recheck-cell {
+  width: 130px;
+  max-width: 130px;
+}
+
+.table-dash-releases th {
+  white-space: normal;
+  line-height: 1.25;
+  height: auto;
+  min-height: 52px;
+  vertical-align: bottom;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.table-dash-releases th.col-time,
+.table-dash-releases th.plan-recheck-cell,
+.table-dash-releases th.col-status {
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: clip;
+  line-height: 1.25;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.table-dash-releases td.col-time,
+.table-dash-releases td.plan-recheck-cell {
+  white-space: nowrap;
+}
+
+.table-dash-releases .th-label-short {
+  display: none;
+}
+
+@media (min-width: 561px) {
+  html:not(.mobile-layout) .table-dash-releases .col-name {
+    min-width: 180px;
+    max-width: none;
+    word-break: normal;
+    overflow: hidden;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .release-title-wrap {
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .col-name .release-link {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 15ch;
+  }
+}
+
+@media (min-width: 561px) and (max-width: 1440px) {
+  html:not(.mobile-layout) .table-dash-releases th.col-status,
+  html:not(.mobile-layout) .table-dash-releases th.col-time,
+  html:not(.mobile-layout) .table-dash-releases th.plan-recheck-cell {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .col-status,
+  html:not(.mobile-layout) .table-dash-releases .col-time,
+  html:not(.mobile-layout) .table-dash-releases .plan-recheck-cell {
+    padding-left: 8px;
+    padding-right: 14px;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .col-actions {
+    width: calc(var(--row-actions-w) + 22px);
+    max-width: calc(var(--row-actions-w) + 22px);
+    padding-left: 8px;
+    padding-right: 14px;
+  }
+}
+
+@media (min-width: 561px) and (max-width: 900px) {
+  html:not(.mobile-layout) .table-dash-releases .col-tracker {
+    display: none;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .col-status {
+    width: 76px;
+    max-width: 76px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .col-time {
+    width: 100px;
+    max-width: 100px;
+    font-size: 13px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .plan-recheck-cell {
+    width: 118px;
+    max-width: 118px;
+    font-size: 13px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .col-actions {
+    width: calc(var(--row-actions-w) + 22px);
+    max-width: calc(var(--row-actions-w) + 22px);
+    padding-right: 14px;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .th-label-full {
+    display: none;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .th-label-short {
+    display: inline;
+  }
+}
+
+@media (min-width: 561px) and (max-width: 750px) {
+  html:not(.mobile-layout) .table-dash-releases th.col-status,
+  html:not(.mobile-layout) .table-dash-releases th.col-time,
+  html:not(.mobile-layout) .table-dash-releases th.plan-recheck-cell {
+    font-size: 10px;
+    letter-spacing: 0.01em;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases .col-status,
+  html:not(.mobile-layout) .table-dash-releases .col-time,
+  html:not(.mobile-layout) .table-dash-releases .plan-recheck-cell {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+}
+
+@media (min-width: 751px) and (max-width: 900px) {
+  html:not(.mobile-layout) .table-dash-releases th.col-status,
+  html:not(.mobile-layout) .table-dash-releases th.col-time,
+  html:not(.mobile-layout) .table-dash-releases th.plan-recheck-cell {
+    font-size: 10px;
+    letter-spacing: 0.015em;
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1199px) {
+  .table-dash-releases th.col-status .th-label-full {
+    display: none;
+  }
+
+  .table-dash-releases th.col-status .th-label-short {
+    display: inline;
+  }
+
+  .table-dash-releases th.col-status,
+  .table-dash-releases th.col-time,
+  .table-dash-releases th.plan-recheck-cell {
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: clip;
+    line-height: 1.25;
+    word-break: normal;
+    overflow-wrap: normal;
+  }
+
+  .table-dash-releases .col-status {
+    width: 92px;
+    max-width: 92px;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1150px) {
+  .table-dash-releases th.col-status,
+  .table-dash-releases th.col-time,
+  .table-dash-releases th.plan-recheck-cell,
+  .table-dash-releases th.col-tracker {
+    font-size: 10px;
+    letter-spacing: 0.01em;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .table-dash-releases .col-tracker {
+    width: 112px;
+    max-width: 112px;
+  }
+
+  .table-dash-releases .col-time {
+    width: 100px;
+    max-width: 100px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .table-dash-releases .plan-recheck-cell {
+    width: 118px;
+    max-width: 118px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 980px) {
+  .dash-page-header .page-header-row {
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .dash-page-header .dash-header-top {
+    flex-shrink: 0;
+  }
+
+  .dash-page-header .dash-header-status-block {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .dash-page-header .dash-header-status-block .run-status-label,
+  .dash-page-header .dash-last-updated {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1200px) {
+  .stat-card-next-run .stat-card-body {
+    padding-right: 34px;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1080px) {
+  .stat-grid {
+    gap: 10px;
+  }
+
+  .stat-card {
+    padding: 14px 12px;
+    gap: 8px;
+  }
+
+  .stat-value {
+    font-size: 22px;
+  }
+
+  .stat-card-next-run .stat-value {
+    font-size: clamp(13px, 8.5cqi, 22px);
+  }
+
+  .stat-label {
+    font-size: 11px;
+    margin-top: 2px;
+  }
+
+  .stat-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .stat-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .stat-card-next-run .stat-icon {
+    top: 12px;
+    right: 10px;
+    width: 26px;
+    height: 26px;
+  }
+
+  .stat-card-next-run .stat-card-body {
+    padding-right: 32px;
+  }
+
+  .stat-then-pill {
+    font-size: 10px;
+    padding: 2px 8px;
+  }
+}
+

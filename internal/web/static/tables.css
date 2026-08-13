@@ -1,0 +1,256 @@
+/* cards */
+
+.card {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  gap: 16px;
+}
+
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.card-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.card-body {
+  padding: 20px;
+}
+
+.card-body-flush {
+  padding: 0;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-subtle);
+  gap: 12px;
+}
+
+.card-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* tables */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 0 20px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  height: 52px;
+  vertical-align: middle;
+}
+
+.table.table-dash-releases th.col-actions,
+.table.table-dash-releases td.col-actions {
+  padding-left: 8px;
+  padding-right: 14px;
+}
+
+.table .col-name {
+  word-break: break-word;
+  max-width: 14rem;
+}
+
+.release-link {
+  color: var(--release-link);
+  font-weight: 500;
+  transition: color var(--transition);
+}
+
+a.release-link:hover {
+  color: var(--release-link-hover);
+  text-decoration: underline;
+}
+
+.table-dash-releases .col-name {
+  vertical-align: middle;
+  max-width: none;
+}
+
+.table-dash-releases .release-title-wrap {
+  display: inline;
+}
+
+.table-dash-releases .release-foot {
+  display: none;
+}
+
+@media (min-width: 561px) and (max-width: 900px) {
+  html:not(.mobile-layout) .table-dash-releases .release-foot {
+    display: inline;
+  }
+}
+
+.release-foot .tracker-badge {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.table-dash-releases .col-status,
+.table-dash-releases .col-time,
+.table-dash-releases .plan-recheck-cell {
+  vertical-align: middle;
+}
+
+.table-dash-releases .col-status {
+  width: 84px;
+  max-width: 84px;
+  text-align: center;
+}
+
+td.plan-recheck-cell {
+  white-space: nowrap;
+}
+
+.btn-force-all {
+  color: var(--hue-amber);
+}
+
+.btn-force-all.is-active {
+  color: var(--hue-amber);
+  background: var(--tint-amber);
+  border-color: var(--hue-amber);
+}
+
+.btn-force-all:hover:not(:disabled) {
+  color: var(--hue-amber);
+  background: var(--tint-amber);
+}
+
+.table td.col-time {
+  white-space: nowrap;
+}
+
+.table .col-status {
+  width: 48px;
+  text-align: center;
+}
+
+@media (min-width: 1200px) {
+  .table-dash-releases th.col-status {
+    width: 100px;
+    max-width: 100px;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: clip;
+    line-height: 1.25;
+    word-break: normal;
+    overflow-wrap: normal;
+  }
+
+  .table-dash-releases th.col-time {
+    width: 130px;
+    max-width: 130px;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: clip;
+    line-height: 1.25;
+    word-break: normal;
+    overflow-wrap: normal;
+    padding-right: 12px;
+  }
+
+  .table-dash-releases th.plan-recheck-cell {
+    width: 150px;
+    max-width: 150px;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: clip;
+    line-height: 1.25;
+    word-break: normal;
+    overflow-wrap: normal;
+    padding-right: 12px;
+  }
+
+  .table-dash-releases .col-status {
+    width: 100px;
+    max-width: 100px;
+  }
+
+  .table-dash-releases .col-time {
+    width: 130px;
+    max-width: 130px;
+    padding-right: 12px;
+  }
+
+  .table-dash-releases .plan-recheck-cell {
+    width: 150px;
+    max-width: 150px;
+    padding-right: 12px;
+  }
+
+  .table-dash-releases .th-label-full {
+    display: inline;
+  }
+
+  .table-dash-releases .th-label-short {
+    display: none;
+  }
+}
+
+.table th {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.table tbody tr {
+  transition: background var(--transition);
+}
+
+.table tbody tr:nth-child(even) {
+  background: var(--table-stripe);
+}
+
+.table tbody tr:hover {
+  background: var(--hover);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table .col-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table-empty td {
+  text-align: center;
+  color: var(--text-empty);
+  padding: 32px 20px;
+}
+

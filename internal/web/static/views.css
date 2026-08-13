@@ -1,0 +1,250 @@
+/* views */
+
+.hidden {
+  display: none !important;
+}
+
+.page-header {
+  margin-bottom: 24px;
+}
+
+.dash-header-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dash-header-status-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.dash-page-header .page-title {
+  margin-bottom: 0;
+}
+
+.dash-meta-sep {
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.run-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.run-status-dot-active {
+  background: var(--success);
+  animation: run-status-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes run-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.92); }
+}
+
+.page-title {
+  font-size: 27px;
+  font-weight: 700;
+  margin: 0 0 6px;
+  letter-spacing: -0.02em;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+/* stat cards */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: border-color var(--transition);
+}
+
+.stat-card-filter {
+  cursor: pointer;
+}
+
+.stat-card-filter:hover {
+  border-color: var(--border-subtle);
+}
+
+.stat-card-active.stat-card-filter-blue {
+  border-color: var(--hue-blue);
+}
+
+.stat-card-active.stat-card-filter-danger {
+  border-color: var(--danger);
+}
+
+.stat-card-active.stat-card-filter-cyan {
+  border-color: var(--hue-cyan);
+}
+
+.stat-card-next-run {
+  container-type: inline-size;
+}
+
+.stat-card-next-run .stat-card-body {
+  flex: 1;
+  min-width: 0;
+  padding-right: 36px;
+}
+
+.stat-card-next-run .stat-value {
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: clamp(13px, 8.5cqi, 28px);
+}
+
+.stat-card-next-run .stat-icon {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+}
+
+.stat-card-next-run .stat-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.stat-card-body {
+  min-width: 0;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.stat-sub {
+  margin-top: 8px;
+}
+
+.stat-then-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--hover);
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.stat-card-next-run .stat-label {
+  white-space: nowrap;
+}
+
+.stat-card-next-run[data-has-slots-popover] {
+  cursor: pointer;
+}
+
+.stat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--tint-green);
+  color: var(--hue-green);
+  flex-shrink: 0;
+}
+
+.stat-icon-green {
+  background: var(--tint-green);
+  color: var(--hue-green);
+}
+
+.stat-icon-blue {
+  background: var(--tint-blue);
+  color: var(--hue-blue);
+}
+
+.stat-icon-cyan {
+  background: var(--tint-cyan);
+  color: var(--hue-cyan);
+}
+
+.stat-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.stat-icon-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
