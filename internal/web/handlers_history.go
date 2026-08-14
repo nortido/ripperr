@@ -91,6 +91,11 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "history item not found")
 		return
 	}
+	// the flag alone would only survive until the next scheduled run; asking the
+	// runner starts the check now, and several forced releases join one pass
+	if req.Force {
+		s.runnerState.RequestForce(hash)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"force": req.Force})
 }
 

@@ -262,14 +262,15 @@ export function statusIcon(status, error, streak) {
     iconName = 'help';
     label = t('status.unknown');
   }
-  const title = status === 'error' && error ? error : label;
+  // the full error text belongs to the click popover only: a hover tooltip
+  // repeated it and covered the neighbouring rows
   const attrs = status === 'error' && error
     ? html` data-error="${error}" class="${cls} status-error-badge"`
     : html` class="${cls}"`;
   const badge = streak > 1
     ? html`<span class="streak-badge" title="${t('dash.streakTitle').replace('{n}', String(streak))}">${streak}</span>`
     : '';
-  return html`<span${attrs} title="${title}" aria-label="${title}">${icon(iconName)}</span>${badge}`;
+  return html`<span${attrs} title="${label}" aria-label="${label}">${icon(iconName)}</span>${badge}`;
 }
 
 

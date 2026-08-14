@@ -62,6 +62,7 @@ type handler struct {
 	pushMu         sync.Mutex
 	config         model.HandlerConfig
 	idx            map[int]chan *task
+	pri            map[int]chan *task
 	manager        manager
 	storage        storage
 	trackerService trackerService
@@ -114,6 +115,8 @@ func (h *handler) Run(ctx context.Context) {
 				continue
 			}
 			go h.runPush(ctx, pt, cherr, dry)
+		case hash := <-h.state.Force():
+			go h.pushForced(ctx, append([]string{hash}, h.state.DrainForce()...), cherr)
 		case <-pt.C:
 			if h.state.Running() {
 				pt.Reset(time.Until(h.nextRun(time.Now())))
@@ -131,13 +134,29 @@ func (h *handler) runPush(ctx context.Context, pt *time.Timer, cherr chan error,
 	}
 	defer h.pushMu.Unlock()
 
-	if pushErr := h.push(ctx, dry); pushErr != nil {
+	if pushErr := h.push(ctx, dry, nil); pushErr != nil {
 		select {
 		case <-ctx.Done():
 		case cherr <- pushErr:
 		}
 	}
 	pt.Reset(time.Until(h.nextRun(time.Now())))
+}
+
+// pushForced queues the forced releases right away instead of waiting for the
+// next scheduled run. It deliberately skips runPush's lock: a forced pass only
+// adds to the priority queues, so it may overlap a run already in progress.
+func (h *handler) pushForced(ctx context.Context, hashes []string, cherr chan error) {
+	forced := make(map[string]struct{}, len(hashes))
+	for _, hash := range hashes {
+		forced[hash] = struct{}{}
+	}
+	if err := h.push(ctx, false, forced); err != nil {
+		select {
+		case <-ctx.Done():
+		case cherr <- err:
+		}
+	}
 }
 
 func (h *handler) nextRun(now time.Time) time.Time {
@@ -156,45 +175,63 @@ func (h *handler) nextRun(now time.Time) time.Time {
 func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error) {
 	interval := h.requestInterval(ttid)
 	for {
-		select {
-		case <-ctx.Done():
+		tk := h.nextTask(ctx, ttid)
+		if tk == nil {
 			return
-		case tk := <-h.idx[ttid]:
-			e := tk.entry
-			var err error
-			func() {
-				defer h.state.End(h.gen)
-				defer tk.report.done()
-				defer func() {
-					if r := recover(); r != nil {
-						logger.Error(fmt.Sprintf("panic processing %q: %v\n%s", e.Name, r, debug.Stack()))
-						h.logCheck(ctx, e, ttid, "error", fmt.Sprintf("panic: %v", r), tk.report)
-					}
-				}()
-				err = h.worker(ctx, ttid, e, tk.report)
+		}
+		e := tk.entry
+		var err error
+		func() {
+			defer h.state.End(h.gen)
+			defer tk.report.done()
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error(fmt.Sprintf("panic processing %q: %v\n%s", e.Name, r, debug.Stack()))
+					h.logCheck(ctx, e, ttid, "error", fmt.Sprintf("panic: %v", r), tk.report)
+				}
 			}()
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					logger.Info("processing interrupted")
-				} else {
-					select {
-					case <-ctx.Done():
-						return
-					case cherr <- err:
-					}
+			err = h.worker(ctx, ttid, e, tk.report)
+		}()
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				logger.Info("processing interrupted")
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case cherr <- err:
 				}
 			}
-			if interval <= 0 {
-				continue
-			}
-			timer := time.NewTimer(interval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
 		}
+		if interval <= 0 {
+			continue
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// nextTask prefers the priority queue, so a forced release is checked before
+// whatever a full run has already queued for the same tracker. Returns nil when
+// the context is done.
+func (h *handler) nextTask(ctx context.Context, ttid int) *task {
+	select {
+	case tk := <-h.pri[ttid]:
+		return tk
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case tk := <-h.pri[ttid]:
+		return tk
+	case tk := <-h.idx[ttid]:
+		return tk
 	}
 }
 
@@ -207,13 +244,19 @@ func (h *handler) requestInterval(ttid int) time.Duration {
 }
 
 func (h *handler) initTrackerChannels() {
-	h.idx = make(map[int]chan *task, len(h.trackerService.CachedList()))
-	for ttid := range h.trackerService.CachedList() {
+	list := h.trackerService.CachedList()
+	h.idx = make(map[int]chan *task, len(list))
+	h.pri = make(map[int]chan *task, len(list))
+	for ttid := range list {
 		h.idx[ttid] = make(chan *task, 4096)
+		h.pri[ttid] = make(chan *task, forceQueueSize)
 	}
 }
 
-func (h *handler) push(ctx context.Context, dry bool) (err error) {
+// push queues the qbittorrent entries for checking. A non-nil forced set limits
+// the pass to those url hashes and routes them through the priority queues,
+// skipping the whole-list maintenance a full run does.
+func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}) (err error) {
 	h.state.Begin(h.gen)
 	defer h.state.End(h.gen)
 
@@ -239,14 +282,14 @@ func (h *handler) push(ctx context.Context, dry bool) (err error) {
 		}
 	}
 	entries = helper.DedupeEntriesByName(entries)
-	winners := make(map[string]string)
-	for _, e := range entries {
-		if e.URL == "" {
-			continue
+	if !dry && forced == nil {
+		winners := make(map[string]string)
+		for _, e := range entries {
+			if e.URL == "" {
+				continue
+			}
+			winners[strings.TrimSpace(e.Name)] = storagePkg.URLHash(e.URL)
 		}
-		winners[strings.TrimSpace(e.Name)] = storagePkg.URLHash(e.URL)
-	}
-	if !dry {
 		if err = h.storage.PurgeDuplicateNames(ctx, winners); err != nil {
 			logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
 		}
@@ -254,9 +297,18 @@ func (h *handler) push(ctx context.Context, dry bool) (err error) {
 	if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
 		return
 	}
+	queue := h.idx
+	if forced != nil {
+		queue = h.pri
+	}
 	for i := range entries {
 		if entries[i].URL == "" {
 			continue
+		}
+		if forced != nil {
+			if _, ok := forced[storagePkg.URLHash(entries[i].URL)]; !ok {
+				continue
+			}
 		}
 		if len(h.config.Categories) > 0 && !slices.Contains(h.config.Categories, entries[i].Category) {
 			continue
@@ -286,10 +338,10 @@ func (h *handler) push(ctx context.Context, dry bool) (err error) {
 			h.state.End(h.gen)
 			rep.done()
 			return
-		case h.idx[t] <- &task{entry: entries[i], report: rep}:
+		case queue[t] <- &task{entry: entries[i], report: rep}:
 		}
 	}
-	if !dry {
+	if !dry && forced == nil {
 		h.purgeStaleHistory(ctx)
 	}
 	return

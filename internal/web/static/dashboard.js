@@ -8,13 +8,20 @@ import { historyState } from './state.js';
 import { alertIncidentKey, dismissAlertKey, formatDateTime, formatRunSlot, formatTableTime, formatThenSlot, html, linkCell, pageSizeQueryLimit, pruneDismissedAlerts, statusIcon, trackerBadgeHtml, updateRefreshedAt, visibleAlerts } from './util.js';
 
 export const STOP_PENDING_MS = 90000;
+// a triggered run needs a moment to be picked up and to fetch the torrent list
+// before the server reports it as running; until then the UI trusts the click
+export const RUN_PENDING_MS = 12000;
 
 
 export let stopPending = false;
 export let stopPendingTimer = null;
 
+export let runPending = false;
+export let runPendingTimer = null;
+
 export let dashboardStatusSlots = [];
 export let dashboardRunning = false;
+export let dashboardServerRunning = false;
 export let dashboardDryRun = false;
 
 export let dashboardFetchGen = 0;
@@ -33,6 +40,7 @@ export function setStopPending(active) {
     clearTimeout(stopPendingTimer);
     stopPendingTimer = null;
   }
+  if (stopPending) setRunPending(false);
   if (!stopPending) {
     if (currentView === 'dashboard') updateRunStatusUI(dashboardRunning);
     return;
@@ -42,12 +50,38 @@ export function setStopPending(active) {
     stopPendingTimer = null;
     if (currentView === 'dashboard') updateRunStatusUI(dashboardRunning);
   }, STOP_PENDING_MS);
-  if (currentView === 'dashboard') updateRunStatusUI(effectiveRunning(dashboardRunning));
+  if (currentView === 'dashboard') updateRunStatusUI(effectiveRunning(dashboardServerRunning));
+}
+
+// setRunPending latches "running" from the click until a poll confirms it, so
+// the stop and restart buttons appear at once instead of on the next poll.
+export function setRunPending(active) {
+  runPending = !!active;
+  if (runPendingTimer) {
+    clearTimeout(runPendingTimer);
+    runPendingTimer = null;
+  }
+  if (!runPending) return;
+  runPendingTimer = setTimeout(function () {
+    runPending = false;
+    runPendingTimer = null;
+    if (currentView === 'dashboard') applyRunStatus(effectiveRunning(dashboardServerRunning));
+  }, RUN_PENDING_MS);
 }
 
 export function effectiveRunning(serverRunning) {
   if (stopPending && serverRunning) return false;
+  if (runPending && !stopPending) return true;
   return !!serverRunning;
+}
+
+// applyRunStatus repaints the run controls and, on the running -> idle edge,
+// reloads the table: a finished run clears force flags and writes new statuses,
+// which would otherwise sit stale until the 30 s tick.
+export function applyRunStatus(running) {
+  const wasRunning = dashboardRunning;
+  updateRunStatusUI(running);
+  if (wasRunning && !running) refreshDashboard(false);
 }
 
 
@@ -246,9 +280,11 @@ export async function pollDashboardStatus() {
   if (currentView !== 'dashboard' || document.visibilityState !== 'visible') return;
   try {
     const status = await fetchJSON('/api/status');
+    dashboardServerRunning = !!status.running;
+    if (status.running) setRunPending(false);
     setStopPending(!!status.stopping);
     dashboardDryRun = !!status.dry_run;
-    updateRunStatusUI(effectiveRunning(status.running));
+    applyRunStatus(effectiveRunning(status.running));
     updateNextRunCard(status.next_runs || []);
     dashboardAlerts = status.alerts || [];
     updateDashboardAlerts(dashboardAlerts);
@@ -310,8 +346,8 @@ export async function triggerRunCheck() {
   const isRestart = dashboardRunning;
   const prevRunning = dashboardRunning;
   setStopPending(false);
+  setRunPending(true);
   updateRunStatusUI(true);
-  pollDashboardStatus();
   if (runBtn) runBtn.disabled = true;
   try {
     const opts = { method: 'POST' };
@@ -332,12 +368,14 @@ export async function triggerRunCheck() {
       showToast((data && data.error) || t('dash.checkAlreadyRunning'), 'info');
       updateRunStatusUI(true);
     } else {
+      setRunPending(false);
       updateRunStatusUI(prevRunning);
       const msg = data && data.error ? data.error : 'HTTP ' + res.status;
       showToast(msg, 'error');
     }
     pollDashboardStatus();
   } catch (err) {
+    setRunPending(false);
     updateRunStatusUI(prevRunning);
     showToast(err.message, 'error');
     pollDashboardStatus();
@@ -621,6 +659,12 @@ export function bindDashboardReleaseRows(root) {
       if (!hash) return;
       const enable = btn.getAttribute('data-force') !== '1';
       btn.disabled = true;
+      // enabling force starts an out-of-schedule pass, so the run controls
+      // switch on the click instead of waiting for the status poll
+      if (enable) {
+        setRunPending(true);
+        updateRunStatusUI(true);
+      }
       try {
         const res = await fetchJSON('/api/plan/' + encodeURIComponent(hash) + '/force', {
           method: 'POST',
@@ -630,6 +674,10 @@ export function bindDashboardReleaseRows(root) {
         showToast(enable ? t('dash.forceEnabled') : t('dash.forceDisabled'), 'success');
         updateReleaseRow(hash, !!(res && res.force));
       } catch (err) {
+        if (enable) {
+          setRunPending(false);
+          updateRunStatusUI(effectiveRunning(dashboardServerRunning));
+        }
         showToast(err.message, 'error');
         btn.disabled = false;
       }
@@ -699,6 +747,7 @@ export function renderDashboard(el, status, history, stats) {
   hydrateIcons(el);
   bindDashboardAlerts(el);
   bindNextRunStatCard(el, nextRuns);
+  dashboardServerRunning = !!status.running;
   setStopPending(!!status.stopping);
   dashboardDryRun = !!status.dry_run;
   updateRunStatusUI(effectiveRunning(status.running));

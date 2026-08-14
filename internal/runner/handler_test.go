@@ -153,7 +153,7 @@ func TestPushFiltersByWatchTags(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx, false); err != nil {
+	if err := h.push(ctx, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -168,6 +168,61 @@ func TestPushFiltersByWatchTags(t *testing.T) {
 	case <-h.idx[1]:
 		t.Fatal("unexpected second entry queued")
 	default:
+	}
+}
+
+func TestPushForcedQueuesOnlyForcedEntriesWithPriority(t *testing.T) {
+	const forcedURL = "https://example.com/t/1"
+	const otherURL = "https://example.com/t/2"
+	h := &handler{
+		manager: &fakeManager{all: []*model.Entry{
+			{URL: forcedURL, Name: "forced"},
+			{URL: otherURL, Name: "other"},
+		}},
+		storage:        &fakeStorage{},
+		trackerService: &fakeTracker{id: 1},
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	forced := map[string]struct{}{storagePkg.URLHash(forcedURL): {}}
+	if err := h.push(ctx, false, forced); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-h.idx[1]:
+		t.Fatal("forced pass must not use the normal queue")
+	default:
+	}
+	select {
+	case tk := <-h.pri[1]:
+		if tk.entry.URL != forcedURL {
+			t.Fatalf("queued %q, want %q", tk.entry.URL, forcedURL)
+		}
+	default:
+		t.Fatal("expected forced entry in the priority queue")
+	}
+	select {
+	case <-h.pri[1]:
+		t.Fatal("unexpected second entry queued")
+	default:
+	}
+}
+
+func TestNextTaskPrefersPriorityQueue(t *testing.T) {
+	h := &handler{trackerService: &fakeTracker{id: 1}}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	normal := &task{entry: &model.Entry{Name: "normal"}}
+	forced := &task{entry: &model.Entry{Name: "forced"}}
+	h.idx[1] <- normal
+	h.pri[1] <- forced
+	if tk := h.nextTask(ctx, 1); tk != forced {
+		t.Fatalf("got %v, want the forced task first", tk.entry.Name)
+	}
+	if tk := h.nextTask(ctx, 1); tk != normal {
+		t.Fatalf("got %v, want the normal task second", tk.entry.Name)
 	}
 }
 
@@ -190,7 +245,7 @@ func TestPushEmptyWatchTagsIncludesAll(t *testing.T) {
 		<-h.idx[1]
 		<-h.idx[1]
 	}()
-	if err := h.push(ctx, false); err != nil {
+	if err := h.push(ctx, false, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -207,7 +262,7 @@ func TestPushSkipsIgnored(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx, false); err != nil {
+	if err := h.push(ctx, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -234,7 +289,7 @@ func TestPushDedupesSameName(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx, false); err != nil {
+	if err := h.push(ctx, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -355,7 +410,7 @@ func TestPushContinuesOnPartialList(t *testing.T) {
 	h.initTrackerChannels()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := h.push(ctx, false); err != nil {
+	if err := h.push(ctx, false, nil); err != nil {
 		t.Fatalf("push err = %v, want nil", err)
 	}
 	select {
@@ -469,7 +524,7 @@ func TestPushMarksRunning(t *testing.T) {
 		<-h.idx[1]
 		state.End(h.gen)
 	}()
-	if err := h.push(context.Background(), false); err != nil {
+	if err := h.push(context.Background(), false, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -1141,7 +1196,7 @@ func TestPushDryRunLimitsAndSkipsWrites(t *testing.T) {
 	defer cancel()
 
 	h.gen = h.state.Reset()
-	if err := h.push(ctx, true); err != nil {
+	if err := h.push(ctx, true, nil); err != nil {
 		t.Fatal(err)
 	}
 

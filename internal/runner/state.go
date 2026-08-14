@@ -7,6 +7,7 @@ import (
 // State is shared across reloads: manual run trigger, activity counter, restart flag.
 type State struct {
 	trigger  chan bool
+	force    chan string
 	active   atomic.Int32
 	gen      atomic.Uint32
 	restart  atomic.Bool
@@ -15,8 +16,13 @@ type State struct {
 }
 
 func NewState() *State {
-	return &State{trigger: make(chan bool, 1)}
+	return &State{trigger: make(chan bool, 1), force: make(chan string, forceQueueSize)}
 }
+
+// forceQueueSize bounds how many forced releases can wait to be picked up by
+// the runner; clicking faster than that drops the extras instead of blocking
+// the HTTP handler.
+const forceQueueSize = 256
 
 func (s *State) Running() bool {
 	return s != nil && s.active.Load() > 0
@@ -64,6 +70,44 @@ func (s *State) RequestDryRun() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// RequestForce queues an out-of-schedule check of one release.
+func (s *State) RequestForce(urlHash string) bool {
+	if s == nil || urlHash == "" {
+		return false
+	}
+	select {
+	case s.force <- urlHash:
+		return true
+	default:
+		return false
+	}
+}
+
+// Force yields hashes queued by RequestForce.
+func (s *State) Force() <-chan string {
+	if s == nil {
+		return nil
+	}
+	return s.force
+}
+
+// DrainForce takes every hash buffered right now, so releases forced one after
+// another are collected into a single out-of-schedule pass.
+func (s *State) DrainForce() []string {
+	if s == nil {
+		return nil
+	}
+	var out []string
+	for {
+		select {
+		case hash := <-s.force:
+			out = append(out, hash)
+		default:
+			return out
+		}
 	}
 }
 
