@@ -23,7 +23,6 @@ const (
 	maxErrorResponse    = 8 << 10  // 8 KiB error response snippets
 )
 
-// ReadLimited reads up to limit bytes from r into dst; returns an error if the body exceeds limit.
 func ReadLimited(dst *bytes.Buffer, r io.Reader, limit int64) error {
 	n, err := io.Copy(dst, io.LimitReader(r, limit+1))
 	if n > limit {
@@ -221,7 +220,6 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 	return
 }
 
-// pageRequestURL rewrites tracker-owned links to the active domain (GetDomain).
 func (c *client) pageRequestURL(link string) string {
 	if link == "" || !c.Detect(link) {
 		return link

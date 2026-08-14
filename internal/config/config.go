@@ -45,10 +45,8 @@ type Tracker struct {
 	TeamHD    TrackerItem `env:", prefix=TRACKER_TEAMHD_"`
 }
 
-// TrackerKeys lists tracker keys in UI order.
 var TrackerKeys = []string{"rutracker", "kinozal", "rutor", "teamhd", "nnm"}
 
-// ByKey returns the item for a tracker key, or nil for an unknown key.
 func (t *Tracker) ByKey(key string) *TrackerItem {
 	switch key {
 	case "rutracker":

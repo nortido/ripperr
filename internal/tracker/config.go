@@ -16,7 +16,6 @@ func trackerFromItem(it config.TrackerItem) trackerModel.Tracker {
 	}
 }
 
-// ConfigFromApp builds tracker config from effective app settings.
 func ConfigFromApp(cfg config.App) *trackerModel.TrackerConfig {
 	return &trackerModel.TrackerConfig{
 		Rutracker: trackerFromItem(cfg.Tracker.Rutracker),

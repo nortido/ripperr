@@ -62,7 +62,6 @@ func CloneCookies(cookies []*http.Cookie) []*http.Cookie {
 	return out
 }
 
-// MergeCookies merges cookie lists; later values override earlier ones by name.
 func MergeCookies(base, extra []*http.Cookie) []*http.Cookie {
 	var (
 		order []string

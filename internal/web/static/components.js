@@ -288,7 +288,6 @@ export function closePopovers() {
   }
 }
 
-// document-level closers for every popup this module owns; called once from main.js
 export function initGlobalDismiss() {
   document.addEventListener('click', function (e) {
     closePopovers();

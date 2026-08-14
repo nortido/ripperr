@@ -59,7 +59,6 @@ type integrationsOverlay struct {
 	} `json:"proxy"`
 }
 
-// ApplyOverrides loads settings from DB and overlays them on cfg (missing keys keep env values).
 func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 	if raw, ok, err := db.GetSetting(ctx, pg.SettingSchedule); err != nil {
 		return err
@@ -156,7 +155,6 @@ func applyTrackers(cfg *config.App, m map[string]trackerItemOverlay) {
 	}
 }
 
-// ApplyTrackerKey overlays one tracker key onto cfg (partial patch; unset fields keep current values).
 func ApplyTrackerKey(cfg *config.App, key string, o trackerItemOverlay) {
 	if it := cfg.Tracker.ByKey(key); it != nil {
 		_ = applyTrackerOverlay(it, o)
@@ -184,7 +182,6 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	}
 }
 
-// ScheduleJSON returns the effective schedule as JSON for API responses.
 func ScheduleJSON(cfg *config.App) json.RawMessage {
 	s := struct {
 		StartHour             int      `json:"start_hour"`
@@ -226,7 +223,6 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 	return b
 }
 
-// IntegrationsJSON returns effective integrations as JSON.
 func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s := struct {
 		Qbit struct {
@@ -252,7 +248,6 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	return b
 }
 
-// TrackersEffective returns per-key tracker settings merged from env + the DB overlay document.
 func TrackersEffective(ctx context.Context, cfg *config.App, db settingsDB) (map[string]config.TrackerItem, error) {
 	m := make(map[string]config.TrackerItem, len(config.TrackerKeys))
 	for _, key := range config.TrackerKeys {
@@ -297,7 +292,6 @@ func mergePatch[T any](dst *T, patch T) error {
 	return json.Unmarshal(b, dst)
 }
 
-// MergeSchedule merges a patch into the stored schedule document.
 func MergeSchedule(ctx context.Context, db interface {
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
@@ -327,7 +321,6 @@ func MergeSchedule(ctx context.Context, db interface {
 	return db.SaveSetting(ctx, pg.SettingSchedule, out)
 }
 
-// MergeTrackerKey merges one tracker key into the stored trackers document.
 func MergeTrackerKey(ctx context.Context, db interface {
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
@@ -359,7 +352,6 @@ func MergeTrackerKey(ctx context.Context, db interface {
 	return db.SaveSetting(ctx, pg.SettingTrackers, out)
 }
 
-// MergeIntegrations merges a patch into the stored integrations document.
 func MergeIntegrations(ctx context.Context, db interface {
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error

@@ -20,7 +20,6 @@ type Config struct {
 	Profile  string
 }
 
-// Client sends HTTP requests with a browser-like TLS fingerprint.
 type Client struct {
 	inner tls_client.HttpClient
 }

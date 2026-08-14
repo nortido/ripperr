@@ -7,7 +7,6 @@ import (
 
 const defaultBufferCap = 1000
 
-// Entry is one captured log line for GET /api/logs.
 type Entry struct {
 	Time    time.Time
 	Level   string
@@ -68,7 +67,6 @@ func (r *ringBuffer) snapshot(limit int) []Entry {
 	return out
 }
 
-// Snapshot returns up to limit newest buffered entries, oldest first.
 func Snapshot(limit int) []Entry {
 	return globalBuffer.snapshot(limit)
 }

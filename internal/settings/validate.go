@@ -197,8 +197,6 @@ func ValidateTrackerPatch(o trackerItemOverlay) error {
 	return nil
 }
 
-// validateTrackerHostname checks a tracker domain or mirror: no scheme, no slashes/spaces,
-// letters/digits/hyphen/dot, optional :port.
 func validateTrackerHostname(s, label string) error {
 	if s == "" {
 		return fmt.Errorf("%s must not be empty", label)
@@ -304,7 +302,6 @@ func normalizeWatchTagList(ss []string) ([]string, error) {
 	return out, nil
 }
 
-// WatchTagsFromEnv converts RUNNER_TAG env value to the effective watch tag list.
 func WatchTagsFromEnv(tag string) []string {
 	return watchTagsFromLegacy(tag)
 }

@@ -8,7 +8,6 @@ import (
 	"trackerr/internal/config"
 )
 
-// EnsureScheme adds defaultScheme if raw has no "://", then parses and requires a host.
 func EnsureScheme(raw, defaultScheme string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -27,7 +26,6 @@ func EnsureScheme(raw, defaultScheme string) (string, error) {
 	return raw, nil
 }
 
-// ValidateDownloadProxy accepts empty or a URL with scheme http, https, or socks5.
 func ValidateDownloadProxy(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -71,7 +69,6 @@ func normalizeIntegrationsPatch(o *integrationsOverlay) error {
 	return nil
 }
 
-// NormalizeAppIntegrations normalizes integration URLs on the effective config.
 func NormalizeAppIntegrations(cfg *config.App) error {
 	if cfg == nil {
 		return nil

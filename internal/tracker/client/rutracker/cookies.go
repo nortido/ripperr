@@ -8,7 +8,6 @@ import (
 // cf_clearance is kept in the FlareSolverr session; only forum session is required in DB.
 var requiredCookieNames = []string{"bb_session"}
 
-// CookiesIncomplete reports missing rutracker session cookies.
 func (t *Tracker) CookiesIncomplete(cookies []*http.Cookie) bool {
 	present := make(map[string]struct{}, len(cookies))
 	for _, c := range cookies {
@@ -24,7 +23,6 @@ func (t *Tracker) CookiesIncomplete(cookies []*http.Cookie) bool {
 	return false
 }
 
-// EnhanceCookies applies rutracker.org-specific cookie attributes (Cloudflare + phpBB).
 func (t *Tracker) EnhanceCookies(cookies []*http.Cookie) {
 	for _, c := range cookies {
 		if c == nil {

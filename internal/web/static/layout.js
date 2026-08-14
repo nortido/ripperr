@@ -214,7 +214,6 @@ export function openMobileMenu() {
   if (btn) btn.setAttribute('aria-expanded', 'true');
 }
 
-// every listener the layout owns; called once from main.js
 export function initLayout() {
   initSidebarCollapse();
   layoutWasMobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;

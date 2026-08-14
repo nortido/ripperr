@@ -41,7 +41,6 @@ func log(level Level, label, msg string) {
 	globalBuffer.add(Entry{Time: now, Level: strings.TrimSuffix(label, ":"), Message: msg})
 }
 
-// Debug writes to stdout only when LOG_LEVEL=debug; not stored in the API ring buffer.
 func Debug(msg string) {
 	if minLevel > LevelDebug {
 		return

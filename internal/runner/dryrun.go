@@ -8,7 +8,6 @@ import (
 	"trackerr/internal/system/logger"
 )
 
-// dryRunLimit caps how many entries a single dry run inspects.
 const dryRunLimit = 30
 
 // dryReport aggregates the outcome of a dry run. The last processed entry logs
@@ -57,7 +56,6 @@ func (r *dryReport) count(status string) {
 	}
 }
 
-// done marks one entry as processed and logs the summary when nothing is left.
 func (r *dryReport) done() {
 	if r == nil {
 		return
@@ -67,7 +65,6 @@ func (r *dryReport) done() {
 	}
 }
 
-// release drops the distribution token once push has queued everything.
 func (r *dryReport) release() {
 	r.done()
 }

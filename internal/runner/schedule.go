@@ -9,12 +9,10 @@ func scheduleLocation(loc *time.Location) *time.Location {
 	return time.Local
 }
 
-// ScheduleLocation returns loc or time.Local when loc is nil.
 func ScheduleLocation(loc *time.Location) *time.Location {
 	return scheduleLocation(loc)
 }
 
-// NextRunsWithin returns scheduled run slots from the first upcoming slot while t <= now+within.
 func NextRunsWithin(now time.Time, startHour, listRefreshPerDay int, within time.Duration, loc *time.Location) []time.Time {
 	if listRefreshPerDay <= 0 || within <= 0 {
 		return nil

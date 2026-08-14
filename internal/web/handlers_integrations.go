@@ -134,7 +134,6 @@ func (s *Server) testResult(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusOK, testResultResp{OK: true})
 }
 
-// qbitCategoriesClient interfaces with qBittorrent; tests may replace qbitClientFactory.
 type qbitCategoriesClient interface {
 	GetCategories(ctx context.Context) ([]string, error)
 	List(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error)

@@ -140,7 +140,6 @@ export function showView(view, updateHash) {
   }
 }
 
-// nav links and hash changes; called once from main.js
 export function initRouter() {
   document.querySelectorAll('[data-view]').forEach(function (a) {
     a.addEventListener('click', function (e) {

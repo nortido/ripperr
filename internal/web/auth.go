@@ -145,7 +145,6 @@ func clearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
-// webConfig returns the Web section from the effective config; used by auth middleware.
 func (s *Server) webConfig() config.Web {
 	return s.effective().Web
 }

@@ -4,7 +4,6 @@ import (
 	"sync/atomic"
 )
 
-// State is shared across reloads: manual run trigger, activity counter, restart flag.
 type State struct {
 	trigger  chan bool
 	force    chan string
@@ -47,7 +46,6 @@ func (s *State) Trigger() <-chan bool {
 	return s.trigger
 }
 
-// RequestRun queues a manual run if nothing is active.
 func (s *State) RequestRun() bool {
 	if s == nil || s.Running() {
 		return false
@@ -60,7 +58,6 @@ func (s *State) RequestRun() bool {
 	}
 }
 
-// RequestDryRun queues a manual dry run if nothing is active.
 func (s *State) RequestDryRun() bool {
 	if s == nil || s.Running() {
 		return false
@@ -107,7 +104,6 @@ func (s *State) DrainForce() []string {
 	}
 }
 
-// DryRunning reports whether the current run is a dry run.
 func (s *State) DryRunning() bool {
 	return s != nil && s.dry.Load()
 }
@@ -118,20 +114,16 @@ func (s *State) setDry(v bool) {
 	}
 }
 
-// MarkStopping records that a stop was requested; cleared when the next runner starts.
 func (s *State) MarkStopping() {
 	if s != nil {
 		s.stopping.Store(true)
 	}
 }
 
-// Stopping reports whether a stop was requested and the runner has not restarted yet.
 func (s *State) Stopping() bool {
 	return s != nil && s.stopping.Load()
 }
 
-// Reset clears the activity counter and bumps generation so stale Begin/End are ignored.
-// Returns the new generation for the current runner instance.
 func (s *State) Reset() uint32 {
 	if s == nil {
 		return 0
@@ -142,14 +134,12 @@ func (s *State) Reset() uint32 {
 	return s.gen.Add(1)
 }
 
-// MarkRestart requests an immediate run after the next handler.Run start (survives reload).
 func (s *State) MarkRestart() {
 	if s != nil {
 		s.restart.Store(true)
 	}
 }
 
-// ConsumeRestart returns true once if a restart was marked since the last consume.
 func (s *State) ConsumeRestart() bool {
 	if s == nil {
 		return false
@@ -157,7 +147,6 @@ func (s *State) ConsumeRestart() bool {
 	return s.restart.Swap(false)
 }
 
-// DrainTrigger discards any pending manual run in the trigger buffer.
 func (s *State) DrainTrigger() {
 	if s == nil {
 		return

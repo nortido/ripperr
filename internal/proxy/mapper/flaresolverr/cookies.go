@@ -19,7 +19,6 @@ type Cookie struct {
 	SameSite string `json:"sameSite,omitempty"`
 }
 
-// MarshalJSON converts http.Cookie values into the FlareSolverr cookie format.
 func (c *Cookies) MarshalJSON() ([]byte, error) {
 	if len(*c) == 0 {
 		return []byte(`""`), nil
@@ -53,7 +52,6 @@ func (c *Cookies) MarshalJSON() ([]byte, error) {
 	return json.Marshal(cookies)
 }
 
-// UnmarshalJSON parses FlareSolverr cookies into http.Cookie values.
 func (c *Cookies) UnmarshalJSON(b []byte) error {
 	var cookies []Cookie
 	if err := json.Unmarshal(b, &cookies); err != nil {

@@ -22,7 +22,6 @@ const (
 	StateHalfOpen
 )
 
-// ErrCircuitOpen is returned by Call while the circuit is open and blocking calls.
 var ErrCircuitOpen = errors.New("circuit breaker: circuit is open")
 
 type CircuitBreaker struct {

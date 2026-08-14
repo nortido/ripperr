@@ -22,7 +22,6 @@ import (
 	"trackerr/internal/tracker"
 )
 
-// Run builds dependencies and blocks until ctx is cancelled.
 func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg model.HandlerConfig, runnerState *runner.State, alerts *breakeralerts.Registry) error {
 	var (
 		qbc        *qbittorrent.Client

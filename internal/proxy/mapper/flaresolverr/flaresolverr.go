@@ -40,7 +40,6 @@ func cookiesForFlare(src []*http.Cookie) Cookies {
 	return out
 }
 
-// SolutionCookies returns auth cookies from a FlareSolverr response body.
 func SolutionCookies(resp *Response) []*http.Cookie {
 	if resp == nil || resp.Solution == nil || len(resp.Solution.Cookies) == 0 {
 		return nil

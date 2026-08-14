@@ -6,14 +6,12 @@ import (
 	"time"
 )
 
-// Incident is an active circuit-breaker trip for one tracker.
 type Incident struct {
 	Tracker   string
 	Since     time.Time
 	LastError string
 }
 
-// Registry holds open breaker incidents; survives app reload.
 type Registry struct {
 	mu        sync.RWMutex
 	incidents map[string]Incident
