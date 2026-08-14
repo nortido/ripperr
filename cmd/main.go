@@ -125,7 +125,6 @@ func main() {
 		case <-ctx.Done():
 			cancel()
 			<-done
-			first = false
 			logger.Info("goodbye")
 			return
 		case <-reloadCh:

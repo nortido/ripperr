@@ -36,9 +36,7 @@ func (s *Service) GetTracker(ctx context.Context, trackerID int) (res *tracker.T
 }
 
 func (s *Service) SaveTracker(ctx context.Context, source *tracker.Tracker) (err error) {
-	var target *storage.Tracker
-
-	target = &storage.Tracker{
+	target := &storage.Tracker{
 		TypeID:      source.TypeID,
 		Name:        source.Name,
 		Domain:      source.Domain,
@@ -49,9 +47,9 @@ func (s *Service) SaveTracker(ctx context.Context, source *tracker.Tracker) (err
 		Publicity:   source.Publicity,
 	}
 	if !source.Exists {
-		return s.Client.AddTracker(ctx, target)
+		return s.AddTracker(ctx, target)
 	}
-	return s.Client.UpdateTracker(ctx, target)
+	return s.UpdateTracker(ctx, target)
 }
 
 // GetItem shadows the embedded pg.Client method: it returns *runner.HistoryItem, not *storage.Item.
@@ -80,9 +78,7 @@ func (s *Service) GetItem(ctx context.Context, link string) (item *runner.Histor
 }
 
 func (s *Service) SaveItem(ctx context.Context, item *runner.HistoryItem) (err error) {
-	var dbItem *storage.Item
-
-	dbItem = &storage.Item{
+	dbItem := &storage.Item{
 		URLHash:       item.URLHash,
 		TrackerTypeID: item.TrackerTypeID,
 		TopicID:       item.TopicID,
@@ -94,9 +90,9 @@ func (s *Service) SaveItem(ctx context.Context, item *runner.HistoryItem) (err e
 		RecheckAt:     item.RecheckAt,
 	}
 	if item.Exists {
-		return s.Client.UpdateItem(ctx, dbItem)
+		return s.UpdateItem(ctx, dbItem)
 	}
-	return s.Client.AddItem(ctx, dbItem)
+	return s.AddItem(ctx, dbItem)
 }
 
 func New(db *pgxpool.Pool) *Service {

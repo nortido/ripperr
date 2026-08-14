@@ -30,7 +30,7 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 
 	// Verify setup response
 	var setupResp map[string]bool
-	json.Unmarshal(w.Body.Bytes(), &setupResp)
+	_ = json.Unmarshal(w.Body.Bytes(), &setupResp)
 	if !setupResp["ok"] {
 		t.Error("setup response ok=false")
 	}
@@ -191,7 +191,7 @@ func TestAuthOpenUntilConfigured(t *testing.T) {
 	}
 
 	var state map[string]any
-	json.Unmarshal(w.Body.Bytes(), &state)
+	_ = json.Unmarshal(w.Body.Bytes(), &state)
 	if state["configured"].(bool) {
 		t.Error("auth state should show configured=false before setup")
 	}

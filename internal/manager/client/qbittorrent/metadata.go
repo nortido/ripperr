@@ -98,7 +98,7 @@ func (c *Client) apiGet(ctx context.Context, endpoint string, query url.Values) 
 	if res, err = hc.Do(req); err != nil {
 		return
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if body, err = io.ReadAll(res.Body); err != nil {
 		return
 	}

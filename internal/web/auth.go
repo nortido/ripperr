@@ -282,10 +282,7 @@ func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
 
 	configured := doc != nil
 	authenticated := s.authorized(r, doc)
-	lanBypass := false
-	if doc != nil && s.webConfig().LanBypass && isLocalIP(s.clientIP(r)) {
-		lanBypass = true
-	}
+	lanBypass := doc != nil && s.webConfig().LanBypass && isLocalIP(s.clientIP(r))
 
 	username := ""
 	if doc != nil {

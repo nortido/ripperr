@@ -136,7 +136,7 @@ func (c *Client) GetCategories(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {
-	if c.config.DeleteEnabled == false {
+	if !c.config.DeleteEnabled {
 		return
 	}
 	logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))

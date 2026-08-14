@@ -53,8 +53,6 @@ export function setStopPending(active) {
   if (currentView === 'dashboard') updateRunStatusUI(effectiveRunning(dashboardServerRunning));
 }
 
-// setRunPending latches "running" from the click until a poll confirms it, so
-// the stop and restart buttons appear at once instead of on the next poll.
 export function setRunPending(active) {
   runPending = !!active;
   if (runPendingTimer) {
@@ -75,9 +73,6 @@ export function effectiveRunning(serverRunning) {
   return !!serverRunning;
 }
 
-// applyRunStatus repaints the run controls and, on the running -> idle edge,
-// reloads the table: a finished run clears force flags and writes new statuses,
-// which would otherwise sit stale until the 30 s tick.
 export function applyRunStatus(running) {
   const wasRunning = dashboardRunning;
   updateRunStatusUI(running);

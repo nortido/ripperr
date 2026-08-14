@@ -143,9 +143,6 @@ func (h *handler) runPush(ctx context.Context, pt *time.Timer, cherr chan error,
 	pt.Reset(time.Until(h.nextRun(time.Now())))
 }
 
-// pushForced queues the forced releases right away instead of waiting for the
-// next scheduled run. It deliberately skips runPush's lock: a forced pass only
-// adds to the priority queues, so it may overlap a run already in progress.
 func (h *handler) pushForced(ctx context.Context, hashes []string, cherr chan error) {
 	forced := make(map[string]struct{}, len(hashes))
 	for _, hash := range hashes {
@@ -216,9 +213,6 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 	}
 }
 
-// nextTask prefers the priority queue, so a forced release is checked before
-// whatever a full run has already queued for the same tracker. Returns nil when
-// the context is done.
 func (h *handler) nextTask(ctx context.Context, ttid int) *task {
 	select {
 	case tk := <-h.pri[ttid]:
@@ -253,9 +247,6 @@ func (h *handler) initTrackerChannels() {
 	}
 }
 
-// push queues the qbittorrent entries for checking. A non-nil forced set limits
-// the pass to those url hashes and routes them through the priority queues,
-// skipping the whole-list maintenance a full run does.
 func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}) (err error) {
 	h.state.Begin(h.gen)
 	defer h.state.End(h.gen)

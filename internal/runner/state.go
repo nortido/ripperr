@@ -73,7 +73,6 @@ func (s *State) RequestDryRun() bool {
 	}
 }
 
-// RequestForce queues an out-of-schedule check of one release.
 func (s *State) RequestForce(urlHash string) bool {
 	if s == nil || urlHash == "" {
 		return false
@@ -86,7 +85,6 @@ func (s *State) RequestForce(urlHash string) bool {
 	}
 }
 
-// Force yields hashes queued by RequestForce.
 func (s *State) Force() <-chan string {
 	if s == nil {
 		return nil
@@ -94,8 +92,6 @@ func (s *State) Force() <-chan string {
 	return s.force
 }
 
-// DrainForce takes every hash buffered right now, so releases forced one after
-// another are collected into a single out-of-schedule pass.
 func (s *State) DrainForce() []string {
 	if s == nil {
 		return nil

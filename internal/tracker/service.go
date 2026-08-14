@@ -100,7 +100,7 @@ func (s *service) readResponseBody(ctx context.Context, ttid int, ct *CachedTrac
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	limit := int64(client.MaxPageResponse)
 	if download {

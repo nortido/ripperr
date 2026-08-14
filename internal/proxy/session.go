@@ -40,7 +40,7 @@ func (f *client) DestroyFlareSession(sessionID string) (err error) {
 	if resp, err = f.hc.Post(f.conf.Flaresolverr.URL, "application/json", bytes.NewBuffer(data)); err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if err = json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return
 	}
