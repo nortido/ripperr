@@ -505,6 +505,21 @@ function formatTimezoneLabel(entry) {
   return timezoneCityName(entry.id) + ' (' + offset + ')';
 }
 
+// timezoneOffset asks the platform for the zone's current UTC offset instead
+// of the server (Intl.DateTimeFormat with longOffset gives "GMT+03:00" style
+// strings, and plain "GMT" for UTC, hence the slice(3) and the UTC special case).
+function timezoneOffset(id) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: id, timeZoneName: 'longOffset' }).formatToParts(new Date());
+  const name = (parts.find(function (p) { return p.type === 'timeZoneName'; }) || {}).value || 'GMT';
+  return name === 'GMT' ? '+00:00' : name.slice(3);
+}
+
+function timezoneEntries() {
+  return Object.keys(TZ_CITIES_RU).map(function (id) {
+    return { id: id, offset: timezoneOffset(id) };
+  });
+}
+
 function applyStaticI18n() {
   document.title = t('app.title');
   document.querySelectorAll('[data-i18n]').forEach(function (el) {

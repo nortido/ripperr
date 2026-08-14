@@ -21,23 +21,12 @@ var (
 	idRegexp = regexp.MustCompile(`(\d+)`)
 )
 
-type IClient interface {
-	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
-	GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error)
-	IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (same bool, known bool)
-	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
-	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
-	GetCategories(ctx context.Context) ([]string, error)
-	ForceRedownload(ctx context.Context, torrentHash string) error
-}
-
-type client struct {
+type Client struct {
 	client *qbt.Client
 	config model.ManagerConfig
 }
 
-func (c *client) List(ctx context.Context, _ model.FilterOptions) (entries []*model.Entry, err error) {
+func (c *Client) List(ctx context.Context, _ model.FilterOptions) (entries []*model.Entry, err error) {
 	qts, err := c.client.GetTorrents(qbt.TorrentFilterOptions{
 		Filter: qbt.TorrentFilterAll,
 		Sort:   "added_on",
@@ -81,11 +70,11 @@ func (c *client) List(ctx context.Context, _ model.FilterOptions) (entries []*mo
 	return
 }
 
-func (c *client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
+func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {
 	return c.addTorrentVerified(ctx, buf.Bytes(), opts)
 }
 
-func (c *client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
+func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
 	if opts.Comment != "" {
 		return c.addMagnetWithComment(ctx, magnet, opts)
 	}
@@ -104,7 +93,7 @@ func torrentAddOptions(opts model.ManagerAddFileOptions) *qbt.TorrentAddOptions 
 	return op
 }
 
-func (c *client) GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error) {
+func (c *Client) GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error) {
 	if hash == "" {
 		return
 	}
@@ -125,7 +114,7 @@ func (c *client) GetTorrentDetails(ctx context.Context, hash string) (name, comm
 	return
 }
 
-func (c *client) apiURL(endpoint string) string {
+func (c *Client) apiURL(endpoint string) string {
 	host := strings.TrimRight(c.config.Host, "/")
 	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
 		return fmt.Sprintf("%s/api/v2/%s", host, endpoint)
@@ -133,7 +122,7 @@ func (c *client) apiURL(endpoint string) string {
 	return fmt.Sprintf("http://%s/api/v2/%s", host, endpoint)
 }
 
-func (c *client) GetCategories(ctx context.Context) ([]string, error) {
+func (c *Client) GetCategories(ctx context.Context) ([]string, error) {
 	cats, err := c.client.GetCategoriesCtx(ctx)
 	if err != nil {
 		return nil, err
@@ -146,7 +135,7 @@ func (c *client) GetCategories(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
-func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {
+func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error) {
 	if c.config.DeleteEnabled == false {
 		return
 	}
@@ -160,7 +149,7 @@ func (c *client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (e
 	return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, false)
 }
 
-func (c *client) getProperties(ctx context.Context, t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
+func (c *Client) getProperties(ctx context.Context, t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
 	var tp qbt.TorrentProperties
 	if tp, err = c.client.GetTorrentPropertiesCtx(ctx, t.Hash); err != nil {
 		return
@@ -169,7 +158,7 @@ func (c *client) getProperties(ctx context.Context, t *qbt.Torrent) (p *qbt.Torr
 	return
 }
 
-func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.Entry) {
+func (c *Client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.Entry) {
 	var ts = time.Unix(int64(p.AdditionDate), 0)
 
 	res = &model.Entry{
@@ -190,7 +179,7 @@ func (c *client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.
 	return
 }
 
-func (c *client) getClient() (err error) {
+func (c *Client) getClient() (err error) {
 	c.client = qbt.NewClient(qbt.Config{
 		Host:     c.config.Host,
 		Username: c.config.Username,
@@ -201,8 +190,8 @@ func (c *client) getClient() (err error) {
 	return
 }
 
-func New(config model.ManagerConfig) (c IClient, err error) {
-	cl := &client{
+func New(config model.ManagerConfig) (c *Client, err error) {
+	cl := &Client{
 		config: config,
 	}
 	if err = cl.getClient(); err != nil {

@@ -244,7 +244,7 @@ func (h *handler) push(ctx context.Context, dry bool) (err error) {
 		if e.URL == "" {
 			continue
 		}
-		winners[helper.NormalizeReleaseName(e.Name)] = storagePkg.URLHash(e.URL)
+		winners[strings.TrimSpace(e.Name)] = storagePkg.URLHash(e.URL)
 	}
 	if !dry {
 		if err = h.storage.PurgeDuplicateNames(ctx, winners); err != nil {

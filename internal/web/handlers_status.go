@@ -23,10 +23,6 @@ func (s *Server) scheduleLoc(cfg config.App) *time.Location {
 	return loc
 }
 
-func (s *Server) handleGetTimezones(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, timezonesResp{Timezones: timezoneEntries()})
-}
-
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.effective()
 	now := time.Now()

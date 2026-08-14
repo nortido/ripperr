@@ -21,7 +21,7 @@ const (
 	redownloadRetryDelay = 5 * time.Second
 )
 
-func (c *client) ForceRedownload(ctx context.Context, torrentHash string) error {
+func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error {
 	logger.Info(fmt.Sprintf("force redownload: exporting torrent %s", torrentHash))
 
 	// Step 1: Export torrent to memory

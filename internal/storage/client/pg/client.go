@@ -20,35 +20,11 @@ const (
 	SettingAuth         = "auth"
 )
 
-type IClient interface {
-	Bootstrap(ctx context.Context) error
-	Ping(ctx context.Context) error
-	GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error)
-	AddTracker(ctx context.Context, tracker *storage.Tracker) (err error)
-	UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error)
-	GetItem(ctx context.Context, urlHash string) (item *storage.Item, err error)
-	AddItem(ctx context.Context, item *storage.Item) (err error)
-	UpdateItem(ctx context.Context, item *storage.Item) (err error)
-	AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error)
-	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
-	AddIgnore(ctx context.Context, hash, name, url string) error
-	DeleteIgnore(ctx context.Context, hash string) error
-	GetIgnoreSet(ctx context.Context) (map[string]struct{}, error)
-	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
-	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
-	ListDueItems(ctx context.Context) ([]storage.DueItem, error)
-	DeleteItem(ctx context.Context, urlHash string) error
-	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
-	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
-	ForceCheckAll(ctx context.Context, force bool) (int64, error)
-}
-
-type client struct {
+type Client struct {
 	db *pgxpool.Pool
 }
 
-func (c *client) Bootstrap(ctx context.Context) error {
+func (c *Client) Bootstrap(ctx context.Context) error {
 	_, err := c.db.Exec(ctx, `
 CREATE SCHEMA IF NOT EXISTS trackerr;
 
@@ -126,7 +102,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS check_log_item_name_uidx ON trackerr.check_log
 	return err
 }
 
-func (c *client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error) {
+func (c *Client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error) {
 	res = &storage.Tracker{}
 	err = c.db.QueryRow(ctx,
 		"SELECT tracker_type_id, tracker_name, domain_name, login_url, download_url, credentials, cookies, publicity FROM trackerr.trackers WHERE tracker_type_id = $1::int",
@@ -140,7 +116,7 @@ func (c *client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tr
 	return
 }
 
-func (c *client) AddTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
+func (c *Client) AddTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
 	_, err = c.db.Exec(ctx,
 		"INSERT INTO trackerr.trackers(tracker_type_id, tracker_name, domain_name, login_url, download_url, cookies, credentials, publicity, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW())",
 		tracker.TypeID, tracker.Name, tracker.Domain, tracker.LoginURL, tracker.DownloadURL, tracker.Cookies, tracker.Credentials, tracker.Publicity)
@@ -148,7 +124,7 @@ func (c *client) AddTracker(ctx context.Context, tracker *storage.Tracker) (err 
 	return
 }
 
-func (c *client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
+func (c *Client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
 	_, err = c.db.Exec(ctx,
 		"UPDATE trackerr.trackers SET cookies = $2, credentials = $3, updated_at = NOW() WHERE tracker_type_id = $1",
 		tracker.TypeID, tracker.Cookies, tracker.Credentials)
@@ -156,7 +132,7 @@ func (c *client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (e
 	return
 }
 
-func (c *client) GetItem(ctx context.Context, urlHash string) (item *storage.Item, err error) {
+func (c *Client) GetItem(ctx context.Context, urlHash string) (item *storage.Item, err error) {
 	item = &storage.Item{URLHash: urlHash}
 	err = c.db.QueryRow(ctx, "SELECT tracker_type_id, topic_id, category_name, COALESCE(item_tag, ''), COALESCE(item_name, ''), item_url, created_at, recheck_at, force_check FROM trackerr.history WHERE url_hash = $1", urlHash).Scan(
 		&item.TrackerTypeID, &item.TopicID, &item.Category, &item.Tag, &item.Name, &item.URL, &item.CreatedAt, &item.RecheckAt, &item.ForceCheck)
@@ -169,7 +145,7 @@ func (c *client) GetItem(ctx context.Context, urlHash string) (item *storage.Ite
 	return
 }
 
-func (c *client) AddItem(ctx context.Context, item *storage.Item) (err error) {
+func (c *Client) AddItem(ctx context.Context, item *storage.Item) (err error) {
 	_, err = c.db.Exec(ctx,
 		"INSERT INTO trackerr.history(url_hash, tracker_type_id, topic_id, category_name, item_tag, item_name, item_url, created_at, recheck_at, force_check) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, false)",
 		item.URLHash, item.TrackerTypeID, item.TopicID, item.Category, item.Tag, item.Name, item.URL, item.CreatedAt, item.RecheckAt)
@@ -177,14 +153,14 @@ func (c *client) AddItem(ctx context.Context, item *storage.Item) (err error) {
 	return
 }
 
-func (c *client) UpdateItem(ctx context.Context, item *storage.Item) (err error) {
+func (c *Client) UpdateItem(ctx context.Context, item *storage.Item) (err error) {
 	_, err = c.db.Exec(ctx,
 		"UPDATE trackerr.history SET topic_id = $2, category_name = $3, item_tag = $4, item_name = $5, created_at = $6, recheck_at = $7, force_check = false WHERE url_hash = $1",
 		item.URLHash, item.TopicID, item.Category, item.Tag, item.Name, item.CreatedAt, item.RecheckAt)
 	return
 }
 
-func (c *client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error {
+func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error {
 	// the upsert arbiter is url_hash, so a same-name row under a different hash
 	// (release moved to a new topic) would trip check_log_item_name_uidx: drop it first
 	if strings.TrimSpace(entry.ItemName) != "" {
@@ -209,7 +185,7 @@ func (c *client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 	return err
 }
 
-func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
+func (c *Client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
 	var total int
 	from := `trackerr.check_log c`
 	join := " LEFT JOIN trackerr.history h ON h.url_hash = c.url_hash"
@@ -270,7 +246,7 @@ func (c *client) ListCheckLog(ctx context.Context, limit, offset int, statusFilt
 	return items, total, rows.Err()
 }
 
-func (c *client) ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error) {
+func (c *Client) ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error) {
 	rows, err := c.db.Query(ctx,
 		`SELECT url_hash, item_name, item_url, added_at FROM trackerr.ignore ORDER BY added_at DESC`)
 	if err != nil {
@@ -288,7 +264,7 @@ func (c *client) ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error) 
 	return items, rows.Err()
 }
 
-func (c *client) AddIgnore(ctx context.Context, hash, name, url string) error {
+func (c *Client) AddIgnore(ctx context.Context, hash, name, url string) error {
 	_, err := c.db.Exec(ctx,
 		`INSERT INTO trackerr.ignore (url_hash, item_name, item_url) VALUES ($1, $2, $3)
 		 ON CONFLICT (url_hash) DO UPDATE SET item_name = EXCLUDED.item_name, item_url = EXCLUDED.item_url`,
@@ -296,12 +272,12 @@ func (c *client) AddIgnore(ctx context.Context, hash, name, url string) error {
 	return err
 }
 
-func (c *client) DeleteIgnore(ctx context.Context, hash string) error {
+func (c *Client) DeleteIgnore(ctx context.Context, hash string) error {
 	_, err := c.db.Exec(ctx, `DELETE FROM trackerr.ignore WHERE url_hash = $1`, hash)
 	return err
 }
 
-func (c *client) GetIgnoreSet(ctx context.Context) (map[string]struct{}, error) {
+func (c *Client) GetIgnoreSet(ctx context.Context) (map[string]struct{}, error) {
 	rows, err := c.db.Query(ctx, `SELECT url_hash FROM trackerr.ignore`)
 	if err != nil {
 		return nil, err
@@ -318,7 +294,7 @@ func (c *client) GetIgnoreSet(ctx context.Context) (map[string]struct{}, error) 
 	return set, rows.Err()
 }
 
-func (c *client) GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error) {
+func (c *Client) GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error) {
 	var raw json.RawMessage
 	err := c.db.QueryRow(ctx, `SELECT value FROM trackerr.settings WHERE key = $1`, key).Scan(&raw)
 	if err == pgx.ErrNoRows {
@@ -330,7 +306,7 @@ func (c *client) GetSetting(ctx context.Context, key string) (json.RawMessage, b
 	return raw, true, nil
 }
 
-func (c *client) SaveSetting(ctx context.Context, key string, value json.RawMessage) error {
+func (c *Client) SaveSetting(ctx context.Context, key string, value json.RawMessage) error {
 	_, err := c.db.Exec(ctx,
 		`INSERT INTO trackerr.settings (key, value, updated_at) VALUES ($1, $2, NOW())
 		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
@@ -338,7 +314,7 @@ func (c *client) SaveSetting(ctx context.Context, key string, value json.RawMess
 	return err
 }
 
-func (c *client) ListDueItems(ctx context.Context) ([]storage.DueItem, error) {
+func (c *Client) ListDueItems(ctx context.Context) ([]storage.DueItem, error) {
 	rows, err := c.db.Query(ctx,
 		`SELECT url_hash, COALESCE(item_name, '') FROM trackerr.history WHERE recheck_at <= NOW()`)
 	if err != nil {
@@ -356,7 +332,7 @@ func (c *client) ListDueItems(ctx context.Context) ([]storage.DueItem, error) {
 	return items, rows.Err()
 }
 
-func (c *client) DeleteItem(ctx context.Context, urlHash string) error {
+func (c *Client) DeleteItem(ctx context.Context, urlHash string) error {
 	if _, err := c.db.Exec(ctx, `DELETE FROM trackerr.check_log WHERE url_hash = $1`, urlHash); err != nil {
 		return err
 	}
@@ -364,7 +340,7 @@ func (c *client) DeleteItem(ctx context.Context, urlHash string) error {
 	return err
 }
 
-func (c *client) PurgeDuplicateNames(ctx context.Context, winners map[string]string) error {
+func (c *Client) PurgeDuplicateNames(ctx context.Context, winners map[string]string) error {
 	if len(winners) == 0 {
 		return nil
 	}
@@ -387,7 +363,7 @@ WHERE EXISTS (
 	return err
 }
 
-func (c *client) SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error) {
+func (c *Client) SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error) {
 	tag, err := c.db.Exec(ctx, `UPDATE trackerr.history SET force_check = $2 WHERE url_hash = $1`, urlHash, force)
 	if err != nil {
 		return false, err
@@ -395,7 +371,7 @@ func (c *client) SetForceCheck(ctx context.Context, urlHash string, force bool) 
 	return tag.RowsAffected() > 0, nil
 }
 
-func (c *client) ForceCheckAll(ctx context.Context, force bool) (int64, error) {
+func (c *Client) ForceCheckAll(ctx context.Context, force bool) (int64, error) {
 	checkLogExists := `EXISTS (SELECT 1 FROM trackerr.check_log c WHERE c.url_hash = trackerr.history.url_hash)`
 	if force {
 		tag, err := c.db.Exec(ctx, `
@@ -418,7 +394,7 @@ WHERE `+checkLogExists)
 	return tag.RowsAffected(), nil
 }
 
-func (c *client) Ping(ctx context.Context) error {
+func (c *Client) Ping(ctx context.Context) error {
 	return c.db.Ping(ctx)
 }
 
@@ -426,8 +402,8 @@ func itoa(n int) string {
 	return strconv.Itoa(n)
 }
 
-func New(db *pgxpool.Pool) IClient {
-	return &client{
+func New(db *pgxpool.Pool) *Client {
+	return &Client{
 		db: db,
 	}
 }

@@ -157,7 +157,7 @@ func main() {
 	}
 }
 
-func connectDB(ctx context.Context, cfg config.App) (*pgxpool.Pool, storage.IClient, error) {
+func connectDB(ctx context.Context, cfg config.App) (*pgxpool.Pool, *storage.Service, error) {
 	dbCfg, err := pgxpool.ParseConfig(cfg.DB.MasterURL)
 	if err != nil {
 		return nil, nil, err

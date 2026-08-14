@@ -66,9 +66,3 @@ func TestDedupeEntriesByNamePreservesWinnerOrder(t *testing.T) {
 		t.Fatalf("second = %+v", got[1])
 	}
 }
-
-func TestNormalizeReleaseName(t *testing.T) {
-	if got := NormalizeReleaseName("  foo  "); got != "foo" {
-		t.Fatalf("got %q", got)
-	}
-}

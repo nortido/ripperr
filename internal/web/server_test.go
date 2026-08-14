@@ -549,37 +549,6 @@ func TestPutIntegrationsInvalidType(t *testing.T) {
 	}
 }
 
-func TestGetTimezones(t *testing.T) {
-	store := &fakeStore{}
-	srv := newTestServer(store)
-	req := httptest.NewRequest(http.MethodGet, "/api/timezones", nil)
-	w := httptest.NewRecorder()
-	srv.handleGetTimezones(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d", w.Code)
-	}
-	var resp struct {
-		Timezones []struct {
-			ID     string `json:"id"`
-			Offset string `json:"offset"`
-		} `json:"timezones"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatal(err)
-	}
-	if len(resp.Timezones) < 40 {
-		t.Fatalf("expected >=40 zones, got %d", len(resp.Timezones))
-	}
-	if resp.Timezones[0].ID != "UTC" || resp.Timezones[0].Offset != "+00:00" {
-		t.Fatalf("first zone = %+v, want UTC +00:00", resp.Timezones[0])
-	}
-	for _, tz := range resp.Timezones {
-		if tz.ID == "Europe/Moscow" && tz.Offset != "+03:00" {
-			t.Fatalf("Europe/Moscow offset = %q, want +03:00", tz.Offset)
-		}
-	}
-}
-
 func TestGetTrackersSortedByID(t *testing.T) {
 	store := &fakeStore{}
 	srv := newTestServer(store)

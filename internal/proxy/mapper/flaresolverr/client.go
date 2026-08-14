@@ -21,11 +21,7 @@ type Config struct {
 	MaxTimeout int
 }
 
-type IClient interface {
-	Send(r *http.Request, opts *Payload) (result *Response, err error)
-}
-
-type client struct {
+type Client struct {
 	hc   *http.Client
 	conf *Config
 }
@@ -53,7 +49,7 @@ type ResponseSolution struct {
 	UserAgent string  `json:"userAgent"`
 }
 
-func (f *client) Send(r *http.Request, opts *Payload) (result *Response, err error) {
+func (f *Client) Send(r *http.Request, opts *Payload) (result *Response, err error) {
 	var (
 		b    []byte
 		data []byte
@@ -91,8 +87,8 @@ func (f *client) Send(r *http.Request, opts *Payload) (result *Response, err err
 	return
 }
 
-func New(hc *http.Client, conf *Config) IClient {
-	return &client{
+func New(hc *http.Client, conf *Config) *Client {
+	return &Client{
 		hc:   hc,
 		conf: conf,
 	}

@@ -26,14 +26,14 @@ type metadataResponse struct {
 	Info *json.RawMessage `json:"info"`
 }
 
-func (c *client) fetchAndSaveMetadata(ctx context.Context, source string) (data []byte, err error) {
+func (c *Client) fetchAndSaveMetadata(ctx context.Context, source string) (data []byte, err error) {
 	if err = c.waitForMetadata(ctx, source); err != nil {
 		return
 	}
 	return c.saveMetadata(ctx, source)
 }
 
-func (c *client) waitForMetadata(ctx context.Context, source string) (err error) {
+func (c *Client) waitForMetadata(ctx context.Context, source string) (err error) {
 	deadline := time.Now().Add(metadataFetchTimeout)
 	query := url.Values{"source": {source}}
 
@@ -65,7 +65,7 @@ func (c *client) waitForMetadata(ctx context.Context, source string) (err error)
 	}
 }
 
-func (c *client) saveMetadata(ctx context.Context, source string) (data []byte, err error) {
+func (c *Client) saveMetadata(ctx context.Context, source string) (data []byte, err error) {
 	query := url.Values{"source": {source}}
 	status, body, err := c.apiGet(ctx, "torrents/saveMetadata", query)
 	if err != nil {
@@ -81,7 +81,7 @@ func (c *client) saveMetadata(ctx context.Context, source string) (data []byte, 
 	}
 }
 
-func (c *client) apiGet(ctx context.Context, endpoint string, query url.Values) (status int, body []byte, err error) {
+func (c *Client) apiGet(ctx context.Context, endpoint string, query url.Values) (status int, body []byte, err error) {
 	hc := c.client.GetHTTPClient()
 	if hc == nil {
 		return 0, nil, fmt.Errorf("no http client")
@@ -105,14 +105,14 @@ func (c *client) apiGet(ctx context.Context, endpoint string, query url.Values) 
 	return res.StatusCode, body, nil
 }
 
-func (c *client) addTorrentWithComment(ctx context.Context, data []byte, opts model.ManagerAddFileOptions) (err error) {
+func (c *Client) addTorrentWithComment(ctx context.Context, data []byte, opts model.ManagerAddFileOptions) (err error) {
 	if data, err = torrentmeta.SetComment(data, opts.Comment); err != nil {
 		return fmt.Errorf("set torrent comment: %w", err)
 	}
 	return c.addTorrentVerified(ctx, data, opts)
 }
 
-func (c *client) addMagnetWithComment(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
+func (c *Client) addMagnetWithComment(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
 	data, err := c.fetchAndSaveMetadata(ctx, magnet)
 	if err != nil {
 		if !errors.Is(err, errFetchMetadataUnsupported) && !errors.Is(err, errMetadataFetchTimeout) {

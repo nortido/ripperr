@@ -1,4 +1,4 @@
-import { ensureQbitCategories, ensureTimezones, fetchJSON, qbitCategoriesCache, qbitCategoriesUnavailable, showToast, timezonesCache } from './api.js';
+import { ensureQbitCategories, fetchJSON, qbitCategoriesCache, qbitCategoriesUnavailable, showToast } from './api.js';
 import { initChipInput, initCustomSelects } from './components.js';
 import { html, hourOptions, refreshOptions, timezoneOptions } from './util.js';
 
@@ -29,9 +29,9 @@ export async function loadSchedule() {
   const el = document.getElementById('view-schedule');
   el.innerHTML = html`<div class="loading">${t('common.loading')}</div>`;
   try {
-    await Promise.all([ensureQbitCategories(), ensureTimezones()]);
+    await ensureQbitCategories();
     const sch = await fetchJSON('/api/schedule');
-    renderSchedule(el, sch, qbitCategoriesCache || [], qbitCategoriesUnavailable, timezonesCache || []);
+    renderSchedule(el, sch, qbitCategoriesCache || [], qbitCategoriesUnavailable, timezoneEntries());
   } catch (err) {
     el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
     showToast(err.message, 'error');

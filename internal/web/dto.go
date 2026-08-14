@@ -17,10 +17,6 @@ type errorResp struct {
 	Error string `json:"error"`
 }
 
-type timezonesResp struct {
-	Timezones []timezoneEntry `json:"timezones"`
-}
-
 type alertResp struct {
 	Tracker string `json:"tracker"`
 	Since   string `json:"since"`

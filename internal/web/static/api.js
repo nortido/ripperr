@@ -2,7 +2,6 @@ import { authRedirecting, gotoLogin } from './auth.js';
 
 export let qbitCategoriesCache = null;
 export let qbitCategoriesUnavailable = false;
-export let timezonesCache = null;
 
 export async function fetchJSON(url, options = {}) {
   const headers = { ...options.headers };
@@ -60,15 +59,3 @@ export async function ensureQbitCategories() {
     qbitCategoriesCache = [];
   }
 }
-
-export async function ensureTimezones() {
-  if (timezonesCache !== null) return;
-  try {
-    const data = await fetchJSON('/api/timezones');
-    timezonesCache = data.timezones || [];
-  } catch (_) {
-    timezonesCache = [];
-  }
-}
-
-

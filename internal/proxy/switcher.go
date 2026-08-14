@@ -14,11 +14,9 @@ type IClient interface {
 }
 
 type client struct {
-	hc    *http.Client
-	conf  *proxy.Config
-	cache struct {
-		fl fmapper.IClient
-	}
+	hc   *http.Client
+	conf *proxy.Config
+	fl   *fmapper.Client
 }
 
 func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (res *http.Response, err error) {
@@ -34,7 +32,7 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 			defer mu.Unlock()
 		}
 		params = fmapper.PrepareParams(r, opts)
-		if fres, err = f.cache.fl.Send(r, params); err != nil {
+		if fres, err = f.fl.Send(r, params); err != nil {
 			return
 		}
 		res, err = fmapper.BuildResponse(fres, r)
@@ -49,7 +47,7 @@ func New(hc *http.Client, conf *proxy.Config) (sw IClient) {
 		hc:   hc,
 		conf: conf,
 	}
-	px.cache.fl = fmapper.New(hc, &fmapper.Config{
+	px.fl = fmapper.New(hc, &fmapper.Config{
 		Host:       conf.Flaresolverr.URL,
 		MaxTimeout: conf.Flaresolverr.MaxTimeout,
 	})

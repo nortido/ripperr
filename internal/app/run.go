@@ -23,9 +23,9 @@ import (
 )
 
 // Run builds dependencies and blocks until ctx is cancelled.
-func Run(ctx context.Context, cfg config.App, db storage.IClient, handlerCfg model.HandlerConfig, runnerState *runner.State, alerts *breakeralerts.Registry) error {
+func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg model.HandlerConfig, runnerState *runner.State, alerts *breakeralerts.Registry) error {
 	var (
-		qbc        qbittorrent.IClient
+		qbc        *qbittorrent.Client
 		px         proxy.IClient
 		ht         *http.Client
 		downloadHt helper.HTTPDoer
