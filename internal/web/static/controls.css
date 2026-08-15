@@ -69,9 +69,11 @@
   box-shadow: var(--shadow-primary);
 }
 
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(1.1);
-  box-shadow: 0 6px 20px rgba(4, 120, 87, 0.35);
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+    box-shadow: 0 6px 20px rgba(4, 120, 87, 0.35);
+  }
 }
 
 .btn-restart {
@@ -80,11 +82,13 @@
   background: var(--restart-bg);
 }
 
-.btn-restart:hover:not(:disabled) {
-  background: var(--restart);
-  color: #fff;
-  border-color: var(--restart);
-  box-shadow: 0 4px 14px rgba(234, 88, 12, 0.3);
+@media (hover: hover) {
+  .btn-restart:hover:not(:disabled) {
+    background: var(--restart);
+    color: #fff;
+    border-color: var(--restart);
+    box-shadow: 0 4px 14px rgba(234, 88, 12, 0.3);
+  }
 }
 
 .btn-refresh.is-spinning svg {
@@ -101,8 +105,10 @@
   background: transparent;
 }
 
-.btn-ghost:hover:not(:disabled) {
-  background: var(--hover);
+@media (hover: hover) {
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--hover);
+  }
 }
 
 .btn-icon-only {
@@ -138,11 +144,13 @@
   flex-shrink: 0;
 }
 
-.btn-stop:hover:not(:disabled) {
-  color: #fff;
-  background: var(--hue-red);
-  border-color: var(--hue-red);
-  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.3);
+@media (hover: hover) {
+  .btn-stop:hover:not(:disabled) {
+    color: #fff;
+    background: var(--hue-red);
+    border-color: var(--hue-red);
+    box-shadow: 0 4px 14px rgba(220, 38, 38, 0.3);
+  }
 }
 
 .btn-stop-label {
@@ -319,8 +327,10 @@
   transition: background var(--transition);
 }
 
-.tracker-row:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .tracker-row:hover {
+    background: var(--hover);
+  }
 }
 
 .tracker-row-main {
@@ -503,20 +513,22 @@
   background: var(--tint-cyan);
 }
 
-.btn-action-ignore.btn-ignore:hover:not(:disabled) {
-  color: var(--hue-green);
-  border-color: var(--hue-green);
-  background: var(--tint-green);
-  box-shadow: none;
-  filter: brightness(1.1) saturate(1.15);
-}
+@media (hover: hover) {
+  .btn-action-ignore.btn-ignore:hover:not(:disabled) {
+    color: var(--hue-green);
+    border-color: var(--hue-green);
+    background: var(--tint-green);
+    box-shadow: none;
+    filter: brightness(1.1) saturate(1.15);
+  }
 
-.btn-action-ignore.btn-unignore:hover:not(:disabled) {
-  color: var(--hue-cyan);
-  border-color: var(--tint-cyan);
-  background: var(--tint-cyan);
-  box-shadow: none;
-  filter: brightness(1.1) saturate(1.15);
+  .btn-action-ignore.btn-unignore:hover:not(:disabled) {
+    color: var(--hue-cyan);
+    border-color: var(--tint-cyan);
+    background: var(--tint-cyan);
+    box-shadow: none;
+    filter: brightness(1.1) saturate(1.15);
+  }
 }
 
 .btn-action-ignore .icon-idle,
@@ -530,12 +542,14 @@
   display: none;
 }
 
-.btn-action-ignore:hover:not(:disabled) .icon-idle {
-  display: none;
-}
+@media (hover: hover) {
+  .btn-action-ignore:hover:not(:disabled) .icon-idle {
+    display: none;
+  }
 
-.btn-action-ignore:hover:not(:disabled) .icon-hover {
-  display: inline-flex;
+  .btn-action-ignore:hover:not(:disabled) .icon-hover {
+    display: inline-flex;
+  }
 }
 
 .btn-action-redownload {
@@ -544,11 +558,13 @@
   background: transparent;
 }
 
-.btn-action-redownload:hover:not(:disabled) {
-  color: var(--hue-violet);
-  border-color: var(--hue-violet);
-  background: var(--tint-violet);
-  box-shadow: none;
+@media (hover: hover) {
+  .btn-action-redownload:hover:not(:disabled) {
+    color: var(--hue-violet);
+    border-color: var(--hue-violet);
+    background: var(--tint-violet);
+    box-shadow: none;
+  }
 }
 
 .btn-action-redownload.is-spinning svg {
@@ -570,11 +586,13 @@
   background: transparent;
 }
 
-.btn-plan-force:hover:not(:disabled) {
-  color: var(--hue-amber);
-  border-color: var(--tint-amber);
-  background: var(--tint-amber);
-  box-shadow: none;
+@media (hover: hover) {
+  .btn-plan-force:hover:not(:disabled) {
+    color: var(--hue-amber);
+    border-color: var(--tint-amber);
+    background: var(--tint-amber);
+    box-shadow: none;
+  }
 }
 
 .btn-plan-force.is-active {
@@ -584,12 +602,14 @@
   box-shadow: none;
 }
 
-.btn-plan-force.is-active:hover:not(:disabled) {
-  color: var(--hue-amber);
-  border-color: var(--hue-amber);
-  background: var(--tint-amber);
-  box-shadow: none;
-  filter: brightness(1.1) saturate(1.15);
+@media (hover: hover) {
+  .btn-plan-force.is-active:hover:not(:disabled) {
+    color: var(--hue-amber);
+    border-color: var(--hue-amber);
+    background: var(--tint-amber);
+    box-shadow: none;
+    filter: brightness(1.1) saturate(1.15);
+  }
 }
 
 .btn-group {
@@ -733,9 +753,11 @@
   transition: color var(--transition), background var(--transition);
 }
 
-.input-password-toggle:hover {
-  color: var(--text);
-  background: var(--hover);
+@media (hover: hover) {
+  .input-password-toggle:hover {
+    color: var(--text);
+    background: var(--hover);
+  }
 }
 
 .input-password-toggle svg {
@@ -781,12 +803,14 @@
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 
-.custom-select-trigger:hover:not(:disabled) {
-  border-color: var(--border-subtle);
+@media (hover: hover) {
+  .custom-select-trigger:hover:not(:disabled) {
+    border-color: var(--border-subtle);
+  }
 }
 
 .custom-select.open .custom-select-trigger,
-.custom-select-trigger:focus {
+.custom-select-trigger:focus-visible {
   outline: none;
   border-color: var(--accent-from);
   box-shadow: 0 0 0 3px var(--focus-ring);
@@ -857,7 +881,12 @@
   background: var(--table-stripe);
 }
 
-.custom-select-option:hover,
+@media (hover: hover) {
+  .custom-select-option:hover {
+    background: var(--hover);
+  }
+}
+
 .custom-select-option.is-highlighted {
   background: var(--hover);
 }
@@ -1004,9 +1033,11 @@ html.mobile-layout .proxy-type-row {
   opacity: 0.75;
 }
 
-.chip-remove:hover {
-  opacity: 1;
-  background: var(--hover);
+@media (hover: hover) {
+  .chip-remove:hover {
+    opacity: 1;
+    background: var(--hover);
+  }
 }
 
 .chip-input-hints {
@@ -1028,10 +1059,12 @@ html.mobile-layout .proxy-type-row {
   transition: background var(--transition), border-color var(--transition), color var(--transition);
 }
 
-.chip-hint:hover:not(:disabled) {
-  border-color: var(--accent-from);
-  color: var(--link);
-  background: var(--accent-subtle);
+@media (hover: hover) {
+  .chip-hint:hover:not(:disabled) {
+    border-color: var(--accent-from);
+    color: var(--link);
+    background: var(--accent-subtle);
+  }
 }
 
 .chip-hint-selected,

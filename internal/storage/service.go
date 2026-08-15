@@ -52,29 +52,29 @@ func (s *Service) SaveTracker(ctx context.Context, source *tracker.Tracker) (err
 	return s.UpdateTracker(ctx, target)
 }
 
-// GetItem shadows the embedded pg.Client method: it returns *runner.HistoryItem, not *storage.Item.
-func (s *Service) GetItem(ctx context.Context, link string) (item *runner.HistoryItem, err error) {
-	var dbItem *storage.Item
-
-	urlHash := URLHash(link)
-
-	if dbItem, err = s.Client.GetItem(ctx, urlHash); err != nil {
-		return
+func (s *Service) AllItems(ctx context.Context) (map[string]*runner.HistoryItem, error) {
+	dbItems, err := s.ListItems(ctx)
+	if err != nil {
+		return nil, err
 	}
-	item = &runner.HistoryItem{
-		URLHash:       dbItem.URLHash,
-		TrackerTypeID: dbItem.TrackerTypeID,
-		TopicID:       dbItem.TopicID,
-		Category:      dbItem.Category,
-		Tag:           dbItem.Tag,
-		Name:          dbItem.Name,
-		URL:           dbItem.URL,
-		CreatedAt:     dbItem.CreatedAt,
-		RecheckAt:     dbItem.RecheckAt,
-		Exists:        dbItem.Exists,
-		ForceCheck:    dbItem.ForceCheck,
+	items := make(map[string]*runner.HistoryItem, len(dbItems))
+	for i := range dbItems {
+		dbItem := &dbItems[i]
+		items[dbItem.URLHash] = &runner.HistoryItem{
+			URLHash:       dbItem.URLHash,
+			TrackerTypeID: dbItem.TrackerTypeID,
+			TopicID:       dbItem.TopicID,
+			Category:      dbItem.Category,
+			Tag:           dbItem.Tag,
+			Name:          dbItem.Name,
+			URL:           dbItem.URL,
+			CreatedAt:     dbItem.CreatedAt,
+			RecheckAt:     dbItem.RecheckAt,
+			Exists:        dbItem.Exists,
+			ForceCheck:    dbItem.ForceCheck,
+		}
 	}
-	return
+	return items, nil
 }
 
 func (s *Service) SaveItem(ctx context.Context, item *runner.HistoryItem) (err error) {

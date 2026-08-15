@@ -22,26 +22,33 @@ import (
 func timePtr(t time.Time) *time.Time { return &t }
 
 type fakeStorage struct {
-	ignore   map[string]struct{}
-	items    map[string]*runnerModel.HistoryItem
-	dueItems []storageModel.DueItem
-	listErr  error
-	deleted  []string
-}
-
-func (f *fakeStorage) GetItem(_ context.Context, link string) (*runnerModel.HistoryItem, error) {
-	hash := storagePkg.URLHash(link)
-	if f.items != nil {
-		if it, ok := f.items[link]; ok {
-			return it, nil
-		}
-	}
-	return &runnerModel.HistoryItem{URLHash: hash, TrackerTypeID: 1, Exists: true, RecheckAt: timePtr(time.Now().Add(-time.Hour))}, nil
+	ignore      map[string]struct{}
+	items       map[string]*runnerModel.HistoryItem
+	dueItems    []storageModel.DueItem
+	listErr     error
+	deleted     []string
+	checkStreak int
+	ignoreCalls []string
 }
 
 func (f *fakeStorage) SaveItem(context.Context, *runnerModel.HistoryItem) error { return nil }
 
-func (f *fakeStorage) AddCheckLog(context.Context, *storageModel.CheckLogEntry) error { return nil }
+func (f *fakeStorage) AddCheckLog(context.Context, *storageModel.CheckLogEntry) (int, error) {
+	return f.checkStreak, nil
+}
+
+func (f *fakeStorage) AddIgnore(_ context.Context, hash, _, _ string) error {
+	f.ignoreCalls = append(f.ignoreCalls, hash)
+	return nil
+}
+
+func (f *fakeStorage) AllItems(context.Context) (map[string]*runnerModel.HistoryItem, error) {
+	out := make(map[string]*runnerModel.HistoryItem, len(f.items))
+	for _, it := range f.items {
+		out[it.URLHash] = it
+	}
+	return out, nil
+}
 
 func (f *fakeStorage) GetIgnoreSet(context.Context) (map[string]struct{}, error) {
 	return f.ignore, nil
@@ -75,13 +82,15 @@ func (f *fakeStorage) SetForceCheck(_ context.Context, urlHash string, force boo
 }
 
 type fakeManager struct {
-	tagged      []*model.Entry
-	all         []*model.Entry
-	allErr      error
-	partialList bool
+	tagged          []*model.Entry
+	all             []*model.Entry
+	allErr          error
+	partialList     bool
+	getEntriesCalls int
 }
 
 func (f *fakeManager) GetEntries(_ context.Context, _ model.FilterOptions) ([]*model.Entry, error) {
+	f.getEntriesCalls++
 	if f.allErr != nil {
 		return nil, f.allErr
 	}
@@ -272,6 +281,46 @@ func TestPushSkipsIgnored(t *testing.T) {
 	}
 }
 
+func TestPushForcedBypassesIgnore(t *testing.T) {
+	const url = "https://rutracker.org/forum/viewtopic.php?t=99"
+	hash := storagePkg.URLHash(url)
+	newHandler := func() *handler {
+		return &handler{
+			config:         model.HandlerConfig{WatchTags: []string{"watch"}},
+			manager:        &fakeManager{all: []*model.Entry{{URL: url, Name: "x", Tag: "watch"}}},
+			storage:        &fakeStorage{ignore: map[string]struct{}{hash: {}}},
+			trackerService: &fakeTracker{id: 1},
+		}
+	}
+
+	forced := newHandler()
+	forced.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := forced.push(ctx, false, map[string]struct{}{hash: {}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case tk := <-forced.pri[1]:
+		if tk.entry.URL != url {
+			t.Fatalf("queued %q, want %q", tk.entry.URL, url)
+		}
+	default:
+		t.Fatal("expected forced pass to reach the ignored entry")
+	}
+
+	normal := newHandler()
+	normal.initTrackerChannels()
+	if err := normal.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-normal.idx[1]:
+		t.Fatal("normal pass must still skip the ignored entry")
+	default:
+	}
+}
+
 func TestPushDedupesSameName(t *testing.T) {
 	early := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	late := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -378,19 +427,25 @@ func TestGetRecheckAt(t *testing.T) {
 	}
 }
 
-func TestPurgeStaleHistorySkipsOnPartialList(t *testing.T) {
+func TestPushSkipsHistoryPurgeOnPartialList(t *testing.T) {
 	const gone = "https://rutracker.org/forum/viewtopic.php?t=1"
 	const alive = "https://rutracker.org/forum/viewtopic.php?t=2"
 	goneHash := storagePkg.URLHash(gone)
 	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: goneHash, ItemName: "gone"}}}
 	h := &handler{
 		manager: &fakeManager{
-			all:         []*model.Entry{{URL: alive}},
+			all:         []*model.Entry{{URL: alive, Name: "alive"}},
 			partialList: true,
 		},
-		storage: store,
+		storage:        store,
+		trackerService: &fakeTracker{id: 1},
 	}
-	h.purgeStaleHistory(context.Background())
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions on partial list, got %v", store.deleted)
 	}
@@ -428,12 +483,8 @@ func TestPurgeStaleHistoryDeletesAbsent(t *testing.T) {
 	const alive = "https://rutracker.org/forum/viewtopic.php?t=2"
 	goneHash := storagePkg.URLHash(gone)
 	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: goneHash, ItemName: "gone"}}}
-	h := &handler{
-		config:  model.HandlerConfig{WatchTags: []string{"watch"}},
-		manager: &fakeManager{all: []*model.Entry{{URL: alive}}},
-		storage: store,
-	}
-	h.purgeStaleHistory(context.Background())
+	h := &handler{storage: store}
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: alive}})
 	if len(store.deleted) != 1 || store.deleted[0] != goneHash {
 		t.Fatalf("deleted = %v, want [%s]", store.deleted, goneHash)
 	}
@@ -443,37 +494,18 @@ func TestPurgeStaleHistoryKeepsPresent(t *testing.T) {
 	const url = "https://rutracker.org/forum/viewtopic.php?t=2"
 	hash := storagePkg.URLHash(url)
 	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "alive"}}}
-	h := &handler{
-		manager: &fakeManager{all: []*model.Entry{{URL: url}}},
-		storage: store,
-	}
-	h.purgeStaleHistory(context.Background())
+	h := &handler{storage: store}
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: url}})
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions, got %v", store.deleted)
-	}
-}
-
-func TestPurgeStaleHistorySkipsOnListError(t *testing.T) {
-	hash := storagePkg.URLHash("https://example.com/topic")
-	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "x"}}}
-	h := &handler{
-		manager: &fakeManager{allErr: fmt.Errorf("qbit down")},
-		storage: store,
-	}
-	h.purgeStaleHistory(context.Background())
-	if len(store.deleted) != 0 {
-		t.Fatalf("expected no deletions on list error, got %v", store.deleted)
 	}
 }
 
 func TestPurgeStaleHistorySkipsOnEmptyTorrentList(t *testing.T) {
 	hash := storagePkg.URLHash("https://example.com/topic")
 	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "x"}}}
-	h := &handler{
-		manager: &fakeManager{all: nil},
-		storage: store,
-	}
-	h.purgeStaleHistory(context.Background())
+	h := &handler{storage: store}
+	h.purgeStaleHistory(context.Background(), nil)
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions on empty torrent list, got %v", store.deleted)
 	}
@@ -482,11 +514,8 @@ func TestPurgeStaleHistorySkipsOnEmptyTorrentList(t *testing.T) {
 func TestPurgeStaleHistorySkipsOnNoTorrentURLs(t *testing.T) {
 	hash := storagePkg.URLHash("https://example.com/topic")
 	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "x"}}}
-	h := &handler{
-		manager: &fakeManager{all: []*model.Entry{{Name: "no comment"}}},
-		storage: store,
-	}
-	h.purgeStaleHistory(context.Background())
+	h := &handler{storage: store}
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{Name: "no comment"}})
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions when no torrent URLs found, got %v", store.deleted)
 	}
@@ -499,11 +528,8 @@ func TestPurgeStaleHistorySkipsOnListDueItemsError(t *testing.T) {
 		dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "x"}},
 		listErr:  fmt.Errorf("db down"),
 	}
-	h := &handler{
-		manager: &fakeManager{all: []*model.Entry{{URL: url}}},
-		storage: store,
-	}
-	h.purgeStaleHistory(context.Background())
+	h := &handler{storage: store}
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: url}})
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions on ListDueItems error, got %v", store.deleted)
 	}
@@ -695,9 +721,9 @@ type loggingStorage struct {
 	logs []storageModel.CheckLogEntry
 }
 
-func (l *loggingStorage) AddCheckLog(_ context.Context, e *storageModel.CheckLogEntry) error {
+func (l *loggingStorage) AddCheckLog(_ context.Context, e *storageModel.CheckLogEntry) (int, error) {
 	l.logs = append(l.logs, *e)
-	return nil
+	return l.checkStreak, nil
 }
 
 type mockPageClient struct{}
@@ -757,8 +783,9 @@ func TestWorkerUnknownStatusWhenDateMissing(t *testing.T) {
 	if store.logs[0].Status != "unknown" {
 		t.Fatalf("status = %q, want unknown", store.logs[0].Status)
 	}
-	if store.logs[0].Error != "" {
-		t.Fatalf("error = %q, want empty", store.logs[0].Error)
+	wantSample := strings.Repeat("x", 60)
+	if store.logs[0].Error != wantSample {
+		t.Fatalf("error = %q, want page sample %q", store.logs[0].Error, wantSample)
 	}
 }
 
@@ -845,14 +872,17 @@ func TestWorkerSkipsCheckLogOnContextCanceled(t *testing.T) {
 
 func TestGetHistorySkipsFutureRecheckAt(t *testing.T) {
 	const url = "https://rutracker.org/forum/viewtopic.php?t=50"
-	h := &handler{
-		storage: &fakeStorage{
-			items: map[string]*runnerModel.HistoryItem{
-				url: {URLHash: storagePkg.URLHash(url), TrackerTypeID: 1, Exists: true, RecheckAt: timePtr(time.Now().Add(24 * time.Hour))},
-			},
+	store := &fakeStorage{
+		items: map[string]*runnerModel.HistoryItem{
+			url: {URLHash: storagePkg.URLHash(url), TrackerTypeID: 1, Exists: true, RecheckAt: timePtr(time.Now().Add(24 * time.Hour))},
 		},
 	}
-	hi, err := h.getHistory(context.Background(), url, false)
+	h := &handler{storage: store}
+	items, err := store.AllItems(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hi, err := h.getHistory(context.Background(), url, false, items)
 	if err != errSkipped {
 		t.Fatalf("err = %v, want errSkipped", err)
 	}
@@ -863,19 +893,43 @@ func TestGetHistorySkipsFutureRecheckAt(t *testing.T) {
 
 func TestGetHistoryForceCheckBypassesRecheckAt(t *testing.T) {
 	const url = "https://rutracker.org/forum/viewtopic.php?t=51"
-	h := &handler{
-		storage: &fakeStorage{
-			items: map[string]*runnerModel.HistoryItem{
-				url: {URLHash: storagePkg.URLHash(url), TrackerTypeID: 1, Exists: true, RecheckAt: timePtr(time.Now().Add(24 * time.Hour)), ForceCheck: true},
-			},
+	store := &fakeStorage{
+		items: map[string]*runnerModel.HistoryItem{
+			url: {URLHash: storagePkg.URLHash(url), TrackerTypeID: 1, Exists: true, RecheckAt: timePtr(time.Now().Add(24 * time.Hour)), ForceCheck: true},
 		},
 	}
-	hi, err := h.getHistory(context.Background(), url, false)
+	h := &handler{storage: store}
+	items, err := store.AllItems(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hi, err := h.getHistory(context.Background(), url, false, items)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
 	if hi == nil || !hi.ForceCheck {
 		t.Fatal("expected force_check item")
+	}
+}
+
+func TestGetHistoryReturnsDueItemFromMap(t *testing.T) {
+	const url = "https://rutracker.org/forum/viewtopic.php?t=60"
+	store := &fakeStorage{
+		items: map[string]*runnerModel.HistoryItem{
+			url: {URLHash: storagePkg.URLHash(url), TrackerTypeID: 1, Exists: true, RecheckAt: timePtr(time.Now().Add(-time.Hour))},
+		},
+	}
+	h := &handler{storage: store}
+	items, err := store.AllItems(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hi, err := h.getHistory(context.Background(), url, false, items)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if hi == nil || !hi.Exists {
+		t.Fatal("expected history item from map")
 	}
 }
 
@@ -1030,7 +1084,11 @@ func runForceCheckWorkerTest(t *testing.T, forceCheck bool) (status string, subm
 		Name:      "test",
 		Timestamp: &oldAddition,
 	}
-	if err := h.buildEntry(context.Background(), e, false); err != nil {
+	items, err := store.AllItems(context.Background())
+	if err != nil {
+		t.Fatalf("AllItems err = %v", err)
+	}
+	if err := h.buildEntry(context.Background(), e, false, items); err != nil {
 		t.Fatalf("buildEntry err = %v", err)
 	}
 	if err := h.worker(context.Background(), 1, e, nil); err != nil {
@@ -1046,22 +1104,25 @@ func TestBuildEntryForceCheckKeepsTorrentTimestamp(t *testing.T) {
 	const url = "https://example.com/t/force-ts"
 	oldAddition := time.Now().Add(-48 * time.Hour)
 	historyCreatedAt := time.Now().Add(-2 * time.Hour)
-	h := &handler{
-		storage: &fakeStorage{
-			items: map[string]*runnerModel.HistoryItem{
-				url: {
-					URLHash:       storagePkg.URLHash(url),
-					TrackerTypeID: 1,
-					TopicID:       "123",
-					Exists:        true,
-					CreatedAt:     &historyCreatedAt,
-					ForceCheck:    true,
-				},
+	store := &fakeStorage{
+		items: map[string]*runnerModel.HistoryItem{
+			url: {
+				URLHash:       storagePkg.URLHash(url),
+				TrackerTypeID: 1,
+				TopicID:       "123",
+				Exists:        true,
+				CreatedAt:     &historyCreatedAt,
+				ForceCheck:    true,
 			},
 		},
 	}
+	h := &handler{storage: store}
 	e := &model.Entry{URL: url, Timestamp: &oldAddition}
-	if err := h.buildEntry(context.Background(), e, false); err != nil {
+	items, err := store.AllItems(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.buildEntry(context.Background(), e, false, items); err != nil {
 		t.Fatal(err)
 	}
 	if !e.Update {
@@ -1158,7 +1219,11 @@ func TestWorkerForceCheckPreservedOnSubmitError(t *testing.T) {
 		Name:      "test",
 		Timestamp: &oldAddition,
 	}
-	if err := h.buildEntry(context.Background(), e, false); err != nil {
+	items, err := store.AllItems(context.Background())
+	if err != nil {
+		t.Fatalf("AllItems err = %v", err)
+	}
+	if err := h.buildEntry(context.Background(), e, false, items); err != nil {
 		t.Fatalf("buildEntry err = %v", err)
 	}
 	if err := h.worker(context.Background(), 1, e, nil); err == nil {
@@ -1270,5 +1335,63 @@ func TestWorkerLockIsPerTracker(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestLogCheckAutoIgnoresOnErrorStreakAboveThreshold(t *testing.T) {
+	store := &fakeStorage{checkStreak: 3}
+	h := &handler{
+		config:  model.HandlerConfig{ErrorStreakThreshold: 3},
+		storage: store,
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "broken release", URLHash: "abc"}
+	h.logCheck(context.Background(), e, 1, "error", "boom", nil)
+	if len(store.ignoreCalls) != 1 || store.ignoreCalls[0] != "abc" {
+		t.Fatalf("ignoreCalls = %v, want [abc]", store.ignoreCalls)
+	}
+}
+
+func TestLogCheckDoesNotIgnoreBelowThreshold(t *testing.T) {
+	store := &fakeStorage{checkStreak: 2}
+	h := &handler{
+		config:  model.HandlerConfig{ErrorStreakThreshold: 3},
+		storage: store,
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "flaky release", URLHash: "abc"}
+	h.logCheck(context.Background(), e, 1, "error", "boom", nil)
+	if len(store.ignoreCalls) != 0 {
+		t.Fatalf("expected no ignore calls below threshold, got %v", store.ignoreCalls)
+	}
+}
+
+func TestLogCheckAutoIgnoreDisabledWhenThresholdZero(t *testing.T) {
+	store := &fakeStorage{checkStreak: 99}
+	h := &handler{
+		config:  model.HandlerConfig{ErrorStreakThreshold: 0},
+		storage: store,
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "release", URLHash: "abc"}
+	h.logCheck(context.Background(), e, 1, "error", "boom", nil)
+	if len(store.ignoreCalls) != 0 {
+		t.Fatalf("expected auto-ignore disabled at threshold 0, got %v", store.ignoreCalls)
+	}
+}
+
+func TestPushCallsGetEntriesOnce(t *testing.T) {
+	mgr := &fakeManager{all: []*model.Entry{{URL: "https://example.com/t/1", Name: "x", Tag: "watch"}}}
+	h := &handler{
+		config:         model.HandlerConfig{WatchTags: []string{"watch"}},
+		manager:        mgr,
+		storage:        &fakeStorage{},
+		trackerService: &fakeTracker{id: 1},
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if mgr.getEntriesCalls != 1 {
+		t.Fatalf("GetEntries calls = %d, want 1", mgr.getEntriesCalls)
 	}
 }

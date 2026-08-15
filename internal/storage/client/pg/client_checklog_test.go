@@ -9,23 +9,28 @@ import (
 // ponytail: in-memory stand-in for upsert/dedupe SQL semantics (no PG in unit tests with -mod=vendor)
 
 type checkRow struct {
-	id        int64
-	checkedAt time.Time
-	urlHash   string
-	itemName  string
-	tid       int
-	status    string
-	errorMsg  string
+	id          int64
+	checkedAt   time.Time
+	urlHash     string
+	itemName    string
+	tid         int
+	status      string
+	errorMsg    string
+	errorStreak int
 }
 
 func upsertRow(rows map[string]checkRow, nextID *int64, hash, name, url string, tid int, status, errMsg string, at time.Time) map[string]checkRow {
 	if rows == nil {
 		rows = make(map[string]checkRow)
 	}
+	streak := 0
+	if status == "error" {
+		streak = rows[hash].errorStreak + 1
+	}
 	*nextID++
 	rows[hash] = checkRow{
 		id: *nextID, checkedAt: at, urlHash: hash, itemName: name,
-		tid: tid, status: status, errorMsg: errMsg,
+		tid: tid, status: status, errorMsg: errMsg, errorStreak: streak,
 	}
 	return rows
 }
@@ -68,6 +73,29 @@ func TestAddCheckLogUpsertSemantics(t *testing.T) {
 	}
 	if !r.checkedAt.Equal(t2) {
 		t.Fatalf("checkedAt not updated")
+	}
+}
+
+func TestAddCheckLogErrorStreak(t *testing.T) {
+	var nextID int64
+	rows := make(map[string]checkRow)
+	now := time.Now()
+
+	rows = upsertRow(rows, &nextID, "hash1", "n", "", 1, "error", "e1", now)
+	if got := rows["hash1"].errorStreak; got != 1 {
+		t.Fatalf("streak after 1st error = %d, want 1", got)
+	}
+	rows = upsertRow(rows, &nextID, "hash1", "n", "", 1, "error", "e2", now)
+	if got := rows["hash1"].errorStreak; got != 2 {
+		t.Fatalf("streak after 2nd error = %d, want 2", got)
+	}
+	rows = upsertRow(rows, &nextID, "hash1", "n", "", 1, "error", "e3", now)
+	if got := rows["hash1"].errorStreak; got != 3 {
+		t.Fatalf("streak after 3rd error = %d, want 3", got)
+	}
+	rows = upsertRow(rows, &nextID, "hash1", "n", "", 1, "unchanged", "", now)
+	if got := rows["hash1"].errorStreak; got != 0 {
+		t.Fatalf("streak after non-error status = %d, want 0", got)
 	}
 }
 

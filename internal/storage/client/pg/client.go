@@ -132,25 +132,31 @@ func (c *Client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (e
 	return
 }
 
-func (c *Client) GetItem(ctx context.Context, urlHash string) (item *storage.Item, err error) {
-	item = &storage.Item{URLHash: urlHash}
-	err = c.db.QueryRow(ctx, "SELECT tracker_type_id, topic_id, category_name, COALESCE(item_tag, ''), COALESCE(item_name, ''), item_url, created_at, recheck_at, force_check FROM trackerr.history WHERE url_hash = $1", urlHash).Scan(
-		&item.TrackerTypeID, &item.TopicID, &item.Category, &item.Tag, &item.Name, &item.URL, &item.CreatedAt, &item.RecheckAt, &item.ForceCheck)
-	if err == pgx.ErrNoRows {
-		err = nil
-		return
-	}
-	item.Exists = true
-
-	return
-}
-
 func (c *Client) AddItem(ctx context.Context, item *storage.Item) (err error) {
 	_, err = c.db.Exec(ctx,
 		"INSERT INTO trackerr.history(url_hash, tracker_type_id, topic_id, category_name, item_tag, item_name, item_url, created_at, recheck_at, force_check) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, false)",
 		item.URLHash, item.TrackerTypeID, item.TopicID, item.Category, item.Tag, item.Name, item.URL, item.CreatedAt, item.RecheckAt)
 
 	return
+}
+
+func (c *Client) ListItems(ctx context.Context) ([]storage.Item, error) {
+	rows, err := c.db.Query(ctx,
+		"SELECT url_hash, tracker_type_id, topic_id, category_name, COALESCE(item_tag, ''), COALESCE(item_name, ''), item_url, created_at, recheck_at, force_check FROM trackerr.history")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []storage.Item
+	for rows.Next() {
+		var item storage.Item
+		if err = rows.Scan(&item.URLHash, &item.TrackerTypeID, &item.TopicID, &item.Category, &item.Tag, &item.Name, &item.URL, &item.CreatedAt, &item.RecheckAt, &item.ForceCheck); err != nil {
+			return nil, err
+		}
+		item.Exists = true
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (c *Client) UpdateItem(ctx context.Context, item *storage.Item) (err error) {
@@ -160,17 +166,18 @@ func (c *Client) UpdateItem(ctx context.Context, item *storage.Item) (err error)
 	return
 }
 
-func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) error {
+func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) (int, error) {
 	// the upsert arbiter is url_hash, so a same-name row under a different hash
 	// (release moved to a new topic) would trip check_log_item_name_uidx: drop it first
 	if strings.TrimSpace(entry.ItemName) != "" {
 		if _, err := c.db.Exec(ctx,
 			`DELETE FROM trackerr.check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM($1)) AND url_hash <> $2`,
 			entry.ItemName, entry.URLHash); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	_, err := c.db.Exec(ctx,
+	var errorStreak int
+	err := c.db.QueryRow(ctx,
 		`INSERT INTO trackerr.check_log (url_hash, item_name, item_url, tracker_type_id, status, error, error_streak)
 		 VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $5 = 'error' THEN 1 ELSE 0 END)
 		 ON CONFLICT (url_hash) DO UPDATE SET
@@ -180,16 +187,17 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 		     tracker_type_id = EXCLUDED.tracker_type_id,
 		     status = EXCLUDED.status,
 		     error = EXCLUDED.error,
-		     error_streak = CASE WHEN EXCLUDED.status = 'error' THEN trackerr.check_log.error_streak + 1 ELSE 0 END`,
-		entry.URLHash, entry.ItemName, entry.ItemURL, entry.TrackerTypeID, entry.Status, entry.Error)
-	return err
+		     error_streak = CASE WHEN EXCLUDED.status = 'error' THEN trackerr.check_log.error_streak + 1 ELSE 0 END
+		 RETURNING error_streak`,
+		entry.URLHash, entry.ItemName, entry.ItemURL, entry.TrackerTypeID, entry.Status, entry.Error).Scan(&errorStreak)
+	return errorStreak, err
 }
 
-func (c *Client) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
+func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]storage.CheckLogEntry, int, error) {
 	var total int
 	from := `trackerr.check_log c`
 	join := " LEFT JOIN trackerr.history h ON h.url_hash = c.url_hash"
-	if ignoredOnly {
+	if f.IgnoredOnly {
 		join += " INNER JOIN trackerr.ignore i ON i.url_hash = c.url_hash"
 	}
 	countQ := "SELECT COUNT(*) FROM " + from + join
@@ -199,22 +207,33 @@ func (c *Client) ListCheckLog(ctx context.Context, limit, offset int, statusFilt
 	args := []any{}
 	n := 1
 	var where []string
-	if statusFilter == "broken" {
+	if f.Status == "broken" {
+		brokenStreak := f.BrokenStreak
 		if brokenStreak < 1 {
 			brokenStreak = 1
 		}
 		where = append(where, "c.error_streak >= $"+itoa(n))
 		n++
 		args = append(args, brokenStreak)
-	} else if statusFilter != "" {
+	} else if f.Status != "" {
 		where = append(where, "c.status = $"+itoa(n))
 		n++
-		args = append(args, statusFilter)
+		args = append(args, f.Status)
 	}
-	if nameFilter != "" {
+	if f.Name != "" {
 		where = append(where, "POSITION(LOWER($"+itoa(n)+") IN LOWER(c.item_name)) > 0")
 		n++
-		args = append(args, nameFilter)
+		args = append(args, f.Name)
+	}
+	if f.TrackerID > 0 {
+		where = append(where, "c.tracker_type_id = $"+itoa(n))
+		n++
+		args = append(args, f.TrackerID)
+	}
+	if f.Category != "" {
+		where = append(where, "h.category_name = $"+itoa(n))
+		n++
+		args = append(args, f.Category)
 	}
 	if len(where) > 0 {
 		clause := " WHERE " + strings.Join(where, " AND ")
@@ -225,11 +244,11 @@ func (c *Client) ListCheckLog(ctx context.Context, limit, offset int, statusFilt
 		return nil, 0, err
 	}
 	orderBy := " ORDER BY c.checked_at DESC"
-	if sortBy == "recheck" {
+	if f.SortBy == "recheck" {
 		orderBy = " ORDER BY h.recheck_at ASC NULLS LAST"
 	}
 	listQ += orderBy + " LIMIT $" + itoa(n) + " OFFSET $" + itoa(n+1)
-	args = append(args, limit, offset)
+	args = append(args, f.Limit, f.Offset)
 	rows, err := c.db.Query(ctx, listQ, args...)
 	if err != nil {
 		return nil, 0, err
@@ -244,6 +263,16 @@ func (c *Client) ListCheckLog(ctx context.Context, limit, offset int, statusFilt
 		items = append(items, e)
 	}
 	return items, total, rows.Err()
+}
+
+func (c *Client) CheckLogSummary(ctx context.Context) (storage.CheckLogSummary, error) {
+	var s storage.CheckLogSummary
+	err := c.db.QueryRow(ctx, `
+SELECT
+    COUNT(*) FILTER (WHERE status = 'updated'),
+    COUNT(*) FILTER (WHERE status = 'error')
+FROM trackerr.check_log`).Scan(&s.Updated, &s.Errors)
+	return s, err
 }
 
 func (c *Client) ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error) {
@@ -274,6 +303,11 @@ func (c *Client) AddIgnore(ctx context.Context, hash, name, url string) error {
 
 func (c *Client) DeleteIgnore(ctx context.Context, hash string) error {
 	_, err := c.db.Exec(ctx, `DELETE FROM trackerr.ignore WHERE url_hash = $1`, hash)
+	return err
+}
+
+func (c *Client) ResetErrorStreak(ctx context.Context, urlHash string) error {
+	_, err := c.db.Exec(ctx, `UPDATE trackerr.check_log SET error_streak = 0 WHERE url_hash = $1`, urlHash)
 	return err
 }
 

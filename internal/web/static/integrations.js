@@ -56,8 +56,12 @@ export function renderIntegrations(el, data) {
   const f = data.flaresolverr || {};
   const p = data.proxy || {};
   const proxyParts = parseDownloadProxy(p.download_proxy || '');
+  const n = data.notifications || {};
+  const nTg = n.telegram || {};
+  const nWh = n.webhook || {};
+  const notifyType = nWh.url ? 'webhook' : 'telegram';
 
-  el.innerHTML = html`<div class="page-header"><h1 class="page-title">${t('integrations.title')}</h1></div><div class="grid-2"><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.qbit')}</h2></div><div class="card-body" autocomplete="off"><div class="form-group"><label class="form-label">${t('integrations.host')}</label><input type="text" class="input" id="qbit-host" autocomplete="off" name="qb-host-field" value="${q.host}"></div><div class="form-group"><label class="form-label">${t('integrations.username')}</label><input type="text" class="input" id="qbit-username" autocomplete="off" name="qb-user-field" value="${q.username}"></div><div class="form-group"><label class="form-label">${t('integrations.password')}</label><div class="input-password-wrap"><input id="qbit-password"${secureInputAttrs('qb-secret')} value="${q.password}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eye"></span></button></div></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="qbit">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="qbit">${t('integrations.test')}</button><span class="test-result" data-kind="qbit"></span></div></div></div><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.flare')}</h2></div><div class="card-body"><div class="form-group"><label class="form-label">${t('integrations.url')}</label><input type="text" class="input" id="flare-url" value="${f.url}"></div><div class="form-group"><label class="form-label">${t('integrations.timeout')}</label><input type="number" class="input" id="flare-timeout" min="1" value="${f.timeout_ms || 0}"></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="flaresolverr">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="flaresolverr">${t('integrations.test')}</button><span class="test-result" data-kind="flaresolverr"></span></div></div></div><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.proxy')}</h2></div><div class="card-body"><div class="proxy-type-row"><div class="form-group"><label class="form-label" for="proxy-type">${t('integrations.proxyType')}</label><select class="select" id="proxy-type"><option value="http"${proxyParts.type === 'http' ? ' selected' : ''}>${t('integrations.proxyTypeHttp')}</option><option value="https"${proxyParts.type === 'https' ? ' selected' : ''}>${t('integrations.proxyTypeHttps')}</option><option value="socks5"${proxyParts.type === 'socks5' ? ' selected' : ''}>${t('integrations.proxyTypeSocks5')}</option></select></div><div class="form-group"><label class="form-label" for="proxy-download">${t('integrations.proxyAddress')}</label><input type="text" class="input" id="proxy-download" value="${proxyParts.address}" placeholder="${t('integrations.downloadProxyPlaceholder')}"></div></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="proxy">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="proxy">${t('integrations.test')}</button><span class="test-result" data-kind="proxy"></span></div></div></div></div>`;
+  el.innerHTML = html`<div class="page-header"><h1 class="page-title">${t('integrations.title')}</h1></div><div class="grid-2"><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.qbit')}</h2></div><div class="card-body" autocomplete="off"><div class="form-group"><label class="form-label">${t('integrations.host')}</label><input type="text" class="input" id="qbit-host" autocomplete="off" name="qb-host-field" value="${q.host}"></div><div class="form-group"><label class="form-label">${t('integrations.username')}</label><input type="text" class="input" id="qbit-username" autocomplete="off" name="qb-user-field" value="${q.username}"></div><div class="form-group"><label class="form-label">${t('integrations.password')}</label><div class="input-password-wrap"><input id="qbit-password"${secureInputAttrs('qb-secret')} value="${q.password}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eye"></span></button></div></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="qbit">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="qbit">${t('integrations.test')}</button><span class="test-result" data-kind="qbit"></span></div></div></div><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.flare')}</h2></div><div class="card-body"><div class="form-group"><label class="form-label">${t('integrations.url')}</label><input type="text" class="input" id="flare-url" value="${f.url}"></div><div class="form-group"><label class="form-label">${t('integrations.timeout')}</label><input type="number" class="input" id="flare-timeout" min="1" value="${f.timeout_ms || 0}"></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="flaresolverr">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="flaresolverr">${t('integrations.test')}</button><span class="test-result" data-kind="flaresolverr"></span></div></div></div><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.proxy')}</h2></div><div class="card-body"><div class="proxy-type-row"><div class="form-group"><label class="form-label" for="proxy-type">${t('integrations.proxyType')}</label><select class="select" id="proxy-type"><option value="http"${proxyParts.type === 'http' ? ' selected' : ''}>${t('integrations.proxyTypeHttp')}</option><option value="https"${proxyParts.type === 'https' ? ' selected' : ''}>${t('integrations.proxyTypeHttps')}</option><option value="socks5"${proxyParts.type === 'socks5' ? ' selected' : ''}>${t('integrations.proxyTypeSocks5')}</option></select></div><div class="form-group"><label class="form-label" for="proxy-download">${t('integrations.proxyAddress')}</label><input type="text" class="input" id="proxy-download" value="${proxyParts.address}" placeholder="${t('integrations.downloadProxyPlaceholder')}"></div></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="proxy">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="proxy">${t('integrations.test')}</button><span class="test-result" data-kind="proxy"></span></div></div></div><div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.notify')}</h2></div><div class="card-body" autocomplete="off"><div class="form-group" id="notify-type-group"><label class="form-label" for="notify-channel-type">${t('integrations.notifyChannelType')}</label><select class="select" id="notify-channel-type"><option value="telegram"${notifyType === 'telegram' ? ' selected' : ''}>${t('integrations.notifyChannelTelegram')}</option><option value="webhook"${notifyType === 'webhook' ? ' selected' : ''}>${t('integrations.notifyChannelWebhook')}</option></select></div><div class="form-group notify-field-telegram"><label class="form-label">${t('integrations.notifyBotToken')}</label><div class="input-password-wrap"><input id="notify-bot-token"${secureInputAttrs('notify-secret')} value="${nTg.bot_token}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eye"></span></button></div><p class="form-hint">${t('integrations.notifyChatIdHint')}</p></div><div class="form-group notify-field-webhook"><label class="form-label">${t('integrations.notifyWebhookUrl')}</label><input type="text" class="input" id="notify-webhook-url" autocomplete="off" value="${nWh.url}"></div><div class="form-group"><label class="form-switch"><input type="checkbox" id="notify-enabled"${n.enabled ? ' checked' : ''}><span>${t('integrations.notifyEnabled')}</span></label></div><div class="btn-group"><button type="button" class="btn btn-primary btn-save-int" data-section="notify">${t('common.save')}</button><button type="button" class="btn btn-ghost btn-test-int" data-kind="notify">${t('integrations.test')}</button><span class="test-result" data-kind="notify"></span></div></div></div></div>`;
 
   el.querySelectorAll('.btn-save-int').forEach(function (btn) {
     btn.addEventListener('click', async function () {
@@ -76,6 +80,8 @@ export function renderIntegrations(el, data) {
         };
       } else if (section === 'proxy') {
         doc.proxy = { download_proxy: getProxyDownloadValue() };
+      } else if (section === 'notify') {
+        doc.notifications = getNotifyFormValue();
       }
       btn.disabled = true;
       try {
@@ -117,6 +123,30 @@ export function renderIntegrations(el, data) {
   initCustomSelects(el);
   initPasswordToggles(el);
   hydrateIcons(el);
+
+  applyNotifyChannelType(el, notifyType);
+  const notifyTypeSelect = document.getElementById('notify-channel-type');
+  if (notifyTypeSelect) {
+    notifyTypeSelect.addEventListener('change', function () {
+      applyNotifyChannelType(el, notifyTypeSelect.value || 'telegram');
+    });
+  }
+}
+
+// hides the fields of the other channel rather than removing them, so text
+// already typed there survives clicking back and forth before saving
+function applyNotifyChannelType(el, type) {
+  el.querySelectorAll('.notify-field-telegram').forEach(function (f) {
+    f.classList.toggle('hidden', type !== 'telegram');
+  });
+  el.querySelectorAll('.notify-field-webhook').forEach(function (f) {
+    f.classList.toggle('hidden', type !== 'webhook');
+  });
+}
+
+function getNotifyChannelType() {
+  const select = document.getElementById('notify-channel-type');
+  return (select && select.value) || 'telegram';
 }
 
 
@@ -137,7 +167,21 @@ export function getIntegrationTestConfig(kind) {
   if (kind === 'proxy') {
     return { download_proxy: getProxyDownloadValue() };
   }
+  if (kind === 'notify') {
+    return getNotifyFormValue();
+  }
   return {};
+}
+
+export function getNotifyFormValue() {
+  const type = getNotifyChannelType();
+  return {
+    telegram: {
+      bot_token: type === 'telegram' ? document.getElementById('notify-bot-token').value : '',
+    },
+    webhook: { url: type === 'webhook' ? document.getElementById('notify-webhook-url').value : '' },
+    enabled: document.getElementById('notify-enabled').checked,
+  };
 }
 
 export function buildIntegrationsDoc() {
@@ -151,6 +195,7 @@ export function buildIntegrationsDoc() {
   base.flaresolverr.url = document.getElementById('flare-url').value;
   base.flaresolverr.timeout_ms = parseInt(document.getElementById('flare-timeout').value, 10) || 0;
   base.proxy.download_proxy = getProxyDownloadValue();
+  base.notifications = getNotifyFormValue();
   return base;
 }
 

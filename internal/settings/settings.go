@@ -57,6 +57,16 @@ type integrationsOverlay struct {
 	Proxy struct {
 		DownloadProxy *string `json:"download_proxy,omitempty"`
 	} `json:"proxy"`
+	Notifications struct {
+		Telegram struct {
+			BotToken *string `json:"bot_token,omitempty"`
+			ChatID   *string `json:"chat_id,omitempty"`
+		} `json:"telegram"`
+		Webhook struct {
+			URL *string `json:"url,omitempty"`
+		} `json:"webhook"`
+		Enabled *bool `json:"enabled,omitempty"`
+	} `json:"notifications"`
 }
 
 func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
@@ -180,6 +190,18 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if o.Proxy.DownloadProxy != nil {
 		cfg.Runner.DownloadProxy = *o.Proxy.DownloadProxy
 	}
+	if o.Notifications.Telegram.BotToken != nil {
+		cfg.Notify.TelegramToken = *o.Notifications.Telegram.BotToken
+	}
+	if o.Notifications.Telegram.ChatID != nil {
+		cfg.Notify.TelegramChatID = *o.Notifications.Telegram.ChatID
+	}
+	if o.Notifications.Webhook.URL != nil {
+		cfg.Notify.WebhookURL = *o.Notifications.Webhook.URL
+	}
+	if o.Notifications.Enabled != nil {
+		cfg.Notify.Enabled = *o.Notifications.Enabled
+	}
 }
 
 func ScheduleJSON(cfg *config.App) json.RawMessage {
@@ -237,6 +259,16 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 		Proxy struct {
 			DownloadProxy string `json:"download_proxy"`
 		} `json:"proxy"`
+		Notifications struct {
+			Telegram struct {
+				BotToken string `json:"bot_token"`
+				ChatID   string `json:"chat_id"`
+			} `json:"telegram"`
+			Webhook struct {
+				URL string `json:"url"`
+			} `json:"webhook"`
+			Enabled bool `json:"enabled"`
+		} `json:"notifications"`
 	}{}
 	s.Qbit.Host = cfg.Manager.QbitTorrent.Host
 	s.Qbit.Username = cfg.Manager.QbitTorrent.Username
@@ -244,6 +276,10 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s.Flaresolverr.URL = cfg.Flaresolverr.Host
 	s.Flaresolverr.TimeoutMS = cfg.Flaresolverr.MaxTimeout
 	s.Proxy.DownloadProxy = cfg.Runner.DownloadProxy
+	s.Notifications.Telegram.BotToken = cfg.Notify.TelegramToken
+	s.Notifications.Telegram.ChatID = cfg.Notify.TelegramChatID
+	s.Notifications.Webhook.URL = cfg.Notify.WebhookURL
+	s.Notifications.Enabled = cfg.Notify.Enabled
 	b, _ := json.Marshal(s)
 	return b
 }

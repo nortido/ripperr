@@ -14,6 +14,7 @@ import (
 	"trackerr/internal/config"
 	"trackerr/internal/manager/client/qbittorrent"
 	"trackerr/internal/model"
+	"trackerr/internal/notify"
 	"trackerr/internal/settings"
 )
 
@@ -22,18 +23,104 @@ func (s *Server) handleGetIntegrations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, json.RawMessage(settings.IntegrationsJSON(&cfg)))
 }
 
+// ponytail: package vars so tests can fake Telegram without a live call, same pattern as qbitClientFactory
+var telegramChatIDResolver = notify.ResolveChatID
+
+var sendNotification = func(ctx context.Context, cfg notify.Config, ev notify.Event) error {
+	return notify.New(cfg).Send(ctx, ev)
+}
+
 func (s *Server) handlePutIntegrations(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err = settings.MergeIntegrations(r.Context(), s.db, body); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	body, err = s.resolveTelegramChatID(ctx, body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err = settings.MergeIntegrations(ctx, s.db, body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.reload()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) resolveTelegramChatID(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
+	var patch struct {
+		Notifications struct {
+			Telegram struct {
+				BotToken *string `json:"bot_token"`
+			} `json:"telegram"`
+		} `json:"notifications"`
+	}
+	if err := json.Unmarshal(body, &patch); err != nil {
+		return body, nil // let MergeIntegrations surface the JSON error
+	}
+	token := patch.Notifications.Telegram.BotToken
+	if token == nil {
+		return body, nil
+	}
+	if *token == "" {
+		// token cleared: drop whatever chat id was resolved for the old one
+		return setTelegramChatID(body, "")
+	}
+	cfg := s.effective()
+	if *token == cfg.Notify.TelegramToken && cfg.Notify.TelegramChatID != "" {
+		return body, nil
+	}
+	chatID, err := telegramChatIDResolver(ctx, *token)
+	if err != nil {
+		return nil, err
+	}
+	return setTelegramChatID(body, chatID)
+}
+
+func setTelegramChatID(body json.RawMessage, chatID string) (json.RawMessage, error) {
+	// walk the raw patch as map[string]json.RawMessage instead of a mirrored
+	// struct, so fields we don't touch here (qbit, flaresolverr, proxy,
+	// webhook, enabled...) survive untouched even as the patch shape evolves
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		return nil, err
+	}
+	var notifications map[string]json.RawMessage
+	if raw, ok := top["notifications"]; ok {
+		if err := json.Unmarshal(raw, &notifications); err != nil {
+			return nil, err
+		}
+	} else {
+		notifications = map[string]json.RawMessage{}
+	}
+	var telegram map[string]json.RawMessage
+	if raw, ok := notifications["telegram"]; ok {
+		if err := json.Unmarshal(raw, &telegram); err != nil {
+			return nil, err
+		}
+	} else {
+		telegram = map[string]json.RawMessage{}
+	}
+	idJSON, err := json.Marshal(chatID)
+	if err != nil {
+		return nil, err
+	}
+	telegram["chat_id"] = idJSON
+	telegramJSON, err := json.Marshal(telegram)
+	if err != nil {
+		return nil, err
+	}
+	notifications["telegram"] = telegramJSON
+	notificationsJSON, err := json.Marshal(notifications)
+	if err != nil {
+		return nil, err
+	}
+	top["notifications"] = notificationsJSON
+	return json.Marshal(top)
 }
 
 func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
@@ -66,8 +153,20 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 		s.testResult(w, testFlaresolverr(cfg))
 	case "proxy":
 		s.testResult(w, testProxy(cfg))
+	case "notify":
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if cfg.Notify.TelegramToken != "" && cfg.Notify.TelegramChatID == "" {
+			chatID, err := telegramChatIDResolver(ctx, cfg.Notify.TelegramToken)
+			if err != nil {
+				s.testResult(w, err)
+				return
+			}
+			cfg.Notify.TelegramChatID = chatID
+		}
+		s.testResult(w, sendNotification(ctx, notify.Config(cfg.Notify), notify.Event{Kind: notify.KindTest, Text: "trackerr: connectivity test"}))
 	default:
-		writeError(w, http.StatusBadRequest, "kind must be qbit, flaresolverr, or proxy")
+		writeError(w, http.StatusBadRequest, "kind must be qbit, flaresolverr, proxy, or notify")
 	}
 }
 
@@ -120,8 +219,26 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 			return cfg, err
 		}
 		cfg.Runner.DownloadProxy = c.DownloadProxy
+	case "notify":
+		var c struct {
+			Telegram struct {
+				BotToken string `json:"bot_token"`
+				ChatID   string `json:"chat_id"`
+			} `json:"telegram"`
+			Webhook struct {
+				URL string `json:"url"`
+			} `json:"webhook"`
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return cfg, err
+		}
+		cfg.Notify.TelegramToken = c.Telegram.BotToken
+		cfg.Notify.TelegramChatID = c.Telegram.ChatID
+		cfg.Notify.WebhookURL = c.Webhook.URL
+		cfg.Notify.Enabled = c.Enabled
 	default:
-		return cfg, fmt.Errorf("kind must be qbit, flaresolverr, or proxy")
+		return cfg, fmt.Errorf("kind must be qbit, flaresolverr, proxy, or notify")
 	}
 	return cfg, nil
 }

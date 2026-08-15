@@ -121,8 +121,10 @@
   cursor: pointer;
 }
 
-.stat-card-filter:hover {
-  border-color: var(--border-subtle);
+@media (hover: hover) {
+  .stat-card-filter:hover {
+    border-color: var(--border-subtle);
+  }
 }
 
 .stat-card-active.stat-card-filter-green {
@@ -144,7 +146,7 @@
 .stat-card-next-run .stat-card-body {
   flex: 1;
   min-width: 0;
-  padding-right: 36px;
+  padding-right: 29px; /* icon right 12 + width 30 = 42 от края карточки, минус padding карточки 20 = нужно ещё 22, плюс 7 зазора = 29 */
 }
 
 .stat-card-next-run .stat-value {

@@ -18,6 +18,7 @@ import (
 	"trackerr/internal/model"
 	"trackerr/internal/model/storage"
 	"trackerr/internal/model/tracker"
+	"trackerr/internal/notify"
 	"trackerr/internal/runner"
 	"trackerr/internal/settings"
 	storagePkg "trackerr/internal/storage"
@@ -25,11 +26,13 @@ import (
 )
 
 type fakeStore struct {
-	checkLog   []storage.CheckLogEntry
-	ignore     []storage.IgnoreEntry
-	settings   map[string]json.RawMessage
-	forceItems map[string]bool
-	pingErr    error
+	checkLog         []storage.CheckLogEntry
+	ignore           []storage.IgnoreEntry
+	settings         map[string]json.RawMessage
+	forceItems       map[string]bool
+	pingErr          error
+	summary          storage.CheckLogSummary
+	resetStreakCalls []string
 }
 
 func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
@@ -60,34 +63,35 @@ func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry
 	return out
 }
 
-func (f *fakeStore) ListCheckLog(_ context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
+func (f *fakeStore) ListCheckLog(_ context.Context, filter storage.CheckLogFilter) ([]storage.CheckLogEntry, int, error) {
 	ignoreSet := make(map[string]struct{}, len(f.ignore))
 	for _, e := range f.ignore {
 		ignoreSet[e.URLHash] = struct{}{}
 	}
 	var filtered []storage.CheckLogEntry
-	nameNeedle := strings.ToLower(nameFilter)
+	nameNeedle := strings.ToLower(filter.Name)
 	for _, e := range dedupeCheckLogByName(f.checkLog) {
-		if statusFilter == "broken" {
+		if filter.Status == "broken" {
+			brokenStreak := filter.BrokenStreak
 			if brokenStreak < 1 {
 				brokenStreak = 1
 			}
 			if e.ErrorStreak < brokenStreak {
 				continue
 			}
-		} else if statusFilter != "" && e.Status != statusFilter {
+		} else if filter.Status != "" && e.Status != filter.Status {
 			continue
 		}
-		if nameFilter != "" && !strings.Contains(strings.ToLower(e.ItemName), nameNeedle) {
+		if filter.Name != "" && !strings.Contains(strings.ToLower(e.ItemName), nameNeedle) {
 			continue
 		}
 		_, inIgnore := ignoreSet[e.URLHash]
-		if ignoredOnly && !inIgnore {
+		if filter.IgnoredOnly && !inIgnore {
 			continue
 		}
 		filtered = append(filtered, e)
 	}
-	if sortBy == "recheck" {
+	if filter.SortBy == "recheck" {
 		sort.Slice(filtered, func(i, j int) bool {
 			a, b := filtered[i].RecheckAt, filtered[j].RecheckAt
 			if a == nil && b == nil {
@@ -103,12 +107,12 @@ func (f *fakeStore) ListCheckLog(_ context.Context, limit, offset int, statusFil
 		})
 	}
 	total := len(filtered)
-	if offset > len(filtered) {
+	if filter.Offset > len(filtered) {
 		return nil, total, nil
 	}
-	filtered = filtered[offset:]
-	if limit > 0 && len(filtered) > limit {
-		filtered = filtered[:limit]
+	filtered = filtered[filter.Offset:]
+	if filter.Limit > 0 && len(filtered) > filter.Limit {
+		filtered = filtered[:filter.Limit]
 	}
 	return filtered, total, nil
 }
@@ -131,6 +135,11 @@ func (f *fakeStore) AddIgnore(_ context.Context, hash, name, url string) error {
 }
 
 func (f *fakeStore) DeleteIgnore(_ context.Context, hash string) error {
+	return nil
+}
+
+func (f *fakeStore) ResetErrorStreak(_ context.Context, hash string) error {
+	f.resetStreakCalls = append(f.resetStreakCalls, hash)
 	return nil
 }
 
@@ -177,6 +186,10 @@ func (f *fakeStore) ForceCheckAll(_ context.Context, force bool) (int64, error) 
 		}
 	}
 	return n, nil
+}
+
+func (f *fakeStore) CheckLogSummary(context.Context) (storage.CheckLogSummary, error) {
+	return f.summary, nil
 }
 
 func (f *fakeStore) GetTracker(context.Context, int) (*tracker.Tracker, error) {
@@ -459,6 +472,22 @@ func TestPostIgnoreFNVHash(t *testing.T) {
 	}
 }
 
+func TestDeleteIgnoreResetsErrorStreak(t *testing.T) {
+	store := &fakeStore{}
+	srv := newTestServer(store)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/ignore/abc123", nil)
+	req.SetPathValue("hash", "abc123")
+	w := httptest.NewRecorder()
+	srv.handleDeleteIgnore(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	if len(store.resetStreakCalls) != 1 || store.resetStreakCalls[0] != "abc123" {
+		t.Fatalf("resetStreakCalls = %v, want [abc123]", store.resetStreakCalls)
+	}
+}
+
 func TestGetHistory(t *testing.T) {
 	recheck := time.Now().Add(2 * time.Hour)
 	store := &fakeStore{checkLog: []storage.CheckLogEntry{
@@ -599,6 +628,133 @@ func TestPutIntegrationsMerge(t *testing.T) {
 	}
 	if saved["proxy"]["download_proxy"] != "http://proxy" {
 		t.Errorf("proxy = %v, want http://proxy", saved["proxy"]["download_proxy"])
+	}
+}
+
+func TestPutIntegrationsAutoResolvesChatID(t *testing.T) {
+	// stands in for Telegram's getUpdates endpoint
+	fakeTelegram := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"result":[{"message":{"chat":{"id":777}}}]}`))
+	}))
+	defer fakeTelegram.Close()
+
+	origResolver := telegramChatIDResolver
+	defer func() { telegramChatIDResolver = origResolver }()
+	var gotToken string
+	telegramChatIDResolver = func(_ context.Context, token string) (string, error) {
+		gotToken = token
+		res, err := http.Get(fakeTelegram.URL)
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = res.Body.Close() }()
+		var parsed struct {
+			Result []struct {
+				Message struct {
+					Chat struct {
+						ID int `json:"id"`
+					} `json:"chat"`
+				} `json:"message"`
+			} `json:"result"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&parsed); err != nil {
+			return "", err
+		}
+		last := parsed.Result[len(parsed.Result)-1]
+		return fmt.Sprintf("%d", last.Message.Chat.ID), nil
+	}
+
+	store := &fakeStore{}
+	srv := newTestServer(store)
+	body := []byte(`{"notifications":{"telegram":{"bot_token":"tok"}}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/integrations", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handlePutIntegrations(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	if gotToken != "tok" {
+		t.Errorf("resolver called with token = %q, want tok", gotToken)
+	}
+	var saved struct {
+		Notifications struct {
+			Telegram struct {
+				BotToken string `json:"bot_token"`
+				ChatID   string `json:"chat_id"`
+			} `json:"telegram"`
+		} `json:"notifications"`
+	}
+	if err := json.Unmarshal(store.settings["integrations"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Notifications.Telegram.BotToken != "tok" {
+		t.Errorf("bot_token = %q, want tok", saved.Notifications.Telegram.BotToken)
+	}
+	if saved.Notifications.Telegram.ChatID != "777" {
+		t.Errorf("chat_id = %q, want 777", saved.Notifications.Telegram.ChatID)
+	}
+}
+
+func TestPutIntegrationsChatIDResolveFailureNotSaved(t *testing.T) {
+	origResolver := telegramChatIDResolver
+	defer func() { telegramChatIDResolver = origResolver }()
+	telegramChatIDResolver = func(context.Context, string) (string, error) {
+		return "", fmt.Errorf("бот не получил ни одного сообщения, напишите ему /start и повторите")
+	}
+
+	store := &fakeStore{}
+	srv := newTestServer(store)
+	body := []byte(`{"notifications":{"telegram":{"bot_token":"tok"}}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/integrations", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handlePutIntegrations(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+	}
+	if store.settings["integrations"] != nil {
+		t.Fatal("integrations should not be saved when chat id resolution fails")
+	}
+}
+
+func TestPostIntegrationsTestNotifyReachesSendAfterResolvingChatID(t *testing.T) {
+	origResolver := telegramChatIDResolver
+	origSend := sendNotification
+	defer func() {
+		telegramChatIDResolver = origResolver
+		sendNotification = origSend
+	}()
+
+	var resolvedToken string
+	telegramChatIDResolver = func(_ context.Context, token string) (string, error) {
+		resolvedToken = token
+		return "555", nil
+	}
+	var sentChatID string
+	sendNotification = func(_ context.Context, cfg notify.Config, _ notify.Event) error {
+		sentChatID = cfg.TelegramChatID
+		return nil
+	}
+
+	srv := newTestServer(&fakeStore{})
+	body := []byte(`{"kind":"notify","config":{"telegram":{"bot_token":"tok"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleTestIntegration(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var resp testResultResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("ok = false, want true, error: %s", resp.Error)
+	}
+	if resolvedToken != "tok" {
+		t.Errorf("resolver called with token = %q, want tok", resolvedToken)
+	}
+	if sentChatID != "555" {
+		t.Errorf("send reached with chat_id = %q, want 555 (the resolved id)", sentChatID)
 	}
 }
 
@@ -1088,12 +1244,12 @@ func TestTrackerTestProxyTimeoutFromConfig(t *testing.T) {
 
 type capturingStore struct {
 	fakeStore
-	lastLimit int
+	lastFilter storage.CheckLogFilter
 }
 
-func (c *capturingStore) ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error) {
-	c.lastLimit = limit
-	return c.fakeStore.ListCheckLog(ctx, limit, offset, statusFilter, ignoredOnly, sortBy, nameFilter, brokenStreak)
+func (c *capturingStore) ListCheckLog(ctx context.Context, filter storage.CheckLogFilter) ([]storage.CheckLogEntry, int, error) {
+	c.lastFilter = filter
+	return c.fakeStore.ListCheckLog(ctx, filter)
 }
 
 func TestGetHistoryLimitCap(t *testing.T) {
@@ -1102,8 +1258,163 @@ func TestGetHistoryLimitCap(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/history?limit=100000", nil)
 	w := httptest.NewRecorder()
 	srv.handleHistory(w, req)
-	if store.lastLimit != 1000 {
-		t.Fatalf("limit = %d, want 1000", store.lastLimit)
+	if store.lastFilter.Limit != 1000 {
+		t.Fatalf("limit = %d, want 1000", store.lastFilter.Limit)
+	}
+}
+
+func TestGetHistoryTrackerFilter(t *testing.T) {
+	store := &capturingStore{fakeStore: fakeStore{checkLog: []storage.CheckLogEntry{{ID: 1}}}}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history?tracker=5", nil)
+	w := httptest.NewRecorder()
+	srv.handleHistory(w, req)
+	if store.lastFilter.TrackerID != 5 {
+		t.Fatalf("tracker id = %d, want 5", store.lastFilter.TrackerID)
+	}
+
+	for _, v := range []string{"abc", "-1", "0"} {
+		req = httptest.NewRequest(http.MethodGet, "/api/history?tracker="+v, nil)
+		w = httptest.NewRecorder()
+		srv.handleHistory(w, req)
+		if store.lastFilter.TrackerID != 0 {
+			t.Fatalf("tracker=%s: tracker id = %d, want 0", v, store.lastFilter.TrackerID)
+		}
+	}
+}
+
+func TestGetHistoryCategoryFilter(t *testing.T) {
+	store := &capturingStore{fakeStore: fakeStore{checkLog: []storage.CheckLogEntry{{ID: 1}}}}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history?category=movies", nil)
+	w := httptest.NewRecorder()
+	srv.handleHistory(w, req)
+	if store.lastFilter.Category != "movies" {
+		t.Fatalf("category = %q, want movies", store.lastFilter.Category)
+	}
+
+	long := strings.Repeat("x", 250)
+	req = httptest.NewRequest(http.MethodGet, "/api/history?category="+long, nil)
+	w = httptest.NewRecorder()
+	srv.handleHistory(w, req)
+	if len(store.lastFilter.Category) != 200 {
+		t.Fatalf("category len = %d, want 200", len(store.lastFilter.Category))
+	}
+}
+
+func TestGetHistorySummary(t *testing.T) {
+	store := &fakeStore{summary: storage.CheckLogSummary{Updated: 2, Errors: 2}}
+	srv := newTestServer(store)
+	req := httptest.NewRequest(http.MethodGet, "/api/history/summary", nil)
+	w := httptest.NewRecorder()
+	srv.handleHistorySummary(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp map[string]int
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"updated": 2, "errors": 2}
+	for k, v := range want {
+		if resp[k] != v {
+			t.Fatalf("%s = %d, want %d", k, resp[k], v)
+		}
+	}
+}
+
+func TestHistoryRoutesDoNotConflict(t *testing.T) {
+	orig := qbitClientFactory
+	defer func() { qbitClientFactory = orig }()
+
+	testURL := "https://rutracker.org/forum/viewtopic.php?t=999"
+	testURLHash := storagePkg.URLHash(testURL)
+	entries := []*model.Entry{{URL: testURL, Hash: "abc999", Name: "Route Test"}}
+	qbitClientFactory = func(_ model.ManagerConfig) (qbitCategoriesClient, error) {
+		return &fakeQbitClient{entries: entries}, nil
+	}
+
+	store := &fakeStore{summary: storage.CheckLogSummary{Updated: 4}}
+	srv := newTestServer(store)
+	handler := srv.srv.Handler
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history/summary", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("summary status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var sum map[string]int
+	if err := json.NewDecoder(w.Body).Decode(&sum); err != nil {
+		t.Fatal(err)
+	}
+	if sum["updated"] != 4 {
+		t.Fatalf("updated = %d, want 4", sum["updated"])
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("redownload status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var rd map[string]bool
+	if err := json.NewDecoder(w.Body).Decode(&rd); err != nil {
+		t.Fatal(err)
+	}
+	if !rd["ok"] {
+		t.Fatal("redownload ok = false, want true")
+	}
+}
+
+func TestPostIntegrationsTestNotifyWithConfig(t *testing.T) {
+	hit := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	srv := newTestServer(&fakeStore{})
+	body := []byte(`{"kind":"notify","config":{"webhook":{"url":"` + ts.URL + `"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleTestIntegration(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var resp testResultResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("ok = false, want true, error: %s", resp.Error)
+	}
+	if !hit {
+		t.Fatal("expected webhook to receive a request")
+	}
+}
+
+func TestPostIntegrationsTestNotifyNoTransport(t *testing.T) {
+	srv := newTestServer(&fakeStore{})
+	body := []byte(`{"kind":"notify"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleTestIntegration(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp testResultResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Fatal("ok = true, want false")
+	}
+	if resp.Error == "" {
+		t.Fatal("expected error message")
 	}
 }
 

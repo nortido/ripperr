@@ -15,6 +15,7 @@ import (
 	"trackerr/internal/manager/client/qbittorrent"
 	"trackerr/internal/model"
 	proxyModel "trackerr/internal/model/proxy"
+	"trackerr/internal/notify"
 	"trackerr/internal/proxy"
 	"trackerr/internal/runner"
 	"trackerr/internal/storage"
@@ -108,7 +109,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		return err
 	}
 
-	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, handlerCfg, runnerState)
+	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, handlerCfg, runnerState, notify.New(notify.Config(cfg.Notify)))
 	done := make(chan struct{})
 	go func() {
 		rn.Run(ctx)

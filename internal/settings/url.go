@@ -46,6 +46,26 @@ func ValidateDownloadProxy(raw string) error {
 	}
 }
 
+func ValidateWebhookURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	switch u.Scheme {
+	case "http", "https":
+		if u.Host == "" {
+			return fmt.Errorf("invalid webhook url: missing host")
+		}
+		return nil
+	default:
+		return fmt.Errorf("webhook.url scheme must be http or https")
+	}
+}
+
 func normalizeIntegrationsPatch(o *integrationsOverlay) error {
 	if o.Qbit.Host != nil && strings.TrimSpace(*o.Qbit.Host) != "" {
 		norm, err := EnsureScheme(*o.Qbit.Host, "http")
@@ -64,6 +84,11 @@ func normalizeIntegrationsPatch(o *integrationsOverlay) error {
 	if o.Proxy.DownloadProxy != nil {
 		if err := ValidateDownloadProxy(*o.Proxy.DownloadProxy); err != nil {
 			return fmt.Errorf("proxy.download_proxy: %w", err)
+		}
+	}
+	if o.Notifications.Webhook.URL != nil {
+		if err := ValidateWebhookURL(*o.Notifications.Webhook.URL); err != nil {
+			return fmt.Errorf("notifications.webhook.url: %w", err)
 		}
 	}
 	return nil
@@ -89,6 +114,9 @@ func NormalizeAppIntegrations(cfg *config.App) error {
 	}
 	if err := ValidateDownloadProxy(cfg.Runner.DownloadProxy); err != nil {
 		return fmt.Errorf("proxy.download_proxy: %w", err)
+	}
+	if err := ValidateWebhookURL(cfg.Notify.WebhookURL); err != nil {
+		return fmt.Errorf("notifications.webhook.url: %w", err)
 	}
 	return nil
 }

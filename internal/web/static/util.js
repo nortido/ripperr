@@ -263,8 +263,9 @@ export function statusIcon(status, error, streak) {
     label = t('status.unknown');
   }
   // the full error text belongs to the click popover only: a hover tooltip
-  // repeated it and covered the neighbouring rows
-  const attrs = status === 'error' && error
+  // repeated it and covered the neighbouring rows. unknown carries the
+  // tracker's page fragment in the same field, so it gets the same badge
+  const attrs = (status === 'error' || status === 'unknown') && error
     ? html` data-error="${error}" class="${cls} status-error-badge"`
     : html` class="${cls}"`;
   const badge = streak > 1

@@ -17,6 +17,7 @@ import (
 	runnerModel "trackerr/internal/model/runner"
 	storageModel "trackerr/internal/model/storage"
 	trackerModel "trackerr/internal/model/tracker"
+	"trackerr/internal/notify"
 	storagePkg "trackerr/internal/storage"
 	"trackerr/internal/system/logger"
 	"trackerr/internal/tracker/client"
@@ -47,9 +48,10 @@ type manager interface {
 }
 
 type storage interface {
-	GetItem(ctx context.Context, link string) (item *runnerModel.HistoryItem, err error)
 	SaveItem(ctx context.Context, item *runnerModel.HistoryItem) (err error)
-	AddCheckLog(ctx context.Context, entry *storageModel.CheckLogEntry) error
+	AddCheckLog(ctx context.Context, entry *storageModel.CheckLogEntry) (int, error)
+	AddIgnore(ctx context.Context, hash, name, url string) error
+	AllItems(ctx context.Context) (map[string]*runnerModel.HistoryItem, error)
 	GetIgnoreSet(ctx context.Context) (map[string]struct{}, error)
 	ListDueItems(ctx context.Context) ([]storageModel.DueItem, error)
 	DeleteItem(ctx context.Context, urlHash string) error
@@ -67,6 +69,7 @@ type handler struct {
 	storage        storage
 	trackerService trackerService
 	state          *State
+	notifier       *notify.Notifier
 	gen            uint32
 }
 
@@ -260,19 +263,26 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 	}
 
 	var (
-		entries   []*model.Entry
-		t         int
-		ignoreSet map[string]struct{}
+		rawEntries []*model.Entry
+		entries    []*model.Entry
+		t          int
+		ignoreSet  map[string]struct{}
+		items      map[string]*runnerModel.HistoryItem
+		partial    bool
 	)
-	if entries, err = h.manager.GetEntries(ctx, model.FilterOptions{}); err != nil {
+	if rawEntries, err = h.manager.GetEntries(ctx, model.FilterOptions{}); err != nil {
 		if errors.Is(err, model.ErrPartialList) {
 			logger.Warn(fmt.Sprintf("partial torrent list: %v", err))
+			partial = true
 		} else {
 			err = fmt.Errorf("get entries error: %w", err)
 			return
 		}
 	}
-	entries = helper.DedupeEntriesByName(entries)
+	entries = helper.DedupeEntriesByName(rawEntries)
+	if items, err = h.storage.AllItems(ctx); err != nil {
+		return
+	}
 	if !dry && forced == nil {
 		winners := make(map[string]string)
 		for _, e := range entries {
@@ -285,8 +295,12 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 			logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
 		}
 	}
-	if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
-		return
+	if forced == nil {
+		// a forced pass is an explicit per-entry user action (the "check now" button),
+		// so it must reach entries that landed in the ignore list, including auto-ignored ones
+		if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
+			return
+		}
 	}
 	queue := h.idx
 	if forced != nil {
@@ -307,7 +321,7 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 		if len(h.config.WatchTags) > 0 && !entryMatchesWatchTags(entries[i].Tag, h.config.WatchTags) {
 			continue
 		}
-		if err = h.buildEntry(ctx, entries[i], dry); err == errSkipped {
+		if err = h.buildEntry(ctx, entries[i], dry, items); err == errSkipped {
 			err = nil
 			continue
 		} else if err != nil {
@@ -333,7 +347,11 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 		}
 	}
 	if !dry && forced == nil {
-		h.purgeStaleHistory(ctx)
+		if partial {
+			logger.Warn("history purge skipped: partial torrent list")
+		} else {
+			h.purgeStaleHistory(ctx, rawEntries)
+		}
 	}
 	return
 }
@@ -351,16 +369,7 @@ func entryMatchesWatchTags(entryTags string, watchTags []string) bool {
 	return false
 }
 
-func (h *handler) purgeStaleHistory(ctx context.Context) {
-	allEntries, err := h.manager.GetEntries(ctx, model.FilterOptions{})
-	if err != nil {
-		if errors.Is(err, model.ErrPartialList) {
-			logger.Warn("history purge skipped: partial torrent list")
-		} else {
-			logger.Warn(fmt.Sprintf("history purge skipped: %v", err))
-		}
-		return
-	}
+func (h *handler) purgeStaleHistory(ctx context.Context, allEntries []*model.Entry) {
 	present := make(map[string]struct{})
 	for _, e := range allEntries {
 		if e.URL == "" {
@@ -393,10 +402,10 @@ func (h *handler) purgeStaleHistory(ctx context.Context) {
 	}
 }
 
-func (h *handler) buildEntry(ctx context.Context, e *model.Entry, dry bool) (err error) {
+func (h *handler) buildEntry(ctx context.Context, e *model.Entry, dry bool, items map[string]*runnerModel.HistoryItem) (err error) {
 	var hi *runnerModel.HistoryItem
 
-	if hi, err = h.getHistory(ctx, e.URL, dry); err != nil {
+	if hi, err = h.getHistory(ctx, e.URL, dry, items); err != nil {
 		return
 	}
 	e.URLHash = hi.URLHash
@@ -411,10 +420,10 @@ func (h *handler) buildEntry(ctx context.Context, e *model.Entry, dry bool) (err
 	return
 }
 
-func (h *handler) getHistory(ctx context.Context, link string, dry bool) (hi *runnerModel.HistoryItem, err error) {
-	// TODO: cache history
-	if hi, err = h.storage.GetItem(ctx, link); err != nil {
-		return
+func (h *handler) getHistory(ctx context.Context, link string, dry bool, items map[string]*runnerModel.HistoryItem) (hi *runnerModel.HistoryItem, err error) {
+	var ok bool
+	if hi, ok = items[storagePkg.URLHash(link)]; !ok {
+		hi = &runnerModel.HistoryItem{URLHash: storagePkg.URLHash(link), Exists: false}
 	}
 	if !hi.Exists {
 		return
@@ -452,7 +461,8 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 	}
 	var dateMissing bool
 	var pageDate *time.Time
-	if updated, dateMissing, pageDate, err = h.checkPage(ctx, ttid, tc, e, rep); err != nil {
+	var sample string
+	if updated, dateMissing, pageDate, sample, err = h.checkPage(ctx, ttid, tc, e, rep); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("processing interrupted")
 			return nil
@@ -466,7 +476,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 				logger.Error(fmt.Sprintf("force_check clear failed: %v", clearErr))
 			}
 		}
-		h.logCheck(ctx, e, ttid, "unknown", "", rep)
+		h.logCheck(ctx, e, ttid, "unknown", sample, rep)
 		return
 	}
 	if !updated {
@@ -518,19 +528,42 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 		logger.Info(msg)
 		return
 	}
-	if logErr := h.storage.AddCheckLog(ctx, &storageModel.CheckLogEntry{
+	streak, logErr := h.storage.AddCheckLog(ctx, &storageModel.CheckLogEntry{
 		URLHash:       e.URLHash,
 		ItemName:      e.Name,
 		ItemURL:       e.URL,
 		TrackerTypeID: ttid,
 		Status:        status,
 		Error:         errMsg,
-	}); logErr != nil {
+	})
+	if logErr != nil {
 		logger.Error(fmt.Sprintf("check_log write failed: %v", logErr))
+		return
+	}
+	switch status {
+	case "error":
+		if h.config.ErrorStreakThreshold >= 1 && streak >= h.config.ErrorStreakThreshold {
+			if ignoreErr := h.storage.AddIgnore(ctx, e.URLHash, e.Name, e.URL); ignoreErr != nil {
+				logger.Error(fmt.Sprintf("auto-ignore failed for %s: %v", e.Name, ignoreErr))
+			} else {
+				logger.Warn(fmt.Sprintf("%s: %d errors in a row, sent to ignore", e.Name, streak))
+				h.notifier.Notify(notify.Event{
+					Kind: notify.KindBroken,
+					Text: fmt.Sprintf("%s: %d errors in a row", e.Name, streak),
+					URL:  e.URL,
+				})
+			}
+		}
+	case "updated":
+		h.notifier.Notify(notify.Event{
+			Kind: notify.KindUpdated,
+			Text: e.Name,
+			URL:  e.URL,
+		})
 	}
 }
 
-func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (res bool, dateMissing bool, pageDate *time.Time, err error) {
+func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (res bool, dateMissing bool, pageDate *time.Time, sample string, err error) {
 	var (
 		cur        *time.Time
 		b          *bytes.Buffer
@@ -550,6 +583,7 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 		return
 	} else if cur == nil {
 		dateMissing = true
+		sample = pageSample(b, encoded)
 		return
 	}
 	// TODO: add check count of updates in DB
@@ -678,12 +712,13 @@ func (h *handler) getRecheckAt(tm *time.Time) (result *time.Time) {
 	return &tt
 }
 
-func NewRunner(tracker trackerService, manager manager, storage storage, config model.HandlerConfig, state *State) *handler {
+func NewRunner(tracker trackerService, manager manager, storage storage, config model.HandlerConfig, state *State, notifier *notify.Notifier) *handler {
 	return &handler{
 		trackerService: tracker,
 		manager:        manager,
 		storage:        storage,
 		config:         config,
 		state:          state,
+		notifier:       notifier,
 	}
 }

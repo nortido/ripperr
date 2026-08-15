@@ -16,6 +16,23 @@ type CheckLogEntry struct {
 	ForceCheck    bool
 }
 
+type CheckLogFilter struct {
+	Limit        int
+	Offset       int
+	Status       string
+	IgnoredOnly  bool
+	SortBy       string
+	Name         string
+	BrokenStreak int
+	TrackerID    int
+	Category     string
+}
+
+type CheckLogSummary struct {
+	Updated int
+	Errors  int
+}
+
 type IgnoreEntry struct {
 	URLHash  string
 	ItemName string

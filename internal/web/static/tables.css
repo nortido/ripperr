@@ -88,9 +88,11 @@
   transition: color var(--transition);
 }
 
-a.release-link:hover {
-  color: var(--release-link-hover);
-  text-decoration: underline;
+@media (hover: hover) {
+  a.release-link:hover {
+    color: var(--release-link-hover);
+    text-decoration: underline;
+  }
 }
 
 .table-dash-releases .col-name {
@@ -143,9 +145,11 @@ td.plan-recheck-cell {
   border-color: var(--hue-amber);
 }
 
-.btn-force-all:hover:not(:disabled) {
-  color: var(--hue-amber);
-  background: var(--tint-amber);
+@media (hover: hover) {
+  .btn-force-all:hover:not(:disabled) {
+    color: var(--hue-amber);
+    background: var(--tint-amber);
+  }
 }
 
 .table td.col-time {
@@ -235,8 +239,10 @@ td.plan-recheck-cell {
   background: var(--table-stripe);
 }
 
-.table tbody tr:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .table tbody tr:hover {
+    background: var(--hover);
+  }
 }
 
 .table tbody tr:last-child td {

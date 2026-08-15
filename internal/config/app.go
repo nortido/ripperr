@@ -8,4 +8,5 @@ type App struct {
 	Flaresolverr Flaresolverr
 	DB           Storage
 	Web          Web
+	Notify       Notifications
 }

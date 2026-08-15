@@ -70,6 +70,11 @@ type historyResp struct {
 	Total int               `json:"total"`
 }
 
+type checkLogSummaryResp struct {
+	Updated int `json:"updated"`
+	Errors  int `json:"errors"`
+}
+
 type ignoreItemResp struct {
 	URLHash string `json:"url_hash"`
 	Name    string `json:"name"`

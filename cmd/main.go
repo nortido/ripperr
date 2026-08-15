@@ -16,6 +16,7 @@ import (
 	"trackerr/internal/config"
 	"trackerr/internal/helper/breakeralerts"
 	"trackerr/internal/model"
+	"trackerr/internal/notify"
 	"trackerr/internal/runner"
 	"trackerr/internal/settings"
 	"trackerr/internal/storage"
@@ -68,6 +69,17 @@ func main() {
 		return cfg
 	}
 
+	// registry survives reload, so the hook is wired once here; each call reads
+	// config fresh via effective() to pick up settings saved after startup
+	breakerAlerts.SetHook(func(open bool, tracker, errMsg string) {
+		n := notify.New(notify.Config(effective().Notify))
+		if open {
+			n.Notify(notify.Event{Kind: notify.KindTrackerDown, Text: tracker + ": " + errMsg})
+		} else {
+			n.Notify(notify.Event{Kind: notify.KindTrackerUp, Text: tracker})
+		}
+	})
+
 	var webSrv *webpkg.Server
 	if baseCfg.Web.Enabled {
 		webSrv = webpkg.New(db, reload, effective, baseCfg.Web.Listen, runnerState, breakerAlerts)
@@ -102,16 +114,17 @@ func main() {
 		}
 
 		handlerCfg := model.HandlerConfig{
-			WatchTags:         cfg.Runner.WatchTags,
-			ThresholdMonth:    cfg.Runner.MonthThresholdDays,
-			ThresholdHalfYear: cfg.Runner.HalfYearThresholdDays,
-			ThresholdYear:     cfg.Runner.YearThresholdDays,
-			ThresholdOld:      cfg.Runner.YearThresholdDays,
-			ListRefreshPerDay: cfg.Runner.ListRefreshPerDay,
-			StartHour:         cfg.Runner.StartHour,
-			Categories:        cfg.Runner.AllowedCategories,
-			Location:          scheduleLoc,
-			Immediate:         first,
+			WatchTags:            cfg.Runner.WatchTags,
+			ThresholdMonth:       cfg.Runner.MonthThresholdDays,
+			ThresholdHalfYear:    cfg.Runner.HalfYearThresholdDays,
+			ThresholdYear:        cfg.Runner.YearThresholdDays,
+			ThresholdOld:         cfg.Runner.YearThresholdDays,
+			ListRefreshPerDay:    cfg.Runner.ListRefreshPerDay,
+			StartHour:            cfg.Runner.StartHour,
+			Categories:           cfg.Runner.AllowedCategories,
+			Location:             scheduleLoc,
+			Immediate:            first,
+			ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
 		}
 
 		done := make(chan struct{})

@@ -442,6 +442,8 @@ export function buildHistoryQuery() {
   if (historyState.ignored) q += '&ignored=1';
   else if (historyState.status) q += '&status=' + encodeURIComponent(historyState.status);
   if (historyState.name) q += '&name=' + encodeURIComponent(historyState.name);
+  if (historyState.tracker) q += '&tracker=' + encodeURIComponent(historyState.tracker);
+  if (historyState.category) q += '&category=' + encodeURIComponent(historyState.category);
   return q;
 }
 
@@ -462,11 +464,10 @@ export function nextRunStatCard(slots) {
 }
 
 export async function fetchDashboardData() {
-  const [status, history, histUpdated, histErrors, ignoreItems] = await Promise.all([
+  const [status, history, summary, ignoreItems] = await Promise.all([
     fetchJSON('/api/status'),
     fetchJSON(buildHistoryQuery()),
-    fetchJSON('/api/history?limit=1&status=updated'),
-    fetchJSON('/api/history?limit=1&status=error'),
+    fetchJSON('/api/history/summary'),
     fetchJSON('/api/ignore'),
   ]);
   ignoreHashesCache = new Set((ignoreItems || []).map(function (i) { return i.url_hash; }));
@@ -474,8 +475,8 @@ export async function fetchDashboardData() {
     status: status,
     history: history,
     stats: {
-      updated: histUpdated.total || 0,
-      errors: histErrors.total || 0,
+      updated: summary.updated || 0,
+      errors: summary.errors || 0,
       ignored: (ignoreItems || []).length,
     },
   };
@@ -541,19 +542,36 @@ export async function reloadDashboardTable() {
   }
 }
 
+// sort mode picks which of the two time columns is relevant, so only one of
+// checked_at/recheck_at is ever rendered, in the header and in every row
+export function buildTimeColumnHeader() {
+  const recheckMode = historyState.sort === 'recheck';
+  const cls = recheckMode ? 'plan-recheck-cell' : 'col-time';
+  const fullKey = recheckMode ? 'dash.col.recheck' : 'dash.col.checked';
+  const shortKey = recheckMode ? 'dash.col.recheckShort' : 'dash.col.checkedShort';
+  return html`<th class="${cls}"><span class="th-label-full">${t(fullKey)}</span><span class="th-label-short">${t(shortKey)}</span></th>`;
+}
+
+export function releaseTimeCellHtml(item) {
+  if (historyState.sort === 'recheck') {
+    const recheckShort = formatTableTime(item.recheck_at);
+    const recheckFull = formatDateTime(item.recheck_at);
+    return html`<td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}"><span class="plan-recheck-text" title="${recheckFull}">${recheckShort}</span></td>`;
+  }
+  const timeShort = formatTableTime(item.checked_at);
+  const timeFull = formatDateTime(item.checked_at);
+  return html`<td class="col-time" title="${timeFull}">${timeShort}</td>`;
+}
+
 export function buildReleaseRows(histItems) {
   if (!histItems || histItems.length === 0) {
-    return html`<tr class="table-empty"><td colspan="6">${t('dash.empty.releases')}</td></tr>`;
+    return html`<tr class="table-empty"><td colspan="5">${t('dash.empty.releases')}</td></tr>`;
   }
   const rows = [];
   histItems.forEach(function (item) {
     const urlHash = item.url_hash || '';
     const ignored = isUrlIgnored(urlHash);
     const forced = planItemForced(item);
-    const timeShort = formatTableTime(item.checked_at);
-    const timeFull = formatDateTime(item.checked_at);
-    const recheckShort = formatTableTime(item.recheck_at);
-    const recheckFull = formatDateTime(item.recheck_at);
     const btnCls = ignored
       ? 'btn btn-icon-only btn-unignore btn-ignore-item btn-action-ignore'
       : 'btn btn-icon-only btn-ignore btn-ignore-item btn-action-ignore';
@@ -563,7 +581,7 @@ export function buildReleaseRows(histItems) {
     if (item.broken) rowClsValue = rowClsValue ? rowClsValue + ' release-row-broken' : 'release-row-broken';
     const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
-    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td><td class="col-time" title="${timeFull}">${timeShort}</td><td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}"><span class="plan-recheck-text" title="${recheckFull}">${recheckShort}</span></td><td class="col-actions"><div class="release-actions">${redownloadButtonHtml(urlHash)}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
+    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadButtonHtml(urlHash)}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
   });
   return html`${rows}`;
 }
@@ -597,6 +615,14 @@ export function updateForceAllButton(el, histItems) {
 
 export function updateDashboardTable(el, history) {
   const histItems = history.items || [];
+  // sort toggle lives outside tbody, in the thead that this function otherwise
+  // never touches, so the time column header needs its own explicit sync
+  const theadRow = el.querySelector('.table-dash-releases thead tr');
+  const timeTh = theadRow && theadRow.querySelector('.col-time, .plan-recheck-cell');
+  const wantCls = historyState.sort === 'recheck' ? 'plan-recheck-cell' : 'col-time';
+  if (timeTh && !timeTh.classList.contains(wantCls)) {
+    timeTh.outerHTML = buildTimeColumnHeader();
+  }
   const tbody = el.querySelector('.table-dash-releases tbody');
   if (tbody) {
     tbody.innerHTML = buildReleaseRows(histItems);
@@ -737,7 +763,7 @@ export function renderDashboard(el, status, history, stats) {
   const forceAllCls = 'btn btn-sm btn-ghost btn-icon btn-force-all' + (allForced ? ' is-active' : '');
   const mobileSearch = buildMobileNameSearchSlot();
 
-  el.innerHTML = html`<div class="page-header dash-page-header"><div class="page-header-row"><div class="dash-header-top"><h1 class="page-title">${t('dash.title')}</h1><div class="dash-header-status-block"><div class="run-status" id="dash-run-status"></div><span class="dash-meta-sep" aria-hidden="true">·</span><span class="dash-last-updated text-muted" id="dash-last-updated"></span></div></div><div class="page-header-actions dash-header-actions"><div class="page-header-run-group"><button type="button" class="btn btn-stop" id="dash-stop-btn"${effectiveRunning(status.running) ? '' : html` style="display:none"`} data-i18n-aria="dash.stopCheck" aria-label="${t('dash.stopCheck')}" title="${t('dash.stopCheck')}"><span data-icon="stop"></span><span class="btn-stop-label">${t('dash.stop')}</span></button><button type="button" class="btn ${effectiveRunning(status.running) ? 'btn-restart' : 'btn-primary'}" id="dash-run-btn">${effectiveRunning(status.running) ? t('dash.restartCheck') : t('dash.runCheck')}</button></div></div></div></div>${renderAlertsHtml(status.alerts || [])}<div class="stat-grid">${nextRunStatCard(nextRuns)}${statCard(stats.updated, t('dash.filter.updated'), 'check', 'green', 'updated')}${statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error')}${statCard(stats.ignored, t('dash.ignored'), 'eyeOff', 'cyan', 'ignored')}</div><div class="card"><div class="card-header releases-card-header${mobileSearch.headerClass}"><div class="card-header-toolbar"><div class="card-header-toolbar-shift"><div class="card-header-left"><h2 class="card-title">${t('dash.releasesTitle')}</h2><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="dash-refresh-btn" data-i18n-aria="dash.refresh" aria-label="${t('dash.refresh')}" title="${t('dash.refresh')}"><span data-icon="refresh"></span></button></div><div class="card-toolbar-pre-search">${sortHtml}<button type="button" class="${forceAllCls}" id="dash-force-all-btn" title="${forceAllTitle}" aria-label="${forceAllTitle}" aria-pressed="${allForced ? 'true' : 'false'}"><span data-icon="zapForceAll"></span></button></div></div><div class="card-toolbar-post-search">${mobileSearch.html}${filterHtml}</div></div></div><div class="card-body-flush"><div class="table-wrap"><table class="table table-dash-releases"><thead><tr>${buildNameColumnHeader()}<th class="col-tracker">${t('dash.col.tracker')}</th><th class="col-status"><span class="th-label-full">${t('dash.col.status')}</span><span class="th-label-short">${t('dash.col.statusShort')}</span></th><th class="col-time"><span class="th-label-full">${t('dash.col.checked')}</span><span class="th-label-short">${t('dash.col.checkedShort')}</span></th><th class="plan-recheck-cell"><span class="th-label-full">${t('dash.col.recheck')}</span><span class="th-label-short">${t('dash.col.recheckShort')}</span></th><th class="col-actions"></th></tr></thead><tbody>${releaseRows}</tbody></table></div></div><div class="card-footer"><span class="text-muted">${t('dash.pagination', { from: from, to: to, total: total })}</span><div class="pagination-controls">${buildPageSizeSelect(historyState.limit)}<div class="btn-group pagination-nav">${paginationButtons('hist-prev', 'hist-next', historyState.offset <= 0, historyState.offset + pageLimit >= total)}</div></div></div>`;
+  el.innerHTML = html`<div class="page-header dash-page-header"><div class="page-header-row"><div class="dash-header-top"><h1 class="page-title">${t('dash.title')}</h1><div class="dash-header-status-block"><div class="run-status" id="dash-run-status"></div><span class="dash-meta-sep" aria-hidden="true">·</span><span class="dash-last-updated text-muted" id="dash-last-updated"></span></div></div><div class="page-header-actions dash-header-actions"><div class="page-header-run-group"><button type="button" class="btn btn-stop" id="dash-stop-btn"${effectiveRunning(status.running) ? '' : html` style="display:none"`} data-i18n-aria="dash.stopCheck" aria-label="${t('dash.stopCheck')}" title="${t('dash.stopCheck')}"><span data-icon="stop"></span><span class="btn-stop-label">${t('dash.stop')}</span></button><button type="button" class="btn ${effectiveRunning(status.running) ? 'btn-restart' : 'btn-primary'}" id="dash-run-btn">${effectiveRunning(status.running) ? t('dash.restartCheck') : t('dash.runCheck')}</button></div></div></div></div>${renderAlertsHtml(status.alerts || [])}<div class="stat-grid">${nextRunStatCard(nextRuns)}${statCard(stats.updated, t('dash.filter.updated'), 'check', 'green', 'updated')}${statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error')}${statCard(stats.ignored, t('dash.ignored'), 'eyeOff', 'cyan', 'ignored')}</div><div class="card"><div class="card-header releases-card-header${mobileSearch.headerClass}"><div class="card-header-toolbar"><div class="card-header-toolbar-shift"><div class="card-header-left"><h2 class="card-title">${t('dash.releasesTitle')}</h2><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="dash-refresh-btn" data-i18n-aria="dash.refresh" aria-label="${t('dash.refresh')}" title="${t('dash.refresh')}"><span data-icon="refresh"></span></button></div><div class="card-toolbar-pre-search">${sortHtml}<button type="button" class="${forceAllCls}" id="dash-force-all-btn" title="${forceAllTitle}" aria-label="${forceAllTitle}" aria-pressed="${allForced ? 'true' : 'false'}"><span data-icon="zapForceAll"></span></button></div></div><div class="card-toolbar-post-search">${mobileSearch.html}${filterHtml}</div></div></div><div class="card-body-flush"><div class="table-wrap"><table class="table table-dash-releases"><thead><tr>${buildNameColumnHeader()}<th class="col-tracker">${t('dash.col.tracker')}</th><th class="col-status"><span class="th-label-full">${t('dash.col.status')}</span><span class="th-label-short">${t('dash.col.statusShort')}</span></th>${buildTimeColumnHeader()}<th class="col-actions"></th></tr></thead><tbody>${releaseRows}</tbody></table></div></div><div class="card-footer"><span class="text-muted">${t('dash.pagination', { from: from, to: to, total: total })}</span><div class="pagination-controls">${buildPageSizeSelect(historyState.limit)}<div class="btn-group pagination-nav">${paginationButtons('hist-prev', 'hist-next', historyState.offset <= 0, historyState.offset + pageLimit >= total)}</div></div></div>`;
 
   hydrateIcons(el);
   bindDashboardAlerts(el);

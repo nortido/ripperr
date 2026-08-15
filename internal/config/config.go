@@ -91,3 +91,10 @@ type Storage struct {
 	MasterURL      string `env:"DB_URL, default=postgres://user:password@localhost:5432/trackerr"`
 	ConnectTimeout int    `env:"DB_CONNECT_TIMEOUT, default=60"`
 }
+
+type Notifications struct {
+	TelegramToken  string `env:"NOTIFY_TELEGRAM_TOKEN, default="`
+	TelegramChatID string `env:"NOTIFY_TELEGRAM_CHAT_ID, default="`
+	WebhookURL     string `env:"NOTIFY_WEBHOOK_URL, default="`
+	Enabled        bool   `env:"NOTIFY_ENABLED, default=true"`
+}

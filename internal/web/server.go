@@ -19,10 +19,12 @@ var staticFS embed.FS
 
 type store interface {
 	Ping(ctx context.Context) error
-	ListCheckLog(ctx context.Context, limit, offset int, statusFilter string, ignoredOnly bool, sortBy string, nameFilter string, brokenStreak int) ([]storage.CheckLogEntry, int, error)
+	ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]storage.CheckLogEntry, int, error)
+	CheckLogSummary(ctx context.Context) (storage.CheckLogSummary, error)
 	ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error)
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	DeleteIgnore(ctx context.Context, hash string) error
+	ResetErrorStreak(ctx context.Context, urlHash string) error
 	GetIgnoreSet(ctx context.Context) (map[string]struct{}, error)
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
@@ -63,6 +65,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("POST /api/run", withMaxBody(s.handleRun))
 	mux.HandleFunc("GET /api/history", s.handleHistory)
+	mux.HandleFunc("GET /api/history/summary", s.handleHistorySummary)
 	mux.HandleFunc("POST /api/plan/{hash}/force", withMaxBody(s.handlePlanForce))
 	mux.HandleFunc("POST /api/plan/force-all", withMaxBody(s.handlePlanForceAll))
 	mux.HandleFunc("POST /api/history/{hash}/redownload", withMaxBody(s.handleRedownload))

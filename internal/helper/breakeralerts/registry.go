@@ -15,10 +15,20 @@ type Incident struct {
 type Registry struct {
 	mu        sync.RWMutex
 	incidents map[string]Incident
+	hook      func(open bool, tracker, errMsg string)
 }
 
 func New() *Registry {
 	return &Registry{incidents: make(map[string]Incident)}
+}
+
+func (r *Registry) SetHook(hook func(open bool, tracker, errMsg string)) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.hook = hook
+	r.mu.Unlock()
 }
 
 func (r *Registry) Open(tracker, errMsg string) {
@@ -26,13 +36,20 @@ func (r *Registry) Open(tracker, errMsg string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	inc, exists := r.incidents[tracker]
-	if !exists {
+	inc, existed := r.incidents[tracker]
+	if !existed {
 		inc = Incident{Tracker: tracker, Since: time.Now()}
 	}
 	inc.LastError = errMsg
 	r.incidents[tracker] = inc
+	hook := r.hook
+	r.mu.Unlock()
+	// fired only on the closed->open transition; a hook running here is a
+	// notify.Notify call, which is itself non-blocking, so calling it inline
+	// (unlocked) does not stall other Registry callers
+	if !existed && hook != nil {
+		hook(true, tracker, errMsg)
+	}
 }
 
 func (r *Registry) Close(tracker string) {
@@ -40,8 +57,13 @@ func (r *Registry) Close(tracker string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	_, existed := r.incidents[tracker]
 	delete(r.incidents, tracker)
+	hook := r.hook
+	r.mu.Unlock()
+	if existed && hook != nil {
+		hook(false, tracker, "")
+	}
 }
 
 func (r *Registry) List() []Incident {

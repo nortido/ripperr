@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	"trackerr/internal/model"
+	"trackerr/internal/model/storage"
 	storagePkg "trackerr/internal/storage"
+	"trackerr/internal/system/logger"
 )
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -36,8 +39,26 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if len(nameFilter) > 200 {
 		nameFilter = nameFilter[:200]
 	}
+	trackerID, _ := strconv.Atoi(r.URL.Query().Get("tracker"))
+	if trackerID < 1 {
+		trackerID = 0
+	}
+	categoryFilter := strings.TrimSpace(r.URL.Query().Get("category"))
+	if len(categoryFilter) > 200 {
+		categoryFilter = categoryFilter[:200]
+	}
 	brokenStreak := s.effective().Runner.ErrorStreakThreshold
-	items, total, err := s.db.ListCheckLog(r.Context(), limit, offset, status, ignoredOnly, sortBy, nameFilter, brokenStreak)
+	items, total, err := s.db.ListCheckLog(r.Context(), storage.CheckLogFilter{
+		Limit:        limit,
+		Offset:       offset,
+		Status:       status,
+		IgnoredOnly:  ignoredOnly,
+		SortBy:       sortBy,
+		Name:         nameFilter,
+		BrokenStreak: brokenStreak,
+		TrackerID:    trackerID,
+		Category:     categoryFilter,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -67,6 +88,18 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, historyResp{Items: out, Total: total})
+}
+
+func (s *Server) handleHistorySummary(w http.ResponseWriter, r *http.Request) {
+	sum, err := s.db.CheckLogSummary(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, checkLogSummaryResp{
+		Updated: sum.Updated,
+		Errors:  sum.Errors,
+	})
 }
 
 func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +261,11 @@ func (s *Server) handleDeleteIgnore(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.DeleteIgnore(r.Context(), hash); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// otherwise the streak the entry was auto-ignored with survives the unignore
+	// and the very next error sends it straight back to the ignore list
+	if err := s.db.ResetErrorStreak(r.Context(), hash); err != nil {
+		logger.Error(fmt.Sprintf("reset error streak for %s: %v", hash, err))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
