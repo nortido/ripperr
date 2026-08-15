@@ -27,6 +27,9 @@ const (
 	maxErrorBody = 300
 )
 
+// var, not const: notify_test.go shortens this to avoid real sleeps
+var notifyRetryDelay = 30 * time.Second
+
 // var, not const: notify_test.go points this at an httptest server
 var telegramAPIURL = "https://api.telegram.org/bot%s/sendMessage"
 
@@ -77,12 +80,56 @@ func (n *Notifier) Notify(ev Event) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		// budget covers both attempts plus the pause between them, so a slow
+		// first try doesn't eat into the retry window
+		ctx, cancel := context.WithTimeout(context.Background(), 2*sendTimeout+notifyRetryDelay)
 		defer cancel()
-		if err := n.Send(ctx, ev); err != nil {
+		var errs []error
+		if n.telegramReady() {
+			if err := sendWithRetry(ctx, n.sendTelegram, ev, "telegram"); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if n.cfg.WebhookURL != "" {
+			if err := sendWithRetry(ctx, n.sendWebhook, ev, "webhook"); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := errors.Join(errs...); err != nil {
 			logger.Warn("notify: " + err.Error())
 		}
 	}()
+}
+
+// transports are independent (a telegram 4xx must not block a webhook retry),
+// so retry happens per-transport rather than by re-running Send as a whole
+func sendWithRetry(ctx context.Context, send func(context.Context, Event) error, ev Event, transport string) error {
+	err := send(ctx, ev)
+	if err == nil {
+		return nil
+	}
+	if !isRetryable(err) {
+		return fmt.Errorf("%s: %w", transport, err)
+	}
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("%s: %w", transport, err)
+	case <-time.After(notifyRetryDelay):
+	}
+	if err := send(ctx, ev); err != nil {
+		return fmt.Errorf("%s: second attempt: %w", transport, err)
+	}
+	return nil
+}
+
+func isRetryable(err error) bool {
+	var se *statusError
+	if errors.As(err, &se) {
+		return se.status >= http.StatusInternalServerError
+	}
+	// no status attached means the request never got an HTTP response at all
+	// (dial/timeout/connection reset) - worth a second try
+	return true
 }
 
 func (n *Notifier) Send(ctx context.Context, ev Event) error {
@@ -197,8 +244,17 @@ func (n *Notifier) post(ctx context.Context, url string, body []byte) error {
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode >= http.StatusBadRequest {
 		snippet, _ := io.ReadAll(io.LimitReader(res.Body, maxErrorBody))
-		return fmt.Errorf("status %d: %s", res.StatusCode, bytes.TrimSpace(snippet))
+		return &statusError{status: res.StatusCode, body: string(bytes.TrimSpace(snippet))}
 	}
 	_, _ = io.Copy(io.Discard, res.Body)
 	return nil
+}
+
+type statusError struct {
+	status int
+	body   string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("status %d: %s", e.status, e.body)
 }

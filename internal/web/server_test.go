@@ -959,6 +959,9 @@ func TestPostPlanForce(t *testing.T) {
 	if !resp["force"] {
 		t.Fatal("expected force true in response")
 	}
+	if !resp["force_queued"] {
+		t.Fatal("expected force_queued true when the runner queue has room")
+	}
 	if !store.forceItems["abc123"] {
 		t.Fatal("expected force flag set in store")
 	}
@@ -969,6 +972,36 @@ func TestPostPlanForce(t *testing.T) {
 	srv.handlePlanForce(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestPostPlanForceQueueFull(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{"abc123": false}}
+	state := runner.NewState()
+	srv := New(store, func() {}, testEffective, ":0", state, nil)
+
+	// the force queue is bounded; run it dry so RequestForce starts reporting
+	// false instead of hardcoding the package-private capacity here
+	for state.RequestForce("filler") {
+	}
+
+	body := []byte(`{"force":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/abc123/force", bytes.NewReader(body))
+	req.SetPathValue("hash", "abc123")
+	w := httptest.NewRecorder()
+	srv.handlePlanForce(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]bool
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["force_queued"] {
+		t.Fatal("expected force_queued false when the runner queue is full")
+	}
+	if !store.forceItems["abc123"] {
+		t.Fatal("expected force flag set in store even though queueing failed")
 	}
 }
 

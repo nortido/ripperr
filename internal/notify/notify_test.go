@@ -3,9 +3,11 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -219,5 +221,157 @@ func TestSendErrorOn4xxIncludesBodySnippet(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bad payload") {
 		t.Errorf("error %q does not contain response body snippet", err.Error())
+	}
+}
+
+func withRetryDelay(d time.Duration) func() {
+	orig := notifyRetryDelay
+	notifyRetryDelay = d
+	return func() { notifyRetryDelay = orig }
+}
+
+func TestNotifyRetriesWebhookOn5xxThenSucceeds(t *testing.T) {
+	defer withRetryDelay(time.Millisecond)()
+
+	var count int32
+	second := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&count, 1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		close(second)
+	}))
+	defer srv.Close()
+
+	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
+
+	select {
+	case <-second:
+	case <-time.After(2 * time.Second):
+		t.Fatal("webhook was not retried after 500")
+	}
+	if got := atomic.LoadInt32(&count); got != 2 {
+		t.Errorf("request count = %d, want 2", got)
+	}
+}
+
+func TestNotifyDoesNotRetryWebhookOn4xx(t *testing.T) {
+	defer withRetryDelay(time.Millisecond)()
+
+	var count int32
+	hits := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&count, 1)
+		w.WriteHeader(http.StatusBadRequest)
+		hits <- struct{}{}
+	}))
+	defer srv.Close()
+
+	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
+
+	select {
+	case <-hits:
+	case <-time.After(2 * time.Second):
+		t.Fatal("webhook was not called")
+	}
+	// 4xx is not retryable, so sendWithRetry never reaches the delay branch;
+	// a short guard window is enough to catch an errant second request
+	select {
+	case <-hits:
+		t.Fatal("webhook was retried after 400")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := atomic.LoadInt32(&count); got != 1 {
+		t.Errorf("request count = %d, want 1", got)
+	}
+}
+
+func TestNotifyRetriesOnlyTheFailingTransport(t *testing.T) {
+	defer withRetryDelay(time.Millisecond)()
+
+	origAPI := telegramAPIURL
+	defer func() { telegramAPIURL = origAPI }()
+
+	telegramHits := make(chan struct{}, 4)
+	tgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		telegramHits <- struct{}{}
+	}))
+	defer tgSrv.Close()
+	telegramAPIURL = tgSrv.URL + "/bot%s/sendMessage"
+
+	// a listener that accepts and immediately closes the connection makes the
+	// webhook client fail with a genuine network error (no HTTP status at
+	// all), without ever touching the real network
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	webhookAccepts := make(chan struct{}, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			webhookAccepts <- struct{}{}
+			_ = c.Close()
+		}
+	}()
+
+	n := New(Config{
+		TelegramToken:  "tok",
+		TelegramChatID: "1",
+		WebhookURL:     "http://" + ln.Addr().String(),
+		Enabled:        true,
+	})
+	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-webhookAccepts:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("webhook attempt %d did not arrive", i+1)
+		}
+	}
+	select {
+	case <-webhookAccepts:
+		t.Fatal("webhook was retried more than once")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	select {
+	case <-telegramHits:
+	case <-time.After(2 * time.Second):
+		t.Fatal("telegram was not called")
+	}
+	select {
+	case <-telegramHits:
+		t.Fatal("telegram was retried after 4xx")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestSendDoesNotRetry(t *testing.T) {
+	defer withRetryDelay(time.Millisecond)()
+
+	var count int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&count, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	if err := n.Send(context.Background(), Event{Kind: KindUpdated, Text: "hi"}); err == nil {
+		t.Fatal("expected error")
+	}
+	if got := atomic.LoadInt32(&count); got != 1 {
+		t.Errorf("request count = %d, want 1 (Send must not retry)", got)
 	}
 }

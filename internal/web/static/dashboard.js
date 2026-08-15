@@ -1,5 +1,6 @@
 import { fetchJSON, showToast } from './api.js';
-import { activeErrorPopover, activeSlotsPopover, bindErrorBadges, bindHistFilterSelect, bindMobileNameSearch, bindNameFilter, bindNextRunStatCard, bindPageSizeSelect, buildHistFilters, buildMobileNameSearchSlot, buildNameColumnHeader, buildPageSizeSelect, buildSegmentControl, closePopovers, initSegmentControls, openCustomSelect, openHistFilterSelect, openNameFilterWrap, paginationButtons, updateSegmentThumb } from './components.js';
+import { activeErrorPopover, activeSlotsPopover, bindErrorBadges, bindMobileNameSearch, bindNameFilter, bindNextRunStatCard, bindPageSizeSelect, buildMobileNameSearchSlot, buildNameColumnHeader, buildPageSizeSelect, buildSegmentControl, closePopovers, initSegmentControls, openCustomSelect, openNameFilterWrap, paginationButtons, updateSegmentThumb } from './components.js';
+import { bindHistFilterSelect, buildHistFilters, openHistFilterSelect } from './histfilter.js';
 import { hydrateIcons, icon } from './icons.js';
 import { refreshLogs } from './logs.js';
 import { createPoller } from './poller.js';
@@ -692,7 +693,16 @@ export function bindDashboardReleaseRows(root) {
           body: JSON.stringify({ force: enable }),
         });
         dashboardFetchGen++;
-        showToast(enable ? t('dash.forceEnabled') : t('dash.forceDisabled'), 'success');
+        const queued = !res || res.force_queued !== false;
+        if (enable && !queued) {
+          // the flag is set, but the force queue was full: no out-of-schedule
+          // pass will start, so the optimistic run indicator has to go away
+          setRunPending(false);
+          updateRunStatusUI(effectiveRunning(dashboardServerRunning));
+          showToast(t('dash.forceQueueFull'), 'info');
+        } else {
+          showToast(enable ? t('dash.forceEnabled') : t('dash.forceDisabled'), 'success');
+        }
         updateReleaseRow(hash, !!(res && res.force));
       } catch (err) {
         if (enable) {

@@ -125,11 +125,14 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// the flag alone would only survive until the next scheduled run; asking the
-	// runner starts the check now, and several forced releases join one pass
+	// runner starts the check now, and several forced releases join one pass.
+	// the queue is bounded, so a burst of clicks can still drop the request:
+	// the flag stays set and the item is checked on the next scheduled pass
+	queued := true
 	if req.Force {
-		s.runnerState.RequestForce(hash)
+		queued = s.runnerState.RequestForce(hash)
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"force": req.Force})
+	writeJSON(w, http.StatusOK, map[string]bool{"force": req.Force, "force_queued": queued})
 }
 
 func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
