@@ -88,8 +88,8 @@ type Flaresolverr struct {
 }
 
 type Storage struct {
-	MasterURL      string `env:"DB_URL, default=postgres://user:password@localhost:5432/trackerr"`
-	ConnectTimeout int    `env:"DB_CONNECT_TIMEOUT, default=60"`
+	// empty means DBPath() derives it from ConfigDir
+	Path string `env:"DB_PATH, default="`
 }
 
 type Notifications struct {

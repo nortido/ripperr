@@ -25,3 +25,10 @@ func (a App) BlackholeDirPath() string {
 	}
 	return filepath.Join(a.ConfigDir, "blackhole")
 }
+
+func (a App) DBPath() string {
+	if a.DB.Path != "" {
+		return a.DB.Path
+	}
+	return filepath.Join(a.ConfigDir, "trackerr.db")
+}

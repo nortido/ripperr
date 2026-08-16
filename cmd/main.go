@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"os/signal"
@@ -10,7 +11,6 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/sethvargo/go-envconfig"
 
@@ -45,7 +45,7 @@ func main() {
 		logger.Error(err.Error())
 		return
 	}
-	defer dbConn.Close()
+	defer func() { _ = dbConn.Close() }()
 
 	if err = db.Bootstrap(ctx); err != nil {
 		logger.Error(err.Error())
@@ -171,14 +171,22 @@ func main() {
 	}
 }
 
-func connectDB(ctx context.Context, cfg config.App) (*pgxpool.Pool, *storage.Service, error) {
-	dbCfg, err := pgxpool.ParseConfig(cfg.DB.MasterURL)
+func connectDB(ctx context.Context, cfg config.App) (*sql.DB, *storage.Service, error) {
+	path := cfg.DBPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, nil, err
+	}
+	dsn := path + "?_pragma=journal_mode(DELETE)&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)"
+	dbConn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, nil, err
 	}
-	dbCfg.ConnConfig.ConnectTimeout = time.Duration(cfg.DB.ConnectTimeout) * time.Second
-	dbConn, err := pgxpool.NewWithConfig(ctx, dbCfg)
-	if err != nil {
+	// a single writer connection sidesteps "database is locked" errors entirely. the rollback
+	// journal is used instead of WAL because WAL needs a shared-memory index file that a
+	// macOS bind mount does not keep coherent, so a host process opening the same file can drop committed transactions
+	dbConn.SetMaxOpenConns(1)
+	if err := dbConn.PingContext(ctx); err != nil {
+		_ = dbConn.Close()
 		return nil, nil, err
 	}
 	return dbConn, storage.New(dbConn), nil

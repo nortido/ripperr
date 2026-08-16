@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/crypto/pbkdf2"
 	"trackerr/internal/config"
-	"trackerr/internal/storage/client/pg"
+	"trackerr/internal/storage/client/sqlite"
 )
 
 const (
@@ -41,7 +41,7 @@ type authDoc struct {
 }
 
 func (s *Server) loadAuth(ctx context.Context) (*authDoc, error) {
-	raw, ok, err := s.db.GetSetting(ctx, pg.SettingAuth)
+	raw, ok, err := s.db.GetSetting(ctx, sqlite.SettingAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (s *Server) saveAuth(ctx context.Context, doc *authDoc) error {
 	if err != nil {
 		return err
 	}
-	return s.db.SaveSetting(ctx, pg.SettingAuth, raw)
+	return s.db.SaveSetting(ctx, sqlite.SettingAuth, raw)
 }
 
 func hashPassword(password string, salt []byte) []byte {

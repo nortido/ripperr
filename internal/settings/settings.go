@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"trackerr/internal/config"
-	"trackerr/internal/storage/client/pg"
+	"trackerr/internal/storage/client/sqlite"
 	"trackerr/internal/system/logger"
 )
 
@@ -70,32 +70,32 @@ type integrationsOverlay struct {
 }
 
 func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
-	if raw, ok, err := db.GetSetting(ctx, pg.SettingSchedule); err != nil {
+	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingSchedule); err != nil {
 		return err
 	} else if ok {
 		var o scheduleOverlay
 		if err = json.Unmarshal(raw, &o); err != nil {
-			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", pg.SettingSchedule, err))
+			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", sqlite.SettingSchedule, err))
 		} else {
 			applySchedule(cfg, o)
 		}
 	}
-	if raw, ok, err := db.GetSetting(ctx, pg.SettingTrackers); err != nil {
+	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingTrackers); err != nil {
 		return err
 	} else if ok {
 		var m map[string]trackerItemOverlay
 		if err = json.Unmarshal(raw, &m); err != nil {
-			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", pg.SettingTrackers, err))
+			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", sqlite.SettingTrackers, err))
 		} else {
 			applyTrackers(cfg, m)
 		}
 	}
-	if raw, ok, err := db.GetSetting(ctx, pg.SettingIntegrations); err != nil {
+	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingIntegrations); err != nil {
 		return err
 	} else if ok {
 		var o integrationsOverlay
 		if err = json.Unmarshal(raw, &o); err != nil {
-			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", pg.SettingIntegrations, err))
+			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", sqlite.SettingIntegrations, err))
 		} else {
 			applyIntegrations(cfg, o)
 		}
@@ -291,7 +291,7 @@ func TrackersEffective(ctx context.Context, cfg *config.App, db settingsDB) (map
 			m[key] = *it
 		}
 	}
-	if raw, ok, err := db.GetSetting(ctx, pg.SettingTrackers); err != nil {
+	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingTrackers); err != nil {
 		return nil, err
 	} else if ok {
 		var overlay map[string]trackerItemOverlay
@@ -337,7 +337,7 @@ func MergeSchedule(ctx context.Context, db interface {
 		return err
 	}
 	var existing scheduleOverlay
-	if raw, ok, err := db.GetSetting(ctx, pg.SettingSchedule); err != nil {
+	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingSchedule); err != nil {
 		return err
 	} else if ok {
 		if err = json.Unmarshal(raw, &existing); err != nil {
@@ -354,7 +354,7 @@ func MergeSchedule(ctx context.Context, db interface {
 	if err != nil {
 		return err
 	}
-	return db.SaveSetting(ctx, pg.SettingSchedule, out)
+	return db.SaveSetting(ctx, sqlite.SettingSchedule, out)
 }
 
 func MergeTrackerKey(ctx context.Context, db interface {
@@ -366,7 +366,7 @@ func MergeTrackerKey(ctx context.Context, db interface {
 		return err
 	}
 	var m map[string]trackerItemOverlay
-	if raw, ok, err := db.GetSetting(ctx, pg.SettingTrackers); err != nil {
+	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingTrackers); err != nil {
 		return err
 	} else if ok {
 		if err = json.Unmarshal(raw, &m); err != nil {
@@ -385,7 +385,7 @@ func MergeTrackerKey(ctx context.Context, db interface {
 	if err != nil {
 		return err
 	}
-	return db.SaveSetting(ctx, pg.SettingTrackers, out)
+	return db.SaveSetting(ctx, sqlite.SettingTrackers, out)
 }
 
 func MergeIntegrations(ctx context.Context, db interface {
@@ -397,7 +397,7 @@ func MergeIntegrations(ctx context.Context, db interface {
 		return err
 	}
 	var existing integrationsOverlay
-	if raw, ok, err := db.GetSetting(ctx, pg.SettingIntegrations); err != nil {
+	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingIntegrations); err != nil {
 		return err
 	} else if ok {
 		if err = json.Unmarshal(raw, &existing); err != nil {
@@ -411,5 +411,5 @@ func MergeIntegrations(ctx context.Context, db interface {
 	if err != nil {
 		return err
 	}
-	return db.SaveSetting(ctx, pg.SettingIntegrations, out)
+	return db.SaveSetting(ctx, sqlite.SettingIntegrations, out)
 }

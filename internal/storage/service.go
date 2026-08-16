@@ -2,21 +2,20 @@ package storage
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgxpool"
+	"database/sql"
 
 	"trackerr/internal/helper"
 	"trackerr/internal/model/runner"
 	"trackerr/internal/model/storage"
 	"trackerr/internal/model/tracker"
-	"trackerr/internal/storage/client/pg"
+	"trackerr/internal/storage/client/sqlite"
 )
 
 type Service struct {
-	*pg.Client
+	*sqlite.Client
 }
 
-// GetTracker shadows the embedded pg.Client method: it returns *tracker.Tracker, not *storage.Tracker.
+// GetTracker shadows the embedded sqlite.Client method: it returns *tracker.Tracker, not *storage.Tracker.
 func (s *Service) GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error) {
 	var sttr *storage.Tracker
 
@@ -95,6 +94,6 @@ func (s *Service) SaveItem(ctx context.Context, item *runner.HistoryItem) (err e
 	return s.AddItem(ctx, dbItem)
 }
 
-func New(db *pgxpool.Pool) *Service {
-	return &Service{pg.New(db)}
+func New(db *sql.DB) *Service {
+	return &Service{sqlite.New(db)}
 }

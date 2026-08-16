@@ -13,7 +13,7 @@ WORKDIR /app
 COPY --from=builder /app/main /app/
 RUN mkdir -p /config/blackhole
 ENV CONFIG_DIR=/config
-VOLUME ["/config/blackhole"]
+VOLUME ["/config"]
 EXPOSE 6410
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD wget -q --spider http://127.0.0.1:6410/healthz || exit 1
 CMD ["/app/main"]

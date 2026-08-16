@@ -1,0 +1,431 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+
+	"trackerr/internal/model/storage"
+)
+
+const (
+	SettingSchedule     = "schedule"
+	SettingTrackers     = "trackers"
+	SettingIntegrations = "integrations"
+	SettingAuth         = "auth"
+)
+
+type Client struct {
+	db *sql.DB
+}
+
+func (c *Client) Bootstrap(ctx context.Context) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS check_log (
+    id INTEGER PRIMARY KEY,
+    checked_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    url_hash TEXT NOT NULL,
+    item_name TEXT NOT NULL DEFAULT '',
+    item_url TEXT NOT NULL DEFAULT '',
+    tracker_type_id INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    error_streak INTEGER NOT NULL DEFAULT 0
+)`,
+		`CREATE TABLE IF NOT EXISTS "ignore" (url_hash TEXT PRIMARY KEY, item_name TEXT NOT NULL DEFAULT '', item_url TEXT NOT NULL DEFAULT '', added_at INTEGER NOT NULL DEFAULT (unixepoch()))`,
+		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL DEFAULT (unixepoch()))`,
+		`CREATE TABLE IF NOT EXISTS trackers (tracker_type_id INTEGER PRIMARY KEY, tracker_name TEXT, domain_name TEXT, login_url TEXT, download_url TEXT, credentials TEXT, cookies TEXT, publicity TEXT, updated_at INTEGER)`,
+		`CREATE TABLE IF NOT EXISTS history (url_hash TEXT PRIMARY KEY, tracker_type_id INTEGER, topic_id TEXT, category_name TEXT, item_tag TEXT, item_name TEXT, item_url TEXT, created_at INTEGER, recheck_at INTEGER, force_check INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE INDEX IF NOT EXISTS check_log_checked_at_idx ON check_log (checked_at DESC)`,
+		`DELETE FROM check_log
+WHERE id IN (
+    SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY url_hash ORDER BY checked_at DESC, id DESC) AS rn
+        FROM check_log
+    ) dedup WHERE rn > 1
+)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS check_log_url_hash_uidx ON check_log (url_hash)`,
+		`DELETE FROM check_log
+WHERE id IN (
+    SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(item_name)) ORDER BY checked_at DESC, id DESC) AS rn
+        FROM check_log
+    ) dedup_name WHERE rn > 1
+)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS check_log_item_name_uidx ON check_log (LOWER(TRIM(item_name))) WHERE TRIM(item_name) <> ''`,
+	}
+	for i, stmt := range stmts {
+		if _, err := c.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("bootstrap statement %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error) {
+	res = &storage.Tracker{}
+	err = c.db.QueryRowContext(ctx,
+		"SELECT tracker_type_id, tracker_name, domain_name, login_url, download_url, credentials, cookies, publicity FROM trackers WHERE tracker_type_id = ?",
+		trackerID).Scan(&res.TypeID, &res.Name, &res.Domain, &res.LoginURL, &res.DownloadURL, &res.Credentials, &res.Cookies, &res.Publicity)
+	if err == sql.ErrNoRows {
+		err = nil
+		return
+	}
+	res.Exists = true
+
+	return
+}
+
+func (c *Client) AddTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
+	_, err = c.db.ExecContext(ctx,
+		"INSERT INTO trackers(tracker_type_id, tracker_name, domain_name, login_url, download_url, cookies, credentials, publicity, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, unixepoch())",
+		tracker.TypeID, tracker.Name, tracker.Domain, tracker.LoginURL, tracker.DownloadURL, tracker.Cookies, tracker.Credentials, tracker.Publicity)
+
+	return
+}
+
+func (c *Client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
+	_, err = c.db.ExecContext(ctx,
+		"UPDATE trackers SET cookies = ?, credentials = ?, updated_at = unixepoch() WHERE tracker_type_id = ?",
+		tracker.Cookies, tracker.Credentials, tracker.TypeID)
+
+	return
+}
+
+func (c *Client) AddItem(ctx context.Context, item *storage.Item) (err error) {
+	_, err = c.db.ExecContext(ctx,
+		"INSERT INTO history(url_hash, tracker_type_id, topic_id, category_name, item_tag, item_name, item_url, created_at, recheck_at, force_check) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+		item.URLHash, item.TrackerTypeID, item.TopicID, item.Category, item.Tag, item.Name, item.URL, timeArg(item.CreatedAt), timeArg(item.RecheckAt))
+
+	return
+}
+
+func (c *Client) ListItems(ctx context.Context) ([]storage.Item, error) {
+	rows, err := c.db.QueryContext(ctx,
+		"SELECT url_hash, tracker_type_id, topic_id, category_name, COALESCE(item_tag, ''), COALESCE(item_name, ''), item_url, created_at, recheck_at, force_check FROM history")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var items []storage.Item
+	for rows.Next() {
+		var item storage.Item
+		var createdAt, recheckAt sql.NullInt64
+		if err = rows.Scan(&item.URLHash, &item.TrackerTypeID, &item.TopicID, &item.Category, &item.Tag, &item.Name, &item.URL, &createdAt, &recheckAt, &item.ForceCheck); err != nil {
+			return nil, err
+		}
+		item.CreatedAt = timeFromNull(createdAt)
+		item.RecheckAt = timeFromNull(recheckAt)
+		item.Exists = true
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (c *Client) UpdateItem(ctx context.Context, item *storage.Item) (err error) {
+	_, err = c.db.ExecContext(ctx,
+		"UPDATE history SET topic_id = ?, category_name = ?, item_tag = ?, item_name = ?, created_at = ?, recheck_at = ?, force_check = 0 WHERE url_hash = ?",
+		item.TopicID, item.Category, item.Tag, item.Name, timeArg(item.CreatedAt), timeArg(item.RecheckAt), item.URLHash)
+	return
+}
+
+func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) (int, error) {
+	// the upsert arbiter is url_hash, so a same-name row under a different hash
+	// (release moved to a new topic) would trip check_log_item_name_uidx: drop it first
+	if strings.TrimSpace(entry.ItemName) != "" {
+		if _, err := c.db.ExecContext(ctx,
+			`DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`,
+			entry.ItemName, entry.URLHash); err != nil {
+			return 0, err
+		}
+	}
+	var errorStreak int
+	err := c.db.QueryRowContext(ctx,
+		`INSERT INTO check_log (url_hash, item_name, item_url, tracker_type_id, status, error, error_streak)
+		 VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ? = 'error' THEN 1 ELSE 0 END)
+		 ON CONFLICT(url_hash) DO UPDATE SET
+		     checked_at = unixepoch(),
+		     item_name = excluded.item_name,
+		     item_url = excluded.item_url,
+		     tracker_type_id = excluded.tracker_type_id,
+		     status = excluded.status,
+		     error = excluded.error,
+		     error_streak = CASE WHEN excluded.status = 'error' THEN check_log.error_streak + 1 ELSE 0 END
+		 RETURNING error_streak`,
+		entry.URLHash, entry.ItemName, entry.ItemURL, entry.TrackerTypeID, entry.Status, entry.Error, entry.Status).Scan(&errorStreak)
+	return errorStreak, err
+}
+
+func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]storage.CheckLogEntry, int, error) {
+	var total int
+	from := `check_log c`
+	join := ` LEFT JOIN history h ON h.url_hash = c.url_hash`
+	if f.IgnoredOnly {
+		join += ` INNER JOIN "ignore" i ON i.url_hash = c.url_hash`
+	}
+	countQ := "SELECT COUNT(*) FROM " + from + join
+	listQ := `SELECT c.id, c.checked_at, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
+	          h.recheck_at, COALESCE(h.force_check, 0)
+	          FROM ` + from + join
+	var args []any
+	var where []string
+	if f.Status == "broken" {
+		brokenStreak := f.BrokenStreak
+		if brokenStreak < 1 {
+			brokenStreak = 1
+		}
+		where = append(where, "c.error_streak >= ?")
+		args = append(args, brokenStreak)
+	} else if f.Status != "" {
+		where = append(where, "c.status = ?")
+		args = append(args, f.Status)
+	}
+	if f.Name != "" {
+		where = append(where, "INSTR(LOWER(c.item_name), LOWER(?)) > 0")
+		args = append(args, f.Name)
+	}
+	if f.TrackerID > 0 {
+		where = append(where, "c.tracker_type_id = ?")
+		args = append(args, f.TrackerID)
+	}
+	if f.Category != "" {
+		where = append(where, "h.category_name = ?")
+		args = append(args, f.Category)
+	}
+	if len(where) > 0 {
+		clause := " WHERE " + strings.Join(where, " AND ")
+		countQ += clause
+		listQ += clause
+	}
+	if err := c.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	orderBy := " ORDER BY c.checked_at DESC"
+	if f.SortBy == "recheck" {
+		orderBy = " ORDER BY h.recheck_at IS NULL, h.recheck_at ASC"
+	}
+	listQ += orderBy + " LIMIT ? OFFSET ?"
+	args = append(args, f.Limit, f.Offset)
+	rows, err := c.db.QueryContext(ctx, listQ, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	var items []storage.CheckLogEntry
+	for rows.Next() {
+		var e storage.CheckLogEntry
+		var checkedAt int64
+		var recheckAt sql.NullInt64
+		if err = rows.Scan(&e.ID, &checkedAt, &e.URLHash, &e.ItemName, &e.ItemURL, &e.TrackerTypeID, &e.Status, &e.Error, &e.ErrorStreak, &recheckAt, &e.ForceCheck); err != nil {
+			return nil, 0, err
+		}
+		e.CheckedAt = time.Unix(checkedAt, 0)
+		e.RecheckAt = timeFromNull(recheckAt)
+		items = append(items, e)
+	}
+	return items, total, rows.Err()
+}
+
+func (c *Client) CheckLogSummary(ctx context.Context) (storage.CheckLogSummary, error) {
+	var s storage.CheckLogSummary
+	var updated, errs sql.NullInt64
+	err := c.db.QueryRowContext(ctx, `
+SELECT
+    SUM(CASE WHEN status = 'updated' THEN 1 ELSE 0 END),
+    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END)
+FROM check_log`).Scan(&updated, &errs)
+	if err != nil {
+		return s, err
+	}
+	s.Updated = int(updated.Int64)
+	s.Errors = int(errs.Int64)
+	return s, nil
+}
+
+func (c *Client) ListIgnore(ctx context.Context) ([]storage.IgnoreEntry, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT url_hash, item_name, item_url, added_at FROM "ignore" ORDER BY added_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var items []storage.IgnoreEntry
+	for rows.Next() {
+		var e storage.IgnoreEntry
+		var addedAt int64
+		if err = rows.Scan(&e.URLHash, &e.ItemName, &e.ItemURL, &addedAt); err != nil {
+			return nil, err
+		}
+		e.AddedAt = time.Unix(addedAt, 0)
+		items = append(items, e)
+	}
+	return items, rows.Err()
+}
+
+func (c *Client) AddIgnore(ctx context.Context, hash, name, url string) error {
+	_, err := c.db.ExecContext(ctx,
+		`INSERT INTO "ignore" (url_hash, item_name, item_url) VALUES (?, ?, ?)
+		 ON CONFLICT(url_hash) DO UPDATE SET item_name = excluded.item_name, item_url = excluded.item_url`,
+		hash, name, url)
+	return err
+}
+
+func (c *Client) DeleteIgnore(ctx context.Context, hash string) error {
+	_, err := c.db.ExecContext(ctx, `DELETE FROM "ignore" WHERE url_hash = ?`, hash)
+	return err
+}
+
+func (c *Client) ResetErrorStreak(ctx context.Context, urlHash string) error {
+	_, err := c.db.ExecContext(ctx, `UPDATE check_log SET error_streak = 0 WHERE url_hash = ?`, urlHash)
+	return err
+}
+
+func (c *Client) GetIgnoreSet(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := c.db.QueryContext(ctx, `SELECT url_hash FROM "ignore"`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	set := make(map[string]struct{})
+	for rows.Next() {
+		var h string
+		if err = rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		set[h] = struct{}{}
+	}
+	return set, rows.Err()
+}
+
+func (c *Client) GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error) {
+	var raw []byte
+	err := c.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return json.RawMessage(raw), true, nil
+}
+
+func (c *Client) SaveSetting(ctx context.Context, key string, value json.RawMessage) error {
+	_, err := c.db.ExecContext(ctx,
+		`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch())
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()`,
+		key, []byte(value))
+	return err
+}
+
+func (c *Client) ListDueItems(ctx context.Context) ([]storage.DueItem, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT url_hash, COALESCE(item_name, '') FROM history WHERE recheck_at <= unixepoch()`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var items []storage.DueItem
+	for rows.Next() {
+		var e storage.DueItem
+		if err = rows.Scan(&e.URLHash, &e.ItemName); err != nil {
+			return nil, err
+		}
+		items = append(items, e)
+	}
+	return items, rows.Err()
+}
+
+func (c *Client) DeleteItem(ctx context.Context, urlHash string) error {
+	if _, err := c.db.ExecContext(ctx, `DELETE FROM check_log WHERE url_hash = ?`, urlHash); err != nil {
+		return err
+	}
+	_, err := c.db.ExecContext(ctx, `DELETE FROM history WHERE url_hash = ?`, urlHash)
+	return err
+}
+
+func (c *Client) PurgeDuplicateNames(ctx context.Context, winners map[string]string) error {
+	if len(winners) == 0 {
+		return nil
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for name, hash := range winners {
+		norm := strings.ToLower(strings.TrimSpace(name))
+		if _, err := tx.ExecContext(ctx, `DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?`, norm, hash); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?`, norm, hash); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (c *Client) SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error) {
+	res, err := c.db.ExecContext(ctx, `UPDATE history SET force_check = ? WHERE url_hash = ?`, force, urlHash)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func (c *Client) ForceCheckAll(ctx context.Context, force bool) (int64, error) {
+	checkLogExists := `EXISTS (SELECT 1 FROM check_log c WHERE c.url_hash = history.url_hash)`
+	if force {
+		res, err := c.db.ExecContext(ctx, `
+UPDATE history SET force_check = 1
+WHERE `+checkLogExists+`
+AND NOT EXISTS (
+	SELECT 1 FROM "ignore" i WHERE i.url_hash = history.url_hash
+)`)
+		if err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
+	res, err := c.db.ExecContext(ctx, `
+UPDATE history SET force_check = 0
+WHERE `+checkLogExists)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (c *Client) Ping(ctx context.Context) error {
+	return c.db.PingContext(ctx)
+}
+
+func timeArg(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.Unix()
+}
+
+func timeFromNull(n sql.NullInt64) *time.Time {
+	if !n.Valid {
+		return nil
+	}
+	t := time.Unix(n.Int64, 0)
+	return &t
+}
+
+func New(db *sql.DB) *Client {
+	return &Client{
+		db: db,
+	}
+}
