@@ -1,0 +1,193 @@
+import { ICONS, hydrateIcons, icon } from './icons.js';
+import { overlayBridge } from './state.js';
+import { html } from './util.js';
+
+export let openCustomSelect = null;
+
+export function closeOpenCustomSelect() {
+  if (!openCustomSelect) return;
+  const trigger = openCustomSelect.querySelector('.custom-select-trigger');
+  const panel = openCustomSelect.querySelector('.custom-select-panel');
+  openCustomSelect.classList.remove('open', 'open-up');
+  if (panel) panel.hidden = true;
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  openCustomSelect = null;
+}
+overlayBridge.getOpenCustomSelect = function () { return openCustomSelect; };
+overlayBridge.closeCustomSelect = closeOpenCustomSelect;
+
+export function initCustomSelect(selectEl) {
+  if (!selectEl || selectEl.dataset.customSelectInit) return;
+  selectEl.dataset.customSelectInit = '1';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'custom-select';
+  selectEl.parentNode.insertBefore(wrap, selectEl);
+  wrap.appendChild(selectEl);
+  selectEl.classList.add('custom-select-native');
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'custom-select-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  if (selectEl.id) trigger.id = selectEl.id + '-trigger';
+
+  const labelEl = selectEl.id
+    ? document.querySelector('label[for="' + CSS.escape(selectEl.id) + '"]')
+    : null;
+  if (labelEl && trigger.id) labelEl.setAttribute('for', trigger.id);
+
+  const triggerLabel = document.createElement('span');
+  triggerLabel.className = 'custom-select-value';
+  const chevron = document.createElement('span');
+  chevron.className = 'custom-select-chevron';
+  chevron.innerHTML = ICONS.chevron;
+  trigger.appendChild(triggerLabel);
+  trigger.appendChild(chevron);
+
+  const panel = document.createElement('div');
+  panel.className = 'custom-select-panel';
+  panel.setAttribute('role', 'listbox');
+  panel.hidden = true;
+
+  wrap.appendChild(trigger);
+  wrap.appendChild(panel);
+
+  let highlightIdx = selectEl.selectedIndex;
+
+  function renderOptions() {
+    panel.innerHTML = '';
+    const curVal = selectEl.value;
+    Array.from(selectEl.options).forEach(function (opt, idx) {
+      const item = document.createElement('div');
+      item.className = 'custom-select-option' + (opt.value === curVal ? ' is-selected' : '');
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', opt.value === curVal ? 'true' : 'false');
+      item.dataset.index = String(idx);
+      if (opt.disabled) item.setAttribute('aria-disabled', 'true');
+      if (opt.value === curVal) {
+        item.innerHTML = html`<span class="custom-select-check">${icon('check')}</span><span>${opt.textContent}</span>`;
+      } else {
+        item.textContent = opt.textContent;
+      }
+      if (!opt.disabled) {
+        item.addEventListener('click', function (e) {
+          e.stopPropagation();
+          choose(idx);
+        });
+      }
+      panel.appendChild(item);
+    });
+    hydrateIcons(panel);
+  }
+
+  function syncTrigger() {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    triggerLabel.textContent = opt ? opt.textContent : '';
+    trigger.disabled = selectEl.disabled;
+    renderOptions();
+  }
+
+  function choose(idx) {
+    if (idx < 0 || idx >= selectEl.options.length || selectEl.options[idx].disabled) return;
+    selectEl.selectedIndex = idx;
+    selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+    syncTrigger();
+    closePanel();
+  }
+
+  function closePanel() {
+    wrap.classList.remove('open', 'open-up');
+    trigger.setAttribute('aria-expanded', 'false');
+    panel.hidden = true;
+    if (openCustomSelect === wrap) openCustomSelect = null;
+  }
+
+  function positionPanel() {
+    wrap.classList.remove('open-up');
+    const rect = trigger.getBoundingClientRect();
+    const panelH = Math.min(panel.scrollHeight || 320, 320);
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    if (spaceBelow < panelH + 8 && spaceAbove > spaceBelow) wrap.classList.add('open-up');
+  }
+
+  function scrollToIndex(idx) {
+    const el = panel.querySelector('[data-index="' + idx + '"]');
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function highlightOption() {
+    panel.querySelectorAll('.custom-select-option').forEach(function (el) {
+      el.classList.toggle('is-highlighted', parseInt(el.dataset.index, 10) === highlightIdx);
+    });
+  }
+
+  function openPanel() {
+    closeOpenCustomSelect();
+    wrap.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    panel.hidden = false;
+    openCustomSelect = wrap;
+    highlightIdx = selectEl.selectedIndex;
+    renderOptions();
+    positionPanel();
+    scrollToIndex(highlightIdx);
+    highlightOption();
+  }
+
+  trigger.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (wrap.classList.contains('open')) closePanel();
+    else openPanel();
+  });
+
+  trigger.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      closePanel();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (!wrap.classList.contains('open')) openPanel();
+      else choose(highlightIdx);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!wrap.classList.contains('open')) {
+        openPanel();
+        return;
+      }
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      let next = highlightIdx + step;
+      while (next >= 0 && next < selectEl.options.length && selectEl.options[next].disabled) {
+        next += step;
+      }
+      if (next >= 0 && next < selectEl.options.length) {
+        highlightIdx = next;
+        highlightOption();
+        scrollToIndex(highlightIdx);
+      }
+    }
+  });
+
+  selectEl.addEventListener('change', syncTrigger);
+  const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  if (valueDesc && valueDesc.set) {
+    Object.defineProperty(selectEl, 'value', {
+      configurable: true,
+      get: function () { return valueDesc.get.call(this); },
+      set: function (v) {
+        valueDesc.set.call(this, v);
+        syncTrigger();
+      },
+    });
+  }
+  syncTrigger();
+}
+
+export function initCustomSelects(root) {
+  (root || document).querySelectorAll('select.select:not([data-custom-select-init])').forEach(initCustomSelect);
+}

@@ -12,6 +12,48 @@ import (
 	"time"
 )
 
+func TestEventTextsDistinguishTypesAndCarrySubject(t *testing.T) {
+	cases := []struct {
+		name    string
+		ev      Event
+		wantKw  string
+		wantSub string
+	}{
+		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1"), "qBittorrent", "Some.Release.2026"},
+		{"broken", BrokenEvent("Broken.Release", "https://example.com/t2", 5), "игнор", "Broken.Release"},
+		{"tracker down", TrackerDownEvent("rutracker", "connection refused"), "недоступен", "rutracker"},
+		{"tracker up", TrackerUpEvent("rutracker"), "возобновлены", "rutracker"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !strings.Contains(c.ev.Text, c.wantKw) {
+				t.Errorf("text %q does not contain distinguishing keyword %q", c.ev.Text, c.wantKw)
+			}
+			if !strings.Contains(c.ev.Text, c.wantSub) {
+				t.Errorf("text %q does not contain subject %q", c.ev.Text, c.wantSub)
+			}
+			for _, other := range cases {
+				if other.name == c.name {
+					continue
+				}
+				if strings.Contains(other.ev.Text, c.wantKw) {
+					t.Errorf("keyword %q meant to distinguish %q also appears in %q text", c.wantKw, c.name, other.name)
+				}
+			}
+		})
+	}
+	if BrokenEvent("x", "", 5).Text == "" || !strings.Contains(BrokenEvent("x", "", 3).Text, "3") {
+		t.Error("broken event text does not carry the streak count")
+	}
+}
+
+func TestTrackerDownEventCarriesErrorText(t *testing.T) {
+	ev := TrackerDownEvent("rutracker", "connection refused")
+	if !strings.Contains(ev.Text, "connection refused") {
+		t.Errorf("text %q does not contain the error message", ev.Text)
+	}
+}
+
 func TestHasTransport(t *testing.T) {
 	if New(Config{}).HasTransport() {
 		t.Error("empty config should have no transport")

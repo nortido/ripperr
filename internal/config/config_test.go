@@ -44,3 +44,15 @@ func TestTrackerEnvOverridesDefaults(t *testing.T) {
 		t.Errorf("ByKey(nope) = %+v, want nil", it)
 	}
 }
+
+func TestBlackholeDirPath(t *testing.T) {
+	def := App{ConfigDir: "/config"}
+	if got := def.BlackholeDirPath(); got != "/config/blackhole" {
+		t.Errorf("default BlackholeDirPath = %q, want /config/blackhole", got)
+	}
+
+	override := App{ConfigDir: "/config", BlackholeDir: "/mnt/blackhole"}
+	if got := override.BlackholeDirPath(); got != "/mnt/blackhole" {
+		t.Errorf("overridden BlackholeDirPath = %q, want /mnt/blackhole", got)
+	}
+}

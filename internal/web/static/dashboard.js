@@ -1,10 +1,12 @@
 import { fetchJSON, showToast } from './api.js';
-import { activeErrorPopover, activeSlotsPopover, bindErrorBadges, bindMobileNameSearch, bindNameFilter, bindNextRunStatCard, bindPageSizeSelect, buildMobileNameSearchSlot, buildNameColumnHeader, buildPageSizeSelect, buildSegmentControl, closePopovers, initSegmentControls, openCustomSelect, openNameFilterWrap, paginationButtons, updateSegmentThumb } from './components.js';
+import { activeErrorPopover, activeSlotsPopover, bindErrorBadges, bindNextRunStatCard, bindPageSizeSelect, buildPageSizeSelect, buildSegmentControl, closePopovers, initSegmentControls, paginationButtons, updateSegmentThumb } from './components.js';
 import { bindHistFilterSelect, buildHistFilters, openHistFilterSelect } from './histfilter.js';
 import { hydrateIcons, icon } from './icons.js';
 import { refreshLogs } from './logs.js';
+import { bindMobileNameSearch, bindNameFilter, buildMobileNameSearchSlot, buildNameColumnHeader, openNameFilterWrap } from './namefilter.js';
 import { createPoller } from './poller.js';
 import { applyDashboardFilter, currentView } from './router.js';
+import { openCustomSelect } from './select.js';
 import { historyState } from './state.js';
 import { alertIncidentKey, dismissAlertKey, formatDateTime, formatRunSlot, formatTableTime, formatThenSlot, html, linkCell, pageSizeQueryLimit, pruneDismissedAlerts, statusIcon, trackerBadgeHtml, updateRefreshedAt, visibleAlerts } from './util.js';
 

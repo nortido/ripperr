@@ -49,6 +49,36 @@ type Event struct {
 	URL  string
 }
 
+func UpdatedEvent(name, url string) Event {
+	return Event{
+		Kind: KindUpdated,
+		Text: fmt.Sprintf("Раздача обновлена и перекачана в qBittorrent:\n%s", name),
+		URL:  url,
+	}
+}
+
+func BrokenEvent(name, url string, streak int) Event {
+	return Event{
+		Kind: KindBroken,
+		Text: fmt.Sprintf("%d ошибок подряд, запись отправлена в игнор и больше не проверяется:\n%s", streak, name),
+		URL:  url,
+	}
+}
+
+func TrackerDownEvent(tracker, errMsg string) Event {
+	return Event{
+		Kind: KindTrackerDown,
+		Text: fmt.Sprintf("Трекер %s недоступен: %s\nАвтоматика предохранителя приостановила проверки этого трекера.", tracker, errMsg),
+	}
+}
+
+func TrackerUpEvent(tracker string) Event {
+	return Event{
+		Kind: KindTrackerUp,
+		Text: fmt.Sprintf("Трекер %s снова доступен, проверки возобновлены.", tracker),
+	}
+}
+
 type Notifier struct {
 	cfg Config
 	hc  *http.Client

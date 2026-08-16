@@ -547,19 +547,11 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 				logger.Error(fmt.Sprintf("auto-ignore failed for %s: %v", e.Name, ignoreErr))
 			} else {
 				logger.Warn(fmt.Sprintf("%s: %d errors in a row, sent to ignore", e.Name, streak))
-				h.notifier.Notify(notify.Event{
-					Kind: notify.KindBroken,
-					Text: fmt.Sprintf("%s: %d errors in a row", e.Name, streak),
-					URL:  e.URL,
-				})
+				h.notifier.Notify(notify.BrokenEvent(e.Name, e.URL, streak))
 			}
 		}
 	case "updated":
-		h.notifier.Notify(notify.Event{
-			Kind: notify.KindUpdated,
-			Text: e.Name,
-			URL:  e.URL,
-		})
+		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL))
 	}
 }
 

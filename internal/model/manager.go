@@ -34,4 +34,5 @@ type ManagerConfig struct {
 	DeleteEnabled      bool
 	DeleteFilesEnabled bool
 	DeleteCategories   []string
+	BlackholeDir       string
 }

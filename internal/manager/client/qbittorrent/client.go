@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -191,6 +192,11 @@ func (c *Client) getClient() (err error) {
 }
 
 func New(config model.ManagerConfig) (c *Client, err error) {
+	if config.BlackholeDir != "" {
+		if err = os.MkdirAll(config.BlackholeDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create blackhole dir: %w", err)
+		}
+	}
 	cl := &Client{
 		config: config,
 	}

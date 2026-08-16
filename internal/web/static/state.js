@@ -4,9 +4,10 @@ export function isMobileStackedLayout() {
   return document.documentElement.classList.contains('mobile-layout');
 }
 
-// lets histfilter.js dismiss the custom-select and name-filter overlays that
-// live in components.js without importing that file directly, which would
-// create an ES module cycle (components.js already imports from histfilter.js)
+// lets histfilter.js dismiss the custom-select (select.js) and name-filter
+// (namefilter.js) overlays without importing those files directly, since both
+// of them already import from histfilter.js and a direct import back would
+// create an ES module cycle
 export const overlayBridge = {
   getOpenCustomSelect: null,
   closeCustomSelect: null,

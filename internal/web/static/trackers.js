@@ -1,7 +1,8 @@
 import { fetchJSON, showToast } from './api.js';
-import { initChipInput, initCustomSelects, initPasswordToggles } from './components.js';
+import { initChipInput, initPasswordToggles } from './components.js';
 import { hydrateIcons, icon } from './icons.js';
 import { integrationsCache, setIntegrationsCache } from './integrations.js';
+import { initCustomSelects } from './select.js';
 import { html, randomFieldName, secureInputAttrs, trackerDisplayDomain } from './util.js';
 
 export let openTrackerKey = null;

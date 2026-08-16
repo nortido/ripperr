@@ -40,6 +40,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		DeleteEnabled:      cfg.Manager.DeleteEnabled,
 		DeleteFilesEnabled: cfg.Manager.DeleteFilesEnabled,
 		DeleteCategories:   cfg.Manager.DeleteFilesCategories,
+		BlackholeDir:       cfg.BlackholeDirPath(),
 	}
 	for {
 		if ctx.Err() != nil {
@@ -110,11 +111,19 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 	}
 
 	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, handlerCfg, runnerState, notify.New(notify.Config(cfg.Notify)))
+
+	bhDone := make(chan struct{})
+	go func() {
+		qbc.SweepBlackhole(ctx)
+		close(bhDone)
+	}()
+
 	done := make(chan struct{})
 	go func() {
 		rn.Run(ctx)
 		close(done)
 	}()
 	<-done
+	<-bhDone
 	return ctx.Err()
 }

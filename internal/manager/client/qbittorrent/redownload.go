@@ -11,12 +11,15 @@ import (
 )
 
 const (
+	// redownloadAddAttempts is how many times the re-add is tried before failing.
+	redownloadAddAttempts = 3
+)
+
+var (
 	// redownloadSettleDelay gives qBittorrent time to finish deleting files: the
 	// torrent leaves the list right away, but the removal job keeps running and
 	// re-adding the same infohash too early is silently rejected.
 	redownloadSettleDelay = 3 * time.Second
-	// redownloadAddAttempts is how many times the re-add is tried before failing.
-	redownloadAddAttempts = 3
 	// redownloadRetryDelay is the pause between re-add attempts.
 	redownloadRetryDelay = 5 * time.Second
 )
@@ -56,13 +59,31 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		return fmt.Errorf("torrent not found in list")
 	}
 
-	// Step 4: Delete torrent with files, bypassing settings
+	opts := model.ManagerAddFileOptions{
+		Hash:           torrentHash,
+		Name:           name,
+		Comment:        comment,
+		Category:       entry.Category,
+		Tag:            entry.Tag,
+		AutoManaged:    entry.AutoManaged,
+		MaxRatio:       entry.MaxRatio,
+		MaxSeedingTime: entry.MaxSeedingTime,
+	}
+
+	// Step 4: blackhole the bytes and the add parameters before anything
+	// destructive happens. If qbit dies or the request is canceled anywhere
+	// after this point, the pair on disk is enough to finish the re-add later.
+	if err = c.writeBlackholePair(torrentData, opts); err != nil {
+		return fmt.Errorf("blackhole write failed: %w", err)
+	}
+
+	// Step 5: Delete torrent with files, bypassing settings
 	logger.Info(fmt.Sprintf("force redownload: deleting torrent %s with files", torrentHash))
 	if err = c.client.DeleteTorrentsCtx(ctx, []string{torrentHash}, true); err != nil {
 		return fmt.Errorf("delete torrent failed: %w", err)
 	}
 
-	// Step 5: Wait until torrent is gone
+	// Step 6: Wait until torrent is gone
 	logger.Info(fmt.Sprintf("force redownload: waiting for torrent %s to be deleted", torrentHash))
 	absent, err := c.waitUntilAbsent(ctx, torrentHash)
 	if err != nil {
@@ -72,7 +93,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		return fmt.Errorf("torrent did not disappear after deletion")
 	}
 
-	// Step 6: Let the removal job finish on disk, then confirm the torrent is
+	// Step 7: Let the removal job finish on disk, then confirm the torrent is
 	// really gone before reusing its infohash.
 	if err = sleepCtx(ctx, redownloadSettleDelay); err != nil {
 		return err
@@ -85,18 +106,8 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		return fmt.Errorf("torrent reappeared after deletion")
 	}
 
-	// Step 7: Add torrent back from exported bytes, retrying a silent rejection
+	// Step 8: Add torrent back from exported bytes, retrying a silent rejection
 	logger.Info(fmt.Sprintf("force redownload: re-adding torrent %s", torrentHash))
-	opts := model.ManagerAddFileOptions{
-		Hash:           torrentHash,
-		Name:           name,
-		Comment:        comment,
-		Category:       entry.Category,
-		Tag:            entry.Tag,
-		AutoManaged:    entry.AutoManaged,
-		MaxRatio:       entry.MaxRatio,
-		MaxSeedingTime: entry.MaxSeedingTime,
-	}
 	var addErr error
 	for attempt := 1; attempt <= redownloadAddAttempts; attempt++ {
 		addErr = c.addTorrentVerified(ctx, torrentData, opts)
@@ -115,13 +126,16 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		logger.Warn(fmt.Sprintf("force redownload: add attempt %d/%d for %s failed: %v",
 			attempt, redownloadAddAttempts, torrentHash, addErr))
 		if err = sleepCtx(ctx, redownloadRetryDelay); err != nil {
+			// leave the blackhole pair on disk: the sweeper picks it up later
 			return err
 		}
 	}
 	if addErr != nil {
+		// leave the blackhole pair on disk: the sweeper picks it up later
 		return fmt.Errorf("add torrent failed: %w", addErr)
 	}
 
+	removeBlackholePair(c.config.BlackholeDir, torrentHash)
 	logger.Info(fmt.Sprintf("force redownload: completed for torrent %s", torrentHash))
 	return nil
 }

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -25,7 +27,7 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load()
+	loadEnv()
 
 	ctx, stop := signalNotify()
 	defer stop()
@@ -74,9 +76,9 @@ func main() {
 	breakerAlerts.SetHook(func(open bool, tracker, errMsg string) {
 		n := notify.New(notify.Config(effective().Notify))
 		if open {
-			n.Notify(notify.Event{Kind: notify.KindTrackerDown, Text: tracker + ": " + errMsg})
+			n.Notify(notify.TrackerDownEvent(tracker, errMsg))
 		} else {
-			n.Notify(notify.Event{Kind: notify.KindTrackerUp, Text: tracker})
+			n.Notify(notify.TrackerUpEvent(tracker))
 		}
 	})
 
@@ -184,4 +186,24 @@ func connectDB(ctx context.Context, cfg config.App) (*pgxpool.Pool, *storage.Ser
 
 func signalNotify() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+}
+
+func loadEnv() {
+	dir := os.Getenv("CONFIG_DIR")
+	if dir == "" {
+		dir = config.DefaultConfigDir
+	}
+	// CONFIG_DIR itself isn't parsed via envconfig yet at this point (chicken-and-egg:
+	// it needs to be known before we can load the .env that might set other vars), so
+	// it's read straight from the OS env here.
+	if envPath := filepath.Join(dir, ".env"); fileExists(envPath) {
+		_ = godotenv.Load(envPath)
+		return
+	}
+	_ = godotenv.Load()
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

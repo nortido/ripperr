@@ -1,9 +1,9 @@
 import { fetchJSON, showToast } from './api.js';
-import { initCustomSelects } from './components.js';
 import { triggerDryRun, updateDryRunButtonState } from './dashboard.js';
 import { hydrateIcons, icon } from './icons.js';
 import { createPoller } from './poller.js';
 import { currentView } from './router.js';
+import { initCustomSelects } from './select.js';
 import { html, formatLogTime, updateRefreshedAt } from './util.js';
 
 export let logsState = { limit: 200 };

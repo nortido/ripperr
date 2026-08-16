@@ -177,9 +177,10 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 
 	cfg := s.effective()
 	qbc, err := qbitClientFactory(model.ManagerConfig{
-		Host:     cfg.Manager.QbitTorrent.Host,
-		Username: cfg.Manager.QbitTorrent.Username,
-		Password: cfg.Manager.QbitTorrent.Password,
+		Host:         cfg.Manager.QbitTorrent.Host,
+		Username:     cfg.Manager.QbitTorrent.Username,
+		Password:     cfg.Manager.QbitTorrent.Password,
+		BlackholeDir: cfg.BlackholeDirPath(),
 	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

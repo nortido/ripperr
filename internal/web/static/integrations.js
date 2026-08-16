@@ -1,6 +1,7 @@
 import { fetchJSON, showToast } from './api.js';
-import { initCustomSelects, initPasswordToggles } from './components.js';
+import { initPasswordToggles } from './components.js';
 import { hydrateIcons, icon } from './icons.js';
+import { initCustomSelects } from './select.js';
 import { html, secureInputAttrs } from './util.js';
 
 export let integrationsCache = null;

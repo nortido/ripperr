@@ -1,5 +1,5 @@
-import { syncNameFilterLayout } from './components.js';
 import { hydrateIcons } from './icons.js';
+import { syncNameFilterLayout } from './namefilter.js';
 
 export const THEME_KEY = 'trackerr-theme';
 export const SIDEBAR_COLLAPSED_KEY = 'trackerr-sidebar-collapsed';

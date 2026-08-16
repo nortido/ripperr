@@ -1,5 +1,6 @@
 import { ensureQbitCategories, fetchJSON, qbitCategoriesCache, qbitCategoriesUnavailable, showToast } from './api.js';
-import { initChipInput, initCustomSelects } from './components.js';
+import { initChipInput } from './components.js';
+import { initCustomSelects } from './select.js';
 import { html, hourOptions, refreshOptions, timezoneOptions } from './util.js';
 
 export function bindDeleteCascade(el) {
