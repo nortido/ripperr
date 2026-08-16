@@ -302,14 +302,12 @@ html.mobile-layout .stat-card-next-run .stat-value {
   font-size: clamp(18px, 11cqi, 22px);
 }
 
-html.mobile-layout .stat-card-next-run .stat-label,
-html.mobile-layout .stat-card-next-run .stat-then-pill {
+html.mobile-layout .stat-card-next-run .stat-label {
   white-space: nowrap;
 }
 
 html.mobile-layout .stat-card-next-run .stat-sub {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: none;
 }
 
 html.mobile-layout .card-header {
