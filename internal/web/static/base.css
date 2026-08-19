@@ -1,4 +1,4 @@
-/* trackerr design system — Overseerr / Jellyfin inspired */
+/* trackerr design system, Overseerr / Jellyfin inspired */
 
 :root,
 [data-theme="light"] {
@@ -57,7 +57,7 @@
   --radius-sm: 8px;
   --radius-lg: 12px;
   --bg-muted: rgba(0, 0, 0, 0.06);
-  /* button size system — every .btn variant derives its geometry from these */
+  /* button size system: every .btn variant derives its geometry from these */
   --btn-h-md: 44px;
   --btn-h-sm: 36px;
   --btn-h-xs: 32px;

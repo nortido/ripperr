@@ -28,7 +28,7 @@ type Client struct {
 }
 
 func (c *Client) List(ctx context.Context, _ model.FilterOptions) (entries []*model.Entry, err error) {
-	qts, err := c.client.GetTorrents(qbt.TorrentFilterOptions{
+	qts, err := c.client.GetTorrentsCtx(ctx, qbt.TorrentFilterOptions{
 		Filter: qbt.TorrentFilterAll,
 		Sort:   "added_on",
 	})

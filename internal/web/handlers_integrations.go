@@ -143,11 +143,7 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.Kind {
 	case "qbit":
-		_, err := qbittorrent.New(model.ManagerConfig{
-			Host:     cfg.Manager.QbitTorrent.Host,
-			Username: cfg.Manager.QbitTorrent.Username,
-			Password: cfg.Manager.QbitTorrent.Password,
-		})
+		_, err := qbittorrent.New(s.qbitManagerConfig(cfg))
 		s.testResult(w, err)
 	case "flaresolverr":
 		s.testResult(w, testFlaresolverr(cfg))
@@ -257,9 +253,20 @@ type qbitCategoriesClient interface {
 	ForceRedownload(ctx context.Context, torrentHash string) error
 }
 
-// ponytail: per-request factory — no long-lived shared qbit client in HTTP handlers
+// ponytail: per-request factory, no long-lived shared qbit client in HTTP handlers
 var qbitClientFactory = func(cfg model.ManagerConfig) (qbitCategoriesClient, error) {
 	return qbittorrent.New(cfg)
+}
+
+func (s *Server) qbitManagerConfig(cfg config.App) model.ManagerConfig {
+	// BlackholeDir stays unset here: qbittorrent.New MkdirAll's it when non-empty,
+	// and a connectivity test or categories fetch shouldn't create that dir as a
+	// side effect. handleRedownload sets it explicitly after calling this.
+	return model.ManagerConfig{
+		Host:     cfg.Manager.QbitTorrent.Host,
+		Username: cfg.Manager.QbitTorrent.Username,
+		Password: cfg.Manager.QbitTorrent.Password,
+	}
 }
 
 func (s *Server) handleGetCategories(w http.ResponseWriter, r *http.Request) {
@@ -267,11 +274,7 @@ func (s *Server) handleGetCategories(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	cfg := s.effective()
-	qbc, err := qbitClientFactory(model.ManagerConfig{
-		Host:     cfg.Manager.QbitTorrent.Host,
-		Username: cfg.Manager.QbitTorrent.Username,
-		Password: cfg.Manager.QbitTorrent.Password,
-	})
+	qbc, err := qbitClientFactory(s.qbitManagerConfig(cfg))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

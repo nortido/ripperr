@@ -40,8 +40,7 @@
 
 /* error popover */
 
-.error-popover,
-.slots-popover {
+.error-popover {
   position: absolute;
   z-index: 1500;
   max-width: 28rem;
@@ -52,24 +51,6 @@
   border-radius: var(--radius);
   box-shadow: var(--shadow-dropdown);
   word-break: break-word;
-}
-
-.error-popover {
   white-space: pre-wrap;
-}
-
-.slots-popover {
-  max-height: 300px;
-  overflow-y: auto;
-  min-width: 12rem;
-}
-
-.slots-popover-item {
-  padding: 4px 0;
-  line-height: 1.4;
-}
-
-.slots-popover-item + .slots-popover-item {
-  border-top: 1px solid var(--border-subtle);
 }
 

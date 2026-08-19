@@ -179,6 +179,50 @@ func TestListCheckLogSortRecheckNullsLast(t *testing.T) {
 	}
 }
 
+func TestListCheckLogExcludeIgnored(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	for _, h := range []string{"kept", "ignored"} {
+		if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: h, ItemName: h, Status: "unchanged"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.AddIgnore(ctx, "ignored", "ignored", "http://x"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("excludes ignored row from items and total", func(t *testing.T) {
+		entries, total, err := c.ListCheckLog(ctx, storage.CheckLogFilter{ExcludeIgnored: true, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 || len(entries) != 1 || entries[0].URLHash != "kept" {
+			t.Fatalf("entries=%+v total=%d, want single kept row", entries, total)
+		}
+	})
+
+	t.Run("flag off still returns ignored row", func(t *testing.T) {
+		entries, total, err := c.ListCheckLog(ctx, storage.CheckLogFilter{Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 || len(entries) != 2 {
+			t.Fatalf("entries=%+v total=%d, want both rows", entries, total)
+		}
+	})
+
+	t.Run("IgnoredOnly wins over ExcludeIgnored when both are set", func(t *testing.T) {
+		entries, total, err := c.ListCheckLog(ctx, storage.CheckLogFilter{ExcludeIgnored: true, IgnoredOnly: true, Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 || len(entries) != 1 || entries[0].URLHash != "ignored" {
+			t.Fatalf("entries=%+v total=%d, want single ignored row (IgnoredOnly takes precedence)", entries, total)
+		}
+	})
+}
+
 func TestItemTimestampRoundTrip(t *testing.T) {
 	c := newTestClient(t)
 	ctx := t.Context()

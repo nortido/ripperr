@@ -1337,6 +1337,28 @@ func TestGetHistoryCategoryFilter(t *testing.T) {
 	}
 }
 
+func TestGetHistoryPlanViewExcludesIgnored(t *testing.T) {
+	store := &capturingStore{fakeStore: fakeStore{checkLog: []storage.CheckLogEntry{{ID: 1}}}}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+
+	cases := []struct {
+		query string
+		want  bool
+	}{
+		{"sort=recheck", true},
+		{"sort=checked", false},
+		{"sort=recheck&ignored=1", false},
+	}
+	for _, tt := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/history?"+tt.query, nil)
+		w := httptest.NewRecorder()
+		srv.handleHistory(w, req)
+		if store.lastFilter.ExcludeIgnored != tt.want {
+			t.Fatalf("query=%s: ExcludeIgnored = %v, want %v", tt.query, store.lastFilter.ExcludeIgnored, tt.want)
+		}
+	}
+}
+
 func TestGetHistorySummary(t *testing.T) {
 	store := &fakeStore{summary: storage.CheckLogSummary{Updated: 2, Errors: 2}}
 	srv := newTestServer(store)

@@ -54,6 +54,14 @@ func removeBlackholePair(dir, hash string) {
 	_ = os.Remove(jsonPath)
 }
 
+func (c *Client) WriteBlackholePair(data []byte, opts model.ManagerAddFileOptions) error {
+	return c.writeBlackholePair(data, opts)
+}
+
+func (c *Client) RemoveBlackholePair(hash string) {
+	removeBlackholePair(c.config.BlackholeDir, hash)
+}
+
 type blackholePair struct {
 	hash    string
 	torrent []byte

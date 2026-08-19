@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"trackerr/internal/model"
 	"trackerr/internal/model/storage"
@@ -17,47 +18,59 @@ import (
 	"trackerr/internal/system/logger"
 )
 
+func queryInt(r *http.Request, key string, def, min, max int) int {
+	v, _ := strconv.Atoi(r.URL.Query().Get(key))
+	if v < min {
+		v = def
+	}
+	// max <= 0 means no upper clamp; values above max are clamped, not defaulted
+	if max > 0 && v > max {
+		v = max
+	}
+	return v
+}
+
+func queryTrimmed(r *http.Request, key string, maxBytes int) string {
+	v := strings.TrimSpace(r.URL.Query().Get(key))
+	if len(v) <= maxBytes {
+		return v
+	}
+	// back off from the cut point to the last full rune boundary, so a
+	// multi-byte char straddling maxBytes never gets split in half
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(v[cut]) {
+		cut--
+	}
+	return v[:cut]
+}
+
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if offset < 0 {
-		offset = 0
-	}
+	limit := queryInt(r, "limit", 50, 1, 1000)
+	offset := queryInt(r, "offset", 0, 0, 0)
 	status := r.URL.Query().Get("status")
 	ignoredOnly := r.URL.Query().Get("ignored") == "1"
 	sortBy := r.URL.Query().Get("sort")
 	if sortBy != "recheck" {
 		sortBy = "checked"
 	}
-	nameFilter := strings.TrimSpace(r.URL.Query().Get("name"))
-	if len(nameFilter) > 200 {
-		nameFilter = nameFilter[:200]
-	}
-	trackerID, _ := strconv.Atoi(r.URL.Query().Get("tracker"))
-	if trackerID < 1 {
-		trackerID = 0
-	}
-	categoryFilter := strings.TrimSpace(r.URL.Query().Get("category"))
-	if len(categoryFilter) > 200 {
-		categoryFilter = categoryFilter[:200]
-	}
+	nameFilter := queryTrimmed(r, "name", 200)
+	trackerID := queryInt(r, "tracker", 0, 1, 0)
+	categoryFilter := queryTrimmed(r, "category", 200)
 	brokenStreak := s.effective().Runner.ErrorStreakThreshold
+	// ignored releases are never rechecked, so the plan view has nothing to
+	// show for them; the history view still lists them unless asked to filter
+	excludeIgnored := sortBy == "recheck" && !ignoredOnly
 	items, total, err := s.db.ListCheckLog(r.Context(), storage.CheckLogFilter{
-		Limit:        limit,
-		Offset:       offset,
-		Status:       status,
-		IgnoredOnly:  ignoredOnly,
-		SortBy:       sortBy,
-		Name:         nameFilter,
-		BrokenStreak: brokenStreak,
-		TrackerID:    trackerID,
-		Category:     categoryFilter,
+		Limit:          limit,
+		Offset:         offset,
+		Status:         status,
+		IgnoredOnly:    ignoredOnly,
+		ExcludeIgnored: excludeIgnored,
+		SortBy:         sortBy,
+		Name:           nameFilter,
+		BrokenStreak:   brokenStreak,
+		TrackerID:      trackerID,
+		Category:       categoryFilter,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -176,12 +189,9 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.effective()
-	qbc, err := qbitClientFactory(model.ManagerConfig{
-		Host:         cfg.Manager.QbitTorrent.Host,
-		Username:     cfg.Manager.QbitTorrent.Username,
-		Password:     cfg.Manager.QbitTorrent.Password,
-		BlackholeDir: cfg.BlackholeDirPath(),
-	})
+	mc := s.qbitManagerConfig(cfg)
+	mc.BlackholeDir = cfg.BlackholeDirPath()
+	qbc, err := qbitClientFactory(mc)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

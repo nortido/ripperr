@@ -209,10 +209,6 @@
   white-space: nowrap;
 }
 
-.stat-card-next-run[data-has-slots-popover] {
-  cursor: pointer;
-}
-
 .stat-icon {
   display: flex;
   align-items: center;

@@ -2,11 +2,9 @@ import { closeOpenHistFilterSelect, openHistFilterSelect, positionHistFilterPane
 import { ICONS } from './icons.js';
 import { closeOpenNameFilter, openNameFilterWrap } from './namefilter.js';
 import { closeOpenCustomSelect, initCustomSelects, openCustomSelect } from './select.js';
-import { PAGE_SIZE_OPTIONS, formatRunSlot, html, savePageSize } from './util.js';
+import { PAGE_SIZE_OPTIONS, html, savePageSize } from './util.js';
 
 export let activeErrorPopover = null;
-export let activeSlotsPopover = null;
-export let slotsPopoverLeaveTimer = null;
 
 export function bindErrorBadges(root) {
   root.querySelectorAll('.status-error-badge').forEach(function (badge) {
@@ -26,72 +24,10 @@ export function bindErrorBadges(root) {
   });
 }
 
-export function showSlotsPopover(card, slots) {
-  if (slotsPopoverLeaveTimer) {
-    clearTimeout(slotsPopoverLeaveTimer);
-    slotsPopoverLeaveTimer = null;
-  }
-  closePopovers();
-  const pop = document.createElement('div');
-  pop.className = 'slots-popover';
-  slots.forEach(function (s) {
-    const item = document.createElement('div');
-    item.className = 'slots-popover-item';
-    item.textContent = formatRunSlot(s);
-    pop.appendChild(item);
-  });
-  document.body.appendChild(pop);
-  const rect = card.getBoundingClientRect();
-  pop.style.top = (rect.bottom + window.scrollY + 6) + 'px';
-  pop.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8) + 'px';
-  activeSlotsPopover = pop;
-  pop.addEventListener('mouseenter', function () {
-    if (slotsPopoverLeaveTimer) {
-      clearTimeout(slotsPopoverLeaveTimer);
-      slotsPopoverLeaveTimer = null;
-    }
-  });
-  pop.addEventListener('mouseleave', function () {
-    if (activeSlotsPopover) {
-      activeSlotsPopover.remove();
-      activeSlotsPopover = null;
-    }
-  });
-}
-
-export function bindNextRunStatCard(root, slots) {
-  const card = root.querySelector('.stat-card-next-run[data-has-slots-popover]');
-  if (!card || !slots || slots.length <= 2) return;
-
-  card.addEventListener('mouseenter', function () {
-    showSlotsPopover(card, slots);
-  });
-  card.addEventListener('mouseleave', function () {
-    slotsPopoverLeaveTimer = setTimeout(function () {
-      if (activeSlotsPopover) {
-        activeSlotsPopover.remove();
-        activeSlotsPopover = null;
-      }
-    }, 120);
-  });
-  card.addEventListener('click', function (e) {
-    e.stopPropagation();
-    if (activeSlotsPopover) {
-      closePopovers();
-    } else {
-      showSlotsPopover(card, slots);
-    }
-  });
-}
-
 export function closePopovers() {
   if (activeErrorPopover) {
     activeErrorPopover.remove();
     activeErrorPopover = null;
-  }
-  if (activeSlotsPopover) {
-    activeSlotsPopover.remove();
-    activeSlotsPopover = null;
   }
 }
 

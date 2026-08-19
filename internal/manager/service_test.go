@@ -10,14 +10,15 @@ import (
 )
 
 type stubClient struct {
-	calls         []string
-	detName       string
-	detCom        string
-	detErr        error
-	addOpts       model.ManagerAddFileOptions
-	incomingSame  bool
-	incomingKnown bool
-	addErr        error
+	calls             []string
+	detName           string
+	detCom            string
+	detErr            error
+	addOpts           model.ManagerAddFileOptions
+	incomingSame      bool
+	incomingKnown     bool
+	addErr            error
+	blackholeWriteErr error
 }
 
 func (s *stubClient) IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (bool, bool) {
@@ -57,6 +58,15 @@ func (s *stubClient) Delete(ctx context.Context, opts model.ManagerDeleteOptions
 	return nil
 }
 
+func (s *stubClient) WriteBlackholePair(data []byte, opts model.ManagerAddFileOptions) error {
+	s.calls = append(s.calls, "blackhole-write")
+	return s.blackholeWriteErr
+}
+
+func (s *stubClient) RemoveBlackholePair(hash string) {
+	s.calls = append(s.calls, "blackhole-remove")
+}
+
 func TestSubmit_PreservesNameAndCommentFromExistingTorrent(t *testing.T) {
 	stub := &stubClient{detName: "existing name", detCom: "existing comment"}
 	m := NewManager(stub)
@@ -72,7 +82,7 @@ func TestSubmit_PreservesNameAndCommentFromExistingTorrent(t *testing.T) {
 	if stub.addOpts.Comment != "existing comment" {
 		t.Errorf("expected comment filled from existing torrent, got %q", stub.addOpts.Comment)
 	}
-	wantOrder := []string{"details", "incoming", "delete", "add"}
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "blackhole-remove"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
 	}
@@ -143,7 +153,7 @@ func TestSubmit_DifferentHashAddFailureSkipsDelete(t *testing.T) {
 	}
 }
 
-func TestSubmit_SameHashDeletesBeforeAdd(t *testing.T) {
+func TestSubmit_SameHashBlackholesBeforeDeleteAndRemovesAfterAdd(t *testing.T) {
 	stub := &stubClient{incomingSame: true, incomingKnown: true}
 	m := NewManager(stub)
 
@@ -151,9 +161,51 @@ func TestSubmit_SameHashDeletesBeforeAdd(t *testing.T) {
 	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	wantOrder := []string{"details", "incoming", "delete", "add"}
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "blackhole-remove"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
+	}
+}
+
+func TestSubmit_SameHashBlackholeWriteFailureAbortsReplace(t *testing.T) {
+	stub := &stubClient{incomingSame: true, incomingKnown: true, blackholeWriteErr: fmt.Errorf("disk full")}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "samehash"}
+	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err == nil {
+		t.Fatal("expected blackhole write error")
+	}
+	wantOrder := []string{"details", "incoming", "blackhole-write"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v (no delete, no add)", stub.calls, wantOrder)
+	}
+}
+
+func TestSubmit_SameHashAddFailureLeavesBlackholePair(t *testing.T) {
+	stub := &stubClient{incomingSame: true, incomingKnown: true, addErr: fmt.Errorf("add failed")}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "samehash"}
+	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err == nil {
+		t.Fatal("expected add error")
+	}
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v (pair left on disk, no remove)", stub.calls, wantOrder)
+	}
+}
+
+func TestSubmit_DifferentHashWritesNoBlackholePair(t *testing.T) {
+	stub := &stubClient{incomingSame: false, incomingKnown: true}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "oldhash"}
+	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantOrder := []string{"details", "incoming", "add", "delete"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v (add-first branch never blackholes)", stub.calls, wantOrder)
 	}
 }
 

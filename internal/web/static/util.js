@@ -193,7 +193,7 @@ export function escapeHtml(s) {
 }
 
 // markup builder: every ${} substitution is escaped, so raw HTML can only enter
-// through another html`` result (or an array of them) — no way to forget escapeHtml
+// through another html`` result (or an array of them): no way to forget escapeHtml
 class Html {
   constructor(value) {
     this.value = value;

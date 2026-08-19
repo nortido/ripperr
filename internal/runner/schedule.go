@@ -9,10 +9,6 @@ func scheduleLocation(loc *time.Location) *time.Location {
 	return time.Local
 }
 
-func ScheduleLocation(loc *time.Location) *time.Location {
-	return scheduleLocation(loc)
-}
-
 func NextRunsWithin(now time.Time, startHour, listRefreshPerDay int, within time.Duration, loc *time.Location) []time.Time {
 	if listRefreshPerDay <= 0 || within <= 0 {
 		return nil

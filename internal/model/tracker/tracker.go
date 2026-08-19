@@ -77,7 +77,6 @@ func (t *Tracker) LoginLink() (url string) {
 }
 
 func (t *Tracker) DownloadLink(topicID string) (url string) {
-	// TODO: parse downloadLink from page (nnm)
 	return fmt.Sprint(t.DownloadURL, topicID)
 }
 

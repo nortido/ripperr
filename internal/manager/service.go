@@ -14,6 +14,8 @@ type client interface {
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
+	WriteBlackholePair(data []byte, opts model.ManagerAddFileOptions) (err error)
+	RemoveBlackholePair(hash string)
 }
 
 type manager struct {
@@ -61,10 +63,27 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 	}
 	same, known := m.client.IncomingHashSameAs(buf, magnet, opts.Hash)
 	if known && same {
+		if buf == nil || buf.Len() == 0 {
+			// ponytail: magnet resubmits have no torrent bytes to blackhole here,
+			// so a same-hash magnet replace still deletes before adding with no
+			// protection window; close it if SubmitMagnet ever fetches metadata
+			// bytes before this point.
+			if err = del(); err != nil {
+				return
+			}
+			return add(opts)
+		}
+		if err = m.client.WriteBlackholePair(buf.Bytes(), opts); err != nil {
+			return
+		}
 		if err = del(); err != nil {
 			return
 		}
-		return add(opts)
+		if err = add(opts); err != nil {
+			return
+		}
+		m.client.RemoveBlackholePair(opts.Hash)
+		return
 	}
 	if err = add(opts); err != nil {
 		return

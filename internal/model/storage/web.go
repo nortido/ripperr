@@ -17,15 +17,16 @@ type CheckLogEntry struct {
 }
 
 type CheckLogFilter struct {
-	Limit        int
-	Offset       int
-	Status       string
-	IgnoredOnly  bool
-	SortBy       string
-	Name         string
-	BrokenStreak int
-	TrackerID    int
-	Category     string
+	Limit          int
+	Offset         int
+	Status         string
+	IgnoredOnly    bool
+	ExcludeIgnored bool
+	SortBy         string
+	Name           string
+	BrokenStreak   int
+	TrackerID      int
+	Category       string
 }
 
 type CheckLogSummary struct {

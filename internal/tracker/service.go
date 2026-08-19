@@ -71,7 +71,11 @@ func (s *service) GetID(link string) (id int) {
 }
 
 func (s *service) GetHourLimit(ttid int) (limit int) {
-	return s.handlerRegistry[ttid].GetHourLimit()
+	tr, ok := s.handlerRegistry[ttid]
+	if !ok {
+		return 0
+	}
+	return tr.GetHourLimit()
 }
 
 func (s *service) CachedList() (res map[int]client.ITracker) {
@@ -222,14 +226,21 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 		s.destroyFlareSession(id)
 	}
 
+	return s.refresh(ctx, id, forceLogin, prev)
+}
+
+func (s *service) refresh(ctx context.Context, id int, forceLogin bool, prev *CachedTracker) (ct *CachedTracker, err error) {
 	if err = s.cache(ctx, id, forceLogin); err != nil {
-		return s.staleOnError(id, prev, s.handlerRegistry[id].GetName(), err)
+		name := fmt.Sprintf("%d", id)
+		if tr, ok := s.handlerRegistry[id]; ok {
+			name = tr.GetName()
+		}
+		return s.staleOnError(id, prev, name, err)
 	}
 	s.resetStaleUseCount(id)
 	s.mx.RLock()
 	ct = s.clientIndex[id]
 	s.mx.RUnlock()
-
 	return
 }
 
@@ -306,14 +317,7 @@ func (s *service) relogin(ctx context.Context, ttid int) (ct *CachedTracker, err
 	prev = s.clientIndex[ttid]
 	s.mx.RUnlock()
 
-	if err = s.cache(ctx, ttid, true); err != nil {
-		return s.staleOnError(ttid, prev, s.handlerRegistry[ttid].GetName(), err)
-	}
-	s.resetStaleUseCount(ttid)
-	s.mx.RLock()
-	ct = s.clientIndex[ttid]
-	s.mx.RUnlock()
-	return
+	return s.refresh(ctx, ttid, true, prev)
 }
 
 func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err error) {
@@ -372,7 +376,6 @@ func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLo
 	}
 	hadCookies = attrs.Exists && len(attrs.Cookies) > 0
 	if err = tc.InitClient(ctx, attrs, forceLogin); err != nil {
-		tc = nil
 		return
 	}
 	if attrs.Exists {

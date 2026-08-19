@@ -92,7 +92,7 @@
    available space, not a fixed number); this is just the width plus a
    fallback cap for before that runs */
 html:not(.mobile-layout) .hist-filter-panel {
-  width: 320px;
+  width: 240px;
   max-height: 600px;
 }
 
@@ -717,7 +717,7 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
  * Mobile releases-card-header toolbar: name-search open/close animation.
  *
  * Geometry model (all lengths relative to .card-header-toolbar, the single
- * positioning root — .card-toolbar-post-search is left `position: static`
+ * positioning root: .card-toolbar-post-search is left `position: static`
  * on purpose so it never becomes an alternate containing block):
  *
  *   T = .card-header-toolbar content width
@@ -727,7 +727,7 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
  *
  * .card-header-toolbar-shift (title/refresh/sort/force-all) and
  * .mobile-name-search-slot (the search-input field) are both pinned to the
- * exact same box — left: 0; right: content-right — at all times, in every
+ * exact same box (left: 0; right: content-right) at all times, in every
  * state (idle, animating, expanded). Only `transform: translateX()` and
  * `opacity` move them; nothing about their box (position/left/right/width)
  * ever changes, so the two states are true time-reverses of each other and
@@ -738,7 +738,7 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
  * .mobile-name-search-toggle (the search button and close button, stacked
  * in the same spot) and .hist-filter-select (filter button) are pinned with
  * a constant `right` offset in EVERY state. The search button and the close
- * button never move at all — they occupy the same box and cross-fade via
+ * button never move at all: they occupy the same box and cross-fade via
  * opacity/visibility only (no display swap, no layout shift). The filter
  * button is the only fixed-position element that itself animates away
  * (transform + opacity, taken out of flow in both states, no max-width/flex).
@@ -890,7 +890,7 @@ html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filte
   transition: none;
 }
 
-/* search button / close button: constant position in every state — the
+/* search button / close button: constant position in every state, the
    search button must never move a single pixel. Both buttons are stacked
    in the same box; only the icon cross-fades via opacity/visibility. */
 html.mobile-layout .btn.btn-mobile-name-search {
@@ -977,7 +977,7 @@ html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-
 
 /* Lock out all interaction while mid-transition. These selectors must win
    over the steady-state `pointer-events: auto` rules above despite equal
-   specificity — an explicitly declared value always beats one inherited
+   specificity: an explicitly declared value always beats one inherited
    from an .is-search-animating ancestor, so each target is listed
    explicitly here (not relied on via inheritance), and this block is kept
    last in the cascade so it wins the tie. */

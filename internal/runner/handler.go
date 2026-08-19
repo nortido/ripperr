@@ -29,7 +29,7 @@ const (
 )
 
 var (
-	errSkipped = fmt.Errorf("skipped")
+	errSkipped = errors.New("skipped")
 )
 
 type trackerService interface {
@@ -245,9 +245,17 @@ func (h *handler) initTrackerChannels() {
 	h.idx = make(map[int]chan *task, len(list))
 	h.pri = make(map[int]chan *task, len(list))
 	for ttid := range list {
-		h.idx[ttid] = make(chan *task, 4096)
+		h.idx[ttid] = make(chan *task, normalQueueSize)
 		h.pri[ttid] = make(chan *task, forceQueueSize)
 	}
+}
+
+type pushPass struct {
+	dry    bool
+	forced map[string]struct{}
+	rep    *dryReport
+	items  map[string]*runnerModel.HistoryItem
+	ignore map[string]struct{}
 }
 
 func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}) (err error) {
@@ -262,56 +270,84 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 		defer rep.release()
 	}
 
-	var (
-		rawEntries []*model.Entry
-		entries    []*model.Entry
-		t          int
-		ignoreSet  map[string]struct{}
-		items      map[string]*runnerModel.HistoryItem
-		partial    bool
-	)
-	if rawEntries, err = h.manager.GetEntries(ctx, model.FilterOptions{}); err != nil {
-		if errors.Is(err, model.ErrPartialList) {
-			logger.Warn(fmt.Sprintf("partial torrent list: %v", err))
-			partial = true
-		} else {
-			err = fmt.Errorf("get entries error: %w", err)
-			return
-		}
+	rawEntries, entries, partial, err := h.collectEntries(ctx)
+	if err != nil {
+		return err
 	}
-	entries = helper.DedupeEntriesByName(rawEntries)
-	if items, err = h.storage.AllItems(ctx); err != nil {
-		return
-	}
+
 	if !dry && forced == nil {
-		winners := make(map[string]string)
-		for _, e := range entries {
-			if e.URL == "" {
-				continue
-			}
-			winners[strings.TrimSpace(e.Name)] = storagePkg.URLHash(e.URL)
-		}
-		if err = h.storage.PurgeDuplicateNames(ctx, winners); err != nil {
-			logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
-		}
+		h.purgeDuplicateNames(ctx, entries)
 	}
+
+	items, err := h.storage.AllItems(ctx)
+	if err != nil {
+		return err
+	}
+
+	var ignoreSet map[string]struct{}
 	if forced == nil {
 		// a forced pass is an explicit per-entry user action (the "check now" button),
 		// so it must reach entries that landed in the ignore list, including auto-ignored ones
 		if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
-			return
+			return err
 		}
 	}
+
+	if err = h.enqueueEntries(ctx, entries, &pushPass{
+		dry: dry, forced: forced, rep: rep, items: items, ignore: ignoreSet,
+	}); err != nil {
+		return err
+	}
+
+	if !dry && forced == nil {
+		if partial {
+			logger.Warn("history purge skipped: partial torrent list")
+		} else {
+			h.purgeStaleHistory(ctx, rawEntries)
+		}
+	}
+	return nil
+}
+
+func (h *handler) collectEntries(ctx context.Context) (rawEntries, entries []*model.Entry, partial bool, err error) {
+	rawEntries, err = h.manager.GetEntries(ctx, model.FilterOptions{})
+	if err != nil {
+		if !errors.Is(err, model.ErrPartialList) {
+			err = fmt.Errorf("get entries error: %w", err)
+			return
+		}
+		logger.Warn(fmt.Sprintf("partial torrent list: %v", err))
+		partial = true
+		err = nil
+	}
+	entries = helper.DedupeEntriesByName(rawEntries)
+	return
+}
+
+func (h *handler) purgeDuplicateNames(ctx context.Context, entries []*model.Entry) {
+	winners := make(map[string]string)
+	for _, e := range entries {
+		if e.URL == "" {
+			continue
+		}
+		winners[strings.TrimSpace(e.Name)] = storagePkg.URLHash(e.URL)
+	}
+	if err := h.storage.PurgeDuplicateNames(ctx, winners); err != nil {
+		logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
+	}
+}
+
+func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p *pushPass) (err error) {
 	queue := h.idx
-	if forced != nil {
+	if p.forced != nil {
 		queue = h.pri
 	}
 	for i := range entries {
 		if entries[i].URL == "" {
 			continue
 		}
-		if forced != nil {
-			if _, ok := forced[storagePkg.URLHash(entries[i].URL)]; !ok {
+		if p.forced != nil {
+			if _, ok := p.forced[storagePkg.URLHash(entries[i].URL)]; !ok {
 				continue
 			}
 		}
@@ -321,39 +357,32 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 		if len(h.config.WatchTags) > 0 && !entryMatchesWatchTags(entries[i].Tag, h.config.WatchTags) {
 			continue
 		}
-		if err = h.buildEntry(ctx, entries[i], dry, items); err == errSkipped {
-			err = nil
+		if err = h.buildEntry(ctx, entries[i], p.dry, p.items); errors.Is(err, errSkipped) {
 			continue
 		} else if err != nil {
-			return
+			return err
 		}
-		if t = h.trackerService.GetID(entries[i].URL); t == 0 {
+		t := h.trackerService.GetID(entries[i].URL)
+		if t == 0 {
 			continue
 		}
-		if _, ignored := ignoreSet[entries[i].URLHash]; ignored {
+		if _, ignored := p.ignore[entries[i].URLHash]; ignored {
 			continue
 		}
-		if dry && rep.queued.Load() >= dryRunLimit {
+		if p.dry && p.rep.queued.Load() >= dryRunLimit {
 			break
 		}
 		h.state.Begin(h.gen)
-		rep.add()
+		p.rep.add()
 		select {
 		case <-ctx.Done():
 			h.state.End(h.gen)
-			rep.done()
-			return
-		case queue[t] <- &task{entry: entries[i], report: rep}:
+			p.rep.done()
+			return nil
+		case queue[t] <- &task{entry: entries[i], report: p.rep}:
 		}
 	}
-	if !dry && forced == nil {
-		if partial {
-			logger.Warn("history purge skipped: partial torrent list")
-		} else {
-			h.purgeStaleHistory(ctx, rawEntries)
-		}
-	}
-	return
+	return nil
 }
 
 func entryMatchesWatchTags(entryTags string, watchTags []string) bool {
@@ -441,10 +470,7 @@ func (h *handler) getHistory(ctx context.Context, link string, dry bool, items m
 }
 
 func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dryReport) (err error) {
-	var (
-		updated bool
-		tc      client.IClient
-	)
+	var tc client.IClient
 	// lock is per tracker: entries of different trackers are processed in parallel,
 	// entries of the same tracker strictly one after another.
 	mu := h.mx.Mutex(ttid)
@@ -459,10 +485,8 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 		return
 	}
-	var dateMissing bool
-	var pageDate *time.Time
-	var sample string
-	if updated, dateMissing, pageDate, sample, err = h.checkPage(ctx, ttid, tc, e, rep); err != nil {
+	pc, err := h.checkPage(ctx, ttid, tc, e, rep)
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("processing interrupted")
 			return nil
@@ -470,16 +494,16 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 		return
 	}
-	if dateMissing {
+	if pc.dateMissing {
 		if rep == nil {
 			if _, clearErr := h.storage.SetForceCheck(ctx, e.URLHash, false); clearErr != nil {
 				logger.Error(fmt.Sprintf("force_check clear failed: %v", clearErr))
 			}
 		}
-		h.logCheck(ctx, e, ttid, "unknown", sample, rep)
+		h.logCheck(ctx, e, ttid, "unknown", pc.sample, rep)
 		return
 	}
-	if !updated {
+	if !pc.changed {
 		if rep == nil {
 			logger.Info(fmt.Sprint("skipped: ", e.Name))
 		}
@@ -501,7 +525,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		return
 	}
 	if rep == nil {
-		if err = h.saveHistory(ctx, ttid, e, pageDate); err != nil {
+		if err = h.saveHistory(ctx, ttid, e, pc.date); err != nil {
 			h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 			return
 		}
@@ -555,7 +579,14 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 	}
 }
 
-func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (res bool, dateMissing bool, pageDate *time.Time, sample string, err error) {
+type pageCheck struct {
+	changed     bool
+	dateMissing bool
+	date        *time.Time
+	sample      string
+}
+
+func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (pc pageCheck, err error) {
 	var (
 		cur        *time.Time
 		b          *bytes.Buffer
@@ -571,17 +602,15 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 		e.TopicID = downloadID
 		curPtr := time.Now()
 		cur = &curPtr
-	} else if cur, err = h.getDate(ctx, b, tc, e.Name); err != nil {
-		return
-	} else if cur == nil {
-		dateMissing = true
-		sample = pageSample(b, encoded)
+	} else if cur = tc.ParseDate(b, encoded); cur == nil {
+		logger.Warn(fmt.Sprintf("current time not found for %s", e.Name))
+		pc.dateMissing = true
+		pc.sample = pageSample(b, encoded)
 		return
 	}
-	// TODO: add check count of updates in DB
-	res = e.Timestamp.Before(*cur)
-	pageDate = cur
-	if res {
+	pc.changed = e.Timestamp.Before(*cur)
+	pc.date = cur
+	if pc.changed {
 		e.Magnet = tc.ParseMagnet(b, encoded)
 		return
 	}
@@ -598,13 +627,6 @@ func (h *handler) getPage(ctx context.Context, ttid int, link string) (b *bytes.
 		return
 	} else if b == nil || b.Len() < 50 {
 		err = fmt.Errorf("no page data")
-	}
-	return
-}
-
-func (h *handler) getDate(ctx context.Context, b *bytes.Buffer, tc client.IClient, name string) (cur *time.Time, err error) {
-	if cur = tc.ParseDate(b, tc.GetProxyType() != proxy.TypeNone); cur == nil {
-		logger.Warn(fmt.Sprintf("current time not found for %s", name))
 	}
 	return
 }

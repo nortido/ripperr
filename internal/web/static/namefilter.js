@@ -1,7 +1,8 @@
 import { fetchJSON, showToast } from './api.js';
-import { buildHistoryQuery, dashboardFetchGen, loadDashboard, nextDashboardFetchGen, syncPlanForceLocal, updateDashboardTable } from './dashboard.js';
+import { buildHistoryQuery, dashboardFetchGen, loadDashboard, nextDashboardFetchGen } from './dashboard.js';
 import { closeOpenHistFilterSelect } from './histfilter.js';
 import { hydrateIcons } from './icons.js';
+import { syncPlanForceLocal, updateDashboardTable } from './releases.js';
 import { syncDashboardFilterHash } from './router.js';
 import { closeOpenCustomSelect } from './select.js';
 import { historyState, isMobileStackedLayout, overlayBridge } from './state.js';

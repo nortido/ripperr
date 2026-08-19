@@ -74,3 +74,29 @@ func TestStaleOnErrorResetsAfterSuccessfulCache(t *testing.T) {
 		t.Fatal("expected previous cached client after reset")
 	}
 }
+
+func TestGetCachedRefreshFailureUsesStaleThenErrors(t *testing.T) {
+	s := newBuildCacheService(map[int]client.ITracker{KinozalID: failingKinozal()})
+	hc := &http.Client{Timeout: 5 * time.Second}
+	ic := client.New(hc, hc, failingKinozal(), stubFlareProxy{}, helper.NewCircuitBreaker(&helper.CircuitBreakerConfig{}))
+	prev := &CachedTracker{IClient: ic, Created: time.Now().Add(-2 * TTL)}
+	s.clientIndex[KinozalID] = prev
+
+	for i := 1; i <= maxStaleUses; i++ {
+		ct, err := s.getCached(context.Background(), KinozalID)
+		if err != nil {
+			t.Fatalf("attempt %d: expected stale client, got err %v", i, err)
+		}
+		if ct != prev {
+			t.Fatalf("attempt %d: expected previous cached client", i)
+		}
+	}
+
+	ct, err := s.getCached(context.Background(), KinozalID)
+	if err == nil {
+		t.Fatal("expected error after stale limit exceeded")
+	}
+	if ct != nil {
+		t.Fatal("expected no client after stale limit exceeded")
+	}
+}

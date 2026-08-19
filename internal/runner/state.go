@@ -23,6 +23,9 @@ func NewState() *State {
 // the HTTP handler.
 const forceQueueSize = 256
 
+// normalQueueSize bounds how many entries can wait in a tracker's normal queue.
+const normalQueueSize = 4096
+
 func (s *State) Running() bool {
 	return s != nil && s.active.Load() > 0
 }

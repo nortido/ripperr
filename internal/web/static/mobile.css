@@ -124,7 +124,7 @@ html.mobile-layout .page-size-select {
   flex: 0 0 auto;
 }
 
-/* responsive — mobile drawer */
+/* responsive: mobile drawer */
 
 @media (max-width: 900px) {
   .mobile-header {

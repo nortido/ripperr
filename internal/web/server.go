@@ -40,6 +40,7 @@ type Server struct {
 	runnerState *runner.State
 	alerts      *breakeralerts.Registry
 	srv         *http.Server
+	authCache   authCache
 }
 
 func New(db store, reload func(), effective func() config.App, listen string, runnerState *runner.State, alerts *breakeralerts.Registry) *Server {

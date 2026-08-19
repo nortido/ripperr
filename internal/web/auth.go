@@ -40,18 +40,45 @@ type authDoc struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type authCache struct {
+	mu     sync.RWMutex
+	loaded bool
+	doc    *authDoc
+}
+
+func (c *authCache) get() (*authDoc, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.doc, c.loaded
+}
+
+func (c *authCache) set(doc *authDoc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.doc = doc
+	c.loaded = true
+}
+
 func (s *Server) loadAuth(ctx context.Context) (*authDoc, error) {
+	// loaded is true even when doc is nil: "auth not configured" is itself
+	// a cached state, not a cache miss.
+	if doc, loaded := s.authCache.get(); loaded {
+		return doc, nil
+	}
+
 	raw, ok, err := s.db.GetSetting(ctx, sqlite.SettingAuth)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
+		s.authCache.set(nil)
 		return nil, nil
 	}
 	var doc authDoc
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, err
 	}
+	s.authCache.set(&doc)
 	return &doc, nil
 }
 
@@ -60,7 +87,11 @@ func (s *Server) saveAuth(ctx context.Context, doc *authDoc) error {
 	if err != nil {
 		return err
 	}
-	return s.db.SaveSetting(ctx, sqlite.SettingAuth, raw)
+	if err := s.db.SaveSetting(ctx, sqlite.SettingAuth, raw); err != nil {
+		return err
+	}
+	s.authCache.set(doc)
+	return nil
 }
 
 func hashPassword(password string, salt []byte) []byte {

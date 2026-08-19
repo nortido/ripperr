@@ -137,14 +137,12 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 	c.header = c.Headers()
 	c.setDefaultHeaders()
 
-	switch tracker.PublicityPublic {
-	case c.GetPublicity(), payload.Publicity:
+	if c.GetPublicity() == tracker.PublicityPublic || payload.Publicity == tracker.PublicityPublic {
 		return
 	}
 	if req, err = c.buildLoginRequest(ctx, creds); err != nil {
 		return
 	}
-	// TODO: make public/private param
 	if len(c.cookies) == 0 {
 		if !forceLogin {
 			c.resetFlareSession()
@@ -182,7 +180,7 @@ func (c *client) validateLoginAuth() error {
 	}
 	msg := "login failed: no auth cookies (uid/pass)"
 	if hint := v.LoginAuthHint(); hint != "" {
-		msg += " — " + hint
+		msg += ": " + hint
 	}
 	return fmt.Errorf("%s: %s", c.GetName(), msg)
 }
@@ -375,7 +373,7 @@ func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *htt
 	onlyCookies := c.useFlareSessionLogin()
 	res, err = c.doHttp(ctx, req, c.flareOptions(c.cookies, onlyCookies), false)
 
-	if err != nil || res.StatusCode >= http.StatusBadRequest {
+	if err != nil {
 		err = fmt.Errorf("%s login error: %w", c.GetName(), err)
 		return
 	}

@@ -197,6 +197,11 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 		where = append(where, "h.category_name = ?")
 		args = append(args, f.Category)
 	}
+	if f.ExcludeIgnored && !f.IgnoredOnly {
+		// IgnoredOnly already inner-joins "ignore" to require a match, so this
+		// exclusion would contradict it; skip it and let IgnoredOnly win
+		where = append(where, `NOT EXISTS (SELECT 1 FROM "ignore" ig WHERE ig.url_hash = c.url_hash)`)
+	}
 	if len(where) > 0 {
 		clause := " WHERE " + strings.Join(where, " AND ")
 		countQ += clause
