@@ -72,8 +72,8 @@ type handler struct {
 	gen            uint32
 }
 
-// task carries an entry to a tracker worker. A non-nil report means the entry
-// belongs to a dry run and must not produce any writes.
+// task несёт запись воркеру трекера. Ненулевой report значит, что запись
+// относится к холостому прогону и не должна ничего записывать.
 type task struct {
 	entry  *model.Entry
 	report *dryReport
@@ -285,8 +285,8 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 
 	var ignoreSet map[string]struct{}
 	if forced == nil {
-		// a forced pass is an explicit per-entry user action (the "check now" button),
-		// so it must reach entries that landed in the ignore list, including auto-ignored ones
+		// форсированный проход это явное действие пользователя над записью (кнопка "проверить сейчас"),
+		// поэтому он должен доставать и записи из списка игнора, включая автоигнорированные
 		if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
 			return err
 		}
@@ -470,8 +470,8 @@ func (h *handler) getHistory(ctx context.Context, link string, dry bool, items m
 
 func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dryReport) (err error) {
 	var tc client.IClient
-	// lock is per tracker: entries of different trackers are processed in parallel,
-	// entries of the same tracker strictly one after another.
+	// блокировка на каждый трекер: записи разных трекеров обрабатываются параллельно,
+	// записи одного трекера строго друг за другом.
 	mu := h.mx.Mutex(ttid)
 	mu.Lock()
 	defer mu.Unlock()

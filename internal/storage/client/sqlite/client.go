@@ -135,8 +135,8 @@ func (c *Client) UpdateItem(ctx context.Context, item *storage.Item) (err error)
 }
 
 func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) (int, error) {
-	// the upsert arbiter is url_hash, so a same-name row under a different hash
-	// (release moved to a new topic) would trip check_log_item_name_uidx: drop it first
+	// арбитр upsert это url_hash, поэтому строка с тем же именем под другим хешем
+	// (релиз переехал в новую тему) споткнётся о check_log_item_name_uidx: сносим её заранее
 	if strings.TrimSpace(entry.ItemName) != "" {
 		if _, err := c.db.ExecContext(ctx,
 			`DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`,
@@ -194,8 +194,8 @@ func checkLogFilterClause(f storage.CheckLogFilter) (join, clause string, args [
 		args = append(args, f.Category)
 	}
 	if f.ExcludeIgnored && !f.IgnoredOnly {
-		// IgnoredOnly already inner-joins "ignore" to require a match, so this
-		// exclusion would contradict it; skip it and let IgnoredOnly win
+		// IgnoredOnly уже делает inner join с "ignore" и требует совпадения, поэтому это
+		// исключение ему противоречит; пропускаем его и оставляем победу за IgnoredOnly
 		where = append(where, `NOT EXISTS (SELECT 1 FROM "ignore" ig WHERE ig.url_hash = c.url_hash)`)
 	}
 	if len(where) > 0 {

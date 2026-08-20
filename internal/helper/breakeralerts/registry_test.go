@@ -46,9 +46,9 @@ func TestRegistryHookFiresOnlyOnTransition(t *testing.T) {
 	})
 
 	r.Open("kinozal", "timeout")
-	r.Open("kinozal", "still down") // update while already open: no transition
+	r.Open("kinozal", "still down") // обновление, когда уже открыт: перехода нет
 	r.Close("kinozal")
-	r.Close("kinozal") // already gone: no transition
+	r.Close("kinozal") // уже убран: перехода нет
 
 	want := []string{"true:kinozal:timeout", "false:kinozal:"}
 	if len(events) != len(want) {

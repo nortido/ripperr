@@ -1,7 +1,7 @@
 package config
 
-// DefaultApp returns the config with the per-tracker defaults pre-filled;
-// envconfig.Process then overwrites whatever the environment defines.
+// DefaultApp возвращает конфиг с предзаполненными значениями по умолчанию на трекер;
+// дальше envconfig.Process перезаписывает всё, что задано окружением.
 func DefaultApp() App {
 	var app App
 	app.Tracker = Tracker{

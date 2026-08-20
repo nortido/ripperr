@@ -24,13 +24,13 @@ async function ensureHistFilterTrackers() {
 function histFilterTrackerValueLabel() {
   if (!historyState.tracker) return t('dash.filterAllTrackers');
   const found = (histFilterTrackersCache || []).find(function (tr) { return tr.id === historyState.tracker; });
-  // cache not loaded yet (or the tracker was since removed): fall back rather than guess a name
+  // кеш ещё не загружен (или трекер уже удалили): показываем запасной вариант, а не гадаем имя
   return found ? found.label : t('common.loading');
 }
 
 function histFilterCategoryValueLabel() {
-  // category values are the qbit category names themselves, so this reads fine
-  // even before qbitCategoriesCache has loaded
+  // значения категорий это сами имена категорий qbit, поэтому читается нормально
+  // даже до загрузки qbitCategoriesCache
   return historyState.category || t('dash.filterAllCategories');
 }
 
@@ -62,8 +62,8 @@ function histFilterRowHtml(group, label, value) {
 }
 
 function histFilterMainHtml() {
-  // always rendered so the head's height never jumps when filters get set/cleared;
-  // when nothing to reset it's just hidden (same trick as .mobile-name-filter-clear)
+  // рисуется всегда, чтобы высота шапки не прыгала при установке и сбросе фильтров;
+  // когда сбрасывать нечего, просто скрыт (тот же приём, что и у .mobile-name-filter-clear)
   const resetActive = histFilterTriggerMeta().showDot;
   const resetClass = 'btn btn-sm btn-ghost btn-icon hist-filter-reset' + (resetActive ? '' : ' is-hidden');
   const resetLabel = t('dash.filterReset');
@@ -93,8 +93,8 @@ function histFilterGroupHtml(group) {
   return html`<div class="hist-filter-panel-head"><button type="button" class="btn btn-sm btn-ghost btn-icon hist-filter-back" title="${t('dash.filterBack')}" aria-label="${t('dash.filterBack')}">${icon('chevronLeft')}</button><span class="hist-filter-panel-title">${label}</span></div><div class="hist-filter-panel-body">${options}</div>`;
 }
 
-// how tall the panel is allowed to get is recomputed every time it's shown
-// or its content changes, from real available space, not a fixed number
+// допустимая высота панели пересчитывается каждый раз при показе
+// или изменении содержимого, из реально доступного места, а не из фиксированного числа
 const HIST_FILTER_PANEL_MAX_CEILING = 600;
 const HIST_FILTER_PANEL_EDGE_MARGIN = 8;
 
@@ -104,16 +104,16 @@ export function positionHistFilterPanel(wrap) {
   if (!trigger || !panel) return;
   wrap.classList.remove('open-up');
   if (isMobileStackedLayout()) {
-    // bottom sheet: CSS alone drives position and the 80vh cap; clear any
-    // inline height left over from a desktop session, it would win over CSS
+    // нижняя шторка: позицию и предел 80vh задаёт только CSS; убираем любую
+    // инлайновую высоту, оставшуюся от десктопа, она бы победила CSS
     panel.style.maxHeight = '';
     return;
   }
   const rect = trigger.getBoundingClientRect();
   const spaceBelow = window.innerHeight - rect.bottom;
   const spaceAbove = rect.top;
-  // set the inline height cap before reading it back below, so the
-  // open-up/open-down decision and the actual rendered height agree
+  // выставляем инлайновый предел высоты до чтения ниже, чтобы решение
+  // открывать вверх или вниз совпадало с фактической отрисованной высотой
   const budget = Math.max(spaceBelow, spaceAbove) - HIST_FILTER_PANEL_EDGE_MARGIN;
   panel.style.maxHeight = Math.min(Math.max(budget, 160), HIST_FILTER_PANEL_MAX_CEILING) + 'px';
   const maxH = parseFloat(getComputedStyle(panel).maxHeight) || 320;
@@ -121,8 +121,8 @@ export function positionHistFilterPanel(wrap) {
   if (spaceBelow < panelH + 8 && spaceAbove > spaceBelow) wrap.classList.add('open-up');
 }
 
-// hides the bottom fade once scrolled (or trivially, when there's nothing to
-// scroll) since scrollHeight - scrollTop - clientHeight is ~0 in both cases
+// прячет нижнюю растушёвку после прокрутки (или тривиально, когда прокручивать
+// нечего), так как scrollHeight - scrollTop - clientHeight в обоих случаях около нуля
 function updateHistFilterScrollFade(wrap) {
   const body = wrap.querySelector('.hist-filter-panel-body');
   if (!body) return;
@@ -184,8 +184,8 @@ export function getActiveHistFilter() {
 
 export const HIST_FILTER_CLOSE_MS = 130;
 
-// The closing animation needs the panel to stay rendered, so `hidden` is set
-// only after it finishes; `is-closing` keeps it visible in the meantime.
+// Анимации закрытия нужна отрисованная панель, поэтому `hidden` выставляется
+// только после её окончания; всё это время `is-closing` держит панель видимой.
 export function finishHistFilterClose(wrap) {
   if (!wrap) return;
   if (wrap.histFilterCloseTimer) {
@@ -199,8 +199,8 @@ export function finishHistFilterClose(wrap) {
 
 export function startHistFilterClose(wrap) {
   if (!wrap) return;
-  // whatever path closes the popup, a select layer left open inside it would
-  // otherwise stay open (invisibly) for the next time the popup opens
+  // каким бы путём ни закрывался попап, оставшийся открытым внутри слой селекта
+  // иначе остался бы открытым (невидимо) до следующего открытия попапа
   const openSelect = overlayBridge.getOpenCustomSelect();
   if (openSelect && wrap.contains(openSelect)) overlayBridge.closeCustomSelect();
   const trigger = wrap.querySelector('.hist-filter-trigger');
@@ -236,8 +236,8 @@ function histFilterTriggerMeta() {
   };
 }
 
-// keeps the panel open (tracker/category picks) in sync without a full rebuild,
-// which would drop the panel's open/hidden state
+// держит открытую панель (выбор трекера и категории) в синхроне без полной перерисовки,
+// которая сбросила бы состояние открыт/скрыт
 function refreshHistFilterTrigger(wrap) {
   const trigger = wrap.querySelector('.hist-filter-trigger');
   if (!trigger) return;
@@ -276,16 +276,16 @@ export function bindHistFilterSelect(root) {
   const backdrop = wrap.querySelector('.hist-filter-backdrop');
   if (!trigger || !panel) return;
 
-  // scroll doesn't bubble, but it does reach capture-phase ancestors; bound
-  // once here since renderHistFilterMain/Group replace the body each time
+  // scroll не всплывает, но доходит до предков на фазе перехвата; вешаем
+  // один раз здесь, так как renderHistFilterMain/Group каждый раз заменяют тело
   panel.addEventListener('scroll', function (e) {
     if (e.target.classList && e.target.classList.contains('hist-filter-panel-body')) {
       updateHistFilterScrollFade(wrap);
     }
   }, true);
 
-  // mobile-only scrim behind the bottom sheet (CSS keeps it inert/invisible
-  // on desktop); tapping it closes the sheet same as tapping outside it
+  // затемнение за нижней шторкой только на мобильных (на десктопе CSS держит его
+  // инертным и невидимым); тап по нему закрывает шторку так же, как тап мимо неё
   if (backdrop) {
     backdrop.addEventListener('click', function () {
       closePanel();
@@ -309,8 +309,8 @@ export function bindHistFilterSelect(root) {
     trigger.setAttribute('aria-expanded', 'true');
     panel.hidden = false;
     openHistFilterSelect = wrap;
-    // always starts from the main view, even if a previous session left a
-    // group list open (see the click-outside/Escape-close handling below)
+    // всегда начинаем с главного вида, даже если прошлый сеанс оставил открытым
+    // список групп (см. обработку клика мимо и закрытия по Escape ниже)
     renderHistFilterMain(wrap);
     ensureHistFilterExtras(wrap);
   }

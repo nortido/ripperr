@@ -22,9 +22,9 @@ import (
 	"trackerr/internal/model"
 )
 
-// buildNamedTestTorrent is buildTestTorrent (client_test.go) parameterized by
-// name, since two calls with the same name produce the same infohash and
-// several sweep tests need distinct pairs on disk at once.
+// buildNamedTestTorrent это buildTestTorrent (client_test.go), параметризованный
+// именем, потому что два вызова с одинаковым именем дают один и тот же infohash,
+// а нескольким тестам подметания нужны разные пары на диске одновременно.
 func buildNamedTestTorrent(t *testing.T, name string) ([]byte, string) {
 	t.Helper()
 	info := metainfo.Info{
@@ -155,18 +155,18 @@ func TestWriteBlackholePair_NoDataNoMagnet_ErrorsAndCreatesNothing(t *testing.T)
 	}
 }
 
-// sweepStubServer is a minimal fake qbit for the sweeper: torrents/info
-// reports whatever's in `present`, torrents/add flips a hash into `present`
-// (or fails outright when addFail is set).
+// sweepStubServer это минимальный поддельный qbit для подметальщика: torrents/info
+// сообщает то, что лежит в `present`, torrents/add переводит хеш в `present`
+// (или сразу падает, когда выставлен addFail).
 type sweepStubServer struct {
 	mu              sync.Mutex
 	present         map[string]bool
 	addFail         bool
 	metadataTorrent []byte
-	// vanishHash: the next torrents/info query that finds this hash present
-	// removes it from `present` right after answering, so the following query
-	// reports it absent. Models qbit's async delete job landing between the
-	// sweeper's add/already-added check and its settle-delay recheck.
+	// vanishHash: следующий запрос torrents/info, нашедший этот хеш присутствующим,
+	// убирает его из `present` сразу после ответа, поэтому очередной запрос
+	// сообщает об отсутствии. Моделирует асинхронную задачу удаления в qbit,
+	// попадающую между проверкой добавления и перепроверкой после задержки.
 	vanishHash string
 	server     *httptest.Server
 }
@@ -241,9 +241,10 @@ func newSweepStubServer(t *testing.T) *sweepStubServer {
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
-	// backs addMagnetWithComment: real qbit answers fetchMetadata/saveMetadata
-	// before the actual torrents/add, since opts.Comment is always set in
-	// production (the topic URL), so that's the path a magnet re-add really takes.
+	// обслуживает addMagnetWithComment: настоящий qbit отвечает на
+	// fetchMetadata/saveMetadata до самого torrents/add, так как opts.Comment
+	// в бою выставлен всегда (URL темы), значит именно этим путём и идёт
+	// повторное добавление магнита.
 	mux.HandleFunc("/api/v2/torrents/fetchMetadata", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"info":{}}`))
 	})
@@ -472,8 +473,8 @@ func TestSweepBlackholeOnce_MagnetPair_ReAddsAndRemovesJSON(t *testing.T) {
 
 	hash := "cccccccccccccccccccccccccccccccccccccccc"
 	magnet := "magnet:?xt=urn:btih:" + hash
-	// Comment left empty on purpose: a non-empty Comment routes AddFromMagnet
-	// through addMagnetWithComment, which fetches metadata this stub can't serve.
+	// Comment намеренно пуст: непустой Comment уводит AddFromMagnet в
+	// addMagnetWithComment, который тянет метаданные, а заглушка их не отдаёт.
 	writeMagnetPair(t, dir, magnet, model.ManagerAddFileOptions{Hash: hash, Name: "magnet-item"})
 
 	c.sweepBlackholeOnce(context.Background())
@@ -532,7 +533,7 @@ func TestScanBlackholeDir_OldFormatJSONWithTorrent_StillReadable(t *testing.T) {
 	if err := os.WriteFile(torrentPath, data, 0o644); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
-	// old format: json.Marshal(opts) directly, no wrapping struct and no Magnet key
+	// старый формат: json.Marshal(opts) напрямую, без обёртки и без ключа Magnet
 	raw, err := json.Marshal(opts)
 	if err != nil {
 		t.Fatalf("marshal opts: %v", err)
@@ -643,8 +644,8 @@ func TestSweepBlackholeOnce_MagnetPairWithComment_ReAddsViaMetadataFetch(t *test
 	}
 
 	magnet := "magnet:?xt=urn:btih:" + hash
-	// Comment set on purpose: this is the real production shape (topic URL),
-	// which routes AddFromMagnet through addMagnetWithComment/fetchAndSaveMetadata.
+	// Comment выставлен намеренно: это боевая форма (URL темы), которая уводит
+	// AddFromMagnet в addMagnetWithComment/fetchAndSaveMetadata.
 	opts := model.ManagerAddFileOptions{Hash: hash, Name: "with-comment", Comment: "http://tracker.example/topic/1"}
 	writeMagnetPair(t, dir, magnet, opts)
 
@@ -660,7 +661,7 @@ func TestScanBlackholeDir_TruncatedTorrentWithMagnet_FallsBackToMagnet(t *testin
 	opts := model.ManagerAddFileOptions{Hash: hash, Name: "truncated"}
 
 	torrentPath, jsonPath := blackholePaths(dir, hash)
-	// non-empty but not valid bencode: what a write cut off mid-flight leaves behind
+	// непустой, но невалидный bencode: то, что остаётся от оборванной записи
 	if err := os.WriteFile(torrentPath, data[:5], 0o644); err != nil {
 		t.Fatalf("write truncated torrent: %v", err)
 	}
@@ -721,14 +722,14 @@ func TestScanBlackholeDir_TruncatedTorrentNoMagnet_Broken(t *testing.T) {
 
 func TestScanBlackholeDir_HashMismatch_Broken(t *testing.T) {
 	dir := t.TempDir()
-	// a .torrent is present and valid on purpose: without the meta.Hash check
-	// this would otherwise pass loadBlackholePair as a normal, valid pair
+	// .torrent намеренно на месте и валиден: без проверки meta.Hash он прошёл бы
+	// через loadBlackholePair как обычная валидная пара
 	data, hash := buildNamedTestTorrent(t, "ghost.txt")
 	torrentPath, jsonPath := blackholePaths(dir, hash)
 	if err := os.WriteFile(torrentPath, data, 0o644); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
-	// meta.Hash left empty: same shape a "null" or "{}" json body would produce
+	// meta.Hash оставлен пустым: та же форма, что даёт тело json "null" или "{}"
 	raw, err := json.Marshal(blackholeMeta{ManagerAddFileOptions: model.ManagerAddFileOptions{Name: "ghost"}})
 	if err != nil {
 		t.Fatalf("marshal meta: %v", err)
@@ -759,8 +760,8 @@ func TestSweepBlackholeOnce_DeleteEnabled_SuccessRemovesPair(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// production shape: preAddPresenceCheck takes the waitUntilAbsent branch
-	// instead of ensureNotPresent whenever DeleteEnabled is set
+	// боевая форма: preAddPresenceCheck идёт веткой waitUntilAbsent вместо
+	// ensureNotPresent всякий раз, когда выставлен DeleteEnabled
 	data, hash := buildNamedTestTorrent(t, "delete-enabled.txt")
 	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "delete-enabled"})
 
@@ -814,7 +815,7 @@ func TestSweepBlackholeOnce_BrokenPairPresentInClient_RemovesFiles(t *testing.T)
 		t.Fatalf("New: %v", err)
 	}
 
-	// orphan .torrent (no .json) is broken with reason "missing .json"
+	// осиротевший .torrent (без .json) сломан с причиной "missing .json"
 	data, hash := buildNamedTestTorrent(t, "broken-present.txt")
 	torrentPath, _ := blackholePaths(dir, hash)
 	if err = os.WriteFile(torrentPath, data, 0o644); err != nil {
@@ -837,8 +838,8 @@ func TestSweepBlackholeOnce_BrokenHashMismatchPresentInClient_KeepsFiles(t *test
 		t.Fatalf("New: %v", err)
 	}
 
-	// the bytes belong to this hash, but the json claims another one, so the
-	// filename's torrent being in the client says nothing about these bytes
+	// байты принадлежат этому хешу, но json заявляет другой, поэтому наличие в
+	// клиенте торрента из имени файла ничего не говорит про эти байты
 	data, hash := buildNamedTestTorrent(t, "mismatch-present.txt")
 	torrentPath, jsonPath := blackholePaths(dir, hash)
 	if err = os.WriteFile(torrentPath, data, 0o644); err != nil {

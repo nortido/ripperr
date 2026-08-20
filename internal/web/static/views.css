@@ -1,4 +1,4 @@
-/* views */
+/* виды */
 
 .hidden {
   display: none !important;
@@ -102,7 +102,7 @@
   gap: 20px;
 }
 
-/* stat cards */
+/* карточки со статистикой */
 
 .stat-grid {
   display: grid;

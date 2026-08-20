@@ -43,8 +43,8 @@ func TestCircuitBreaker_HalfOpenRecovery(t *testing.T) {
 	}
 	time.Sleep(5 * time.Millisecond)
 
-	// First call after the timeout elapses transitions Open -> HalfOpen and
-	// runs the trial call immediately.
+	// Первый вызов после истечения таймаута переводит Open в HalfOpen и
+	// сразу выполняет пробный вызов.
 	if err := cb.Call(func() error { return nil }); err != nil {
 		t.Fatalf("expected successful half-open transition call, got %v", err)
 	}

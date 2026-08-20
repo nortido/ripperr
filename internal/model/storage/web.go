@@ -40,4 +40,3 @@ type IgnoreEntry struct {
 	ItemURL  string
 	AddedAt  time.Time
 }
-

@@ -112,7 +112,7 @@ func ValidateSchedulePatch(o scheduleOverlay) error {
 	if o.ThresholdYear == nil {
 		return fmt.Errorf("threshold_year is required")
 	}
-	// optional: absent in documents saved before the field existed
+	// необязательное: отсутствует в документах, сохранённых до появления поля
 	errorStreakThreshold := 3
 	if o.ErrorStreakThreshold != nil {
 		if *o.ErrorStreakThreshold < 1 {

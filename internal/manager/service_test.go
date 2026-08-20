@@ -126,7 +126,7 @@ func TestSubmitMagnet_PreservesNameAndCommentAndOrder(t *testing.T) {
 	if stub.addOpts.Name != "existing name" || stub.addOpts.Comment != "existing comment" {
 		t.Errorf("expected name/comment preserved, got %+v", stub.addOpts)
 	}
-	// same-hash magnet replace: blackholed (magnet, no bytes) before delete, removed after add
+	// замена магнита с тем же хешем: уходит в blackhole (магнит, без байтов) до удаления, убирается после добавления
 	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "confirm-settled", "blackhole-remove"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)

@@ -65,7 +65,7 @@ export async function refreshIgnoreState() {
       updateHistoryIgnoreButtons(dash);
       updateIgnoredStatCard(items.length);
     }
-  } catch (_) { /* ponytail: best-effort */ }
+  } catch (_) { /* ponytail: по возможности, без гарантий */ }
 }
 
 export function planItemForced(item) {
@@ -124,8 +124,8 @@ export function updateReleaseRow(hash, force) {
   if (btn) updatePlanForceButton(btn, hash, forced);
 }
 
-// sort mode picks which of the two time columns is relevant, so only one of
-// checked_at/recheck_at is ever rendered, in the header and in every row
+// режим сортировки выбирает, какая из двух колонок времени важна, поэтому в шапке
+// и в каждой строке рисуется только одна из checked_at/recheck_at
 export function buildTimeColumnHeader() {
   const recheckMode = historyState.sort === 'recheck';
   const cls = recheckMode ? 'plan-recheck-cell' : 'col-time';
@@ -135,8 +135,8 @@ export function buildTimeColumnHeader() {
 }
 
 function planRecheckSpanHtml(short, full, ignored) {
-  // ignored releases are never rechecked, so a recheck date here is fiction;
-  // the attributes still carry the real date, only the display is swapped
+  // игнорируемые релизы никогда не перепроверяются, поэтому дата перепроверки тут выдумка;
+  // в атрибутах остаётся настоящая дата, подменяется только отображение
   const text = ignored ? t('common.emDash') : short;
   const title = ignored ? '' : full;
   return html`<span class="plan-recheck-text" title="${title}">${text}</span>`;
@@ -209,8 +209,8 @@ export function updateForceAllButton(el, histItems) {
 
 export function updateDashboardTable(el, history) {
   const histItems = history.items || [];
-  // sort toggle lives outside tbody, in the thead that this function otherwise
-  // never touches, so the time column header needs its own explicit sync
+  // переключатель сортировки живёт вне tbody, в thead, который эта функция иначе
+  // не трогает, поэтому заголовку колонки времени нужна своя явная синхронизация
   const theadRow = el.querySelector('.table-dash-releases thead tr');
   const timeTh = theadRow && theadRow.querySelector('.col-time, .plan-recheck-cell');
   const wantCls = historyState.sort === 'recheck' ? 'plan-recheck-cell' : 'col-time';
@@ -261,8 +261,8 @@ export function bindDashboardReleaseRows(root) {
         if (historyState.ignored) {
           loadDashboard();
         } else if (historyState.sort === 'recheck') {
-          // row stays put (no full reload), so its recheck cell must catch up
-          // with the new ignore state right away instead of showing a stale date
+          // строка остаётся на месте (без полной перезагрузки), поэтому её ячейка перепроверки
+          // должна сразу догнать новое состояние игнора, а не показывать устаревшую дату
           const row = btn.closest('tr');
           const cell = row && row.querySelector('.plan-recheck-cell');
           if (cell) {
@@ -286,8 +286,8 @@ export function bindDashboardReleaseRows(root) {
       if (!hash) return;
       const enable = btn.getAttribute('data-force') !== '1';
       btn.disabled = true;
-      // enabling force starts an out-of-schedule pass, so the run controls
-      // switch on the click instead of waiting for the status poll
+      // включение форса запускает внеплановый проход, поэтому элементы управления
+      // переключаются по клику, не дожидаясь опроса статуса
       if (enable) {
         setRunPending(true);
         updateRunStatusUI(true);
@@ -300,8 +300,8 @@ export function bindDashboardReleaseRows(root) {
         nextDashboardFetchGen();
         const queued = !res || res.force_queued !== false;
         if (enable && !queued) {
-          // the flag is set, but the force queue was full: no out-of-schedule
-          // pass will start, so the optimistic run indicator has to go away
+          // флаг выставлен, но очередь форса была полна: внеплановый проход
+          // не начнётся, поэтому оптимистичный индикатор запуска надо убрать
           setRunPending(false);
           updateRunStatusUI(effectiveRunning(dashboardServerRunning));
           showToast(t('dash.forceQueueFull'), 'info');

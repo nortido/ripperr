@@ -171,7 +171,7 @@ export async function testTracker(key, btn, item, mirrorValues) {
     const text = await res.text();
     let data = null;
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { /* ignore */ }
+      try { data = JSON.parse(text); } catch (_) { /* игнорируем */ }
     }
     if (res.status === 404) {
       errMsg = (data && data.error) ? data.error : 'HTTP 404';

@@ -1,4 +1,4 @@
-/* trackerr design system, Overseerr / Jellyfin inspired */
+/* дизайн-система trackerr, вдохновлена Overseerr и Jellyfin */
 
 :root,
 [data-theme="light"] {
@@ -59,7 +59,7 @@
   --radius-sm: 8px;
   --radius-lg: 12px;
   --bg-muted: rgba(0, 0, 0, 0.06);
-  /* button size system: every .btn variant derives its geometry from these */
+  /* система размеров кнопок: каждый вариант .btn выводит геометрию отсюда */
   --btn-h-md: 44px;
   --btn-h-sm: 36px;
   --btn-h-xs: 32px;
@@ -172,10 +172,10 @@ a {
   }
 }
 
-/* layout */
+/* раскладка */
 
-/* zoom, not transform: a transformed element becomes the containing block for its
-   fixed children (drawer, header, backdrop), zoom leaves them pinned to the viewport */
+/* zoom, а не transform: трансформированный элемент становится содержащим блоком для
+   своих fixed-потомков (шторка, шапка, подложка), а zoom оставляет их привязанными к вьюпорту */
 /* класс вешается только когда экран уже, чем 480px: тогда --page-scale равен
    w/480 и фиксированные 480px рисуются ровно в ширину экрана. Ширину через
    calc(100% / scale) считать нельзя: Chrome то отдаёт 100% уже пересчитанным

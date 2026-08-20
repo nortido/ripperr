@@ -6,8 +6,8 @@ const DefaultConfigDir = "/config"
 
 type App struct {
 	ConfigDir string `env:"CONFIG_DIR, default=/config"`
-	// BlackholeDir overrides where the blackhole lives; empty means the
-	// default subdirectory under ConfigDir (see BlackholeDirPath).
+	// BlackholeDir переопределяет, где живёт blackhole; пусто означает
+	// подкаталог по умолчанию внутри ConfigDir (см. BlackholeDirPath).
 	BlackholeDir string `env:"BLACKHOLE_DIR, default="`
 	Log          Log
 	Runner       Runner

@@ -1,4 +1,4 @@
-/* history filter dropdown */
+/* выпадающий фильтр истории */
 
 .hist-filter-select {
   position: relative;
@@ -81,24 +81,24 @@
   box-shadow: var(--shadow-dropdown);
 }
 
-/* `display: flex` above outranks the UA stylesheet's `[hidden] { display:
-   none }` (same specificity, author beats UA), so hidden stopped working
-   without this */
+/* `display: flex` выше перебивает `[hidden] { display: none }` из стилей
+   браузера (специфичность та же, авторские правила побеждают), поэтому без
+   этого hidden перестал работать */
 .hist-filter-panel[hidden] {
   display: none;
 }
 
-/* max-height itself is computed per-open in positionHistFilterPanel (real
-   available space, not a fixed number); this is just the width plus a
-   fallback cap for before that runs */
+/* сам max-height считается при каждом открытии в positionHistFilterPanel
+   (по реально доступному месту, а не фиксированному числу); здесь только
+   ширина плюс запасной предел на время до этого расчёта */
 html:not(.mobile-layout) .hist-filter-panel {
   width: 240px;
   max-height: 600px;
 }
 
-/* mobile: bottom sheet instead of a dropdown, pinned to the viewport, not
-   the trigger; positionHistFilterPanel() skips open-up and the inline
-   max-height entirely in this mode, so the 80vh cap here is the only cap */
+/* мобильные: нижняя шторка вместо выпадающего списка, привязана к вьюпорту,
+   а не к кнопке; positionHistFilterPanel() в этом режиме полностью пропускает
+   открытие вверх и инлайновый max-height, поэтому 80vh здесь единственный предел */
 html.mobile-layout .hist-filter-panel {
   position: fixed;
   left: 0;
@@ -117,7 +117,7 @@ html.mobile-layout .hist-filter-panel {
   display: none;
 }
 
-/* dim behind the sheet; tap closes it (bound in bindHistFilterSelect) */
+/* затемнение за шторкой; тап закрывает её (вешается в bindHistFilterSelect) */
 html.mobile-layout .hist-filter-select.open .hist-filter-backdrop,
 html.mobile-layout .hist-filter-select.is-closing .hist-filter-backdrop {
   display: block;
@@ -136,9 +136,9 @@ html.mobile-layout .hist-filter-select.is-closing .hist-filter-backdrop {
   opacity: 0;
 }
 
-/* desktop uses a mouse, not a thumb: the 8px touch padding on options and
-   group rows is what pushes the main view (7 status rows + tracker +
-   category) past a normal window's available height */
+/* на десктопе мышь, а не палец: именно отступ в 8px под касание у опций и
+   строк групп выталкивает главный вид (7 строк статусов + трекер +
+   категория) за доступную высоту обычного окна */
 html:not(.mobile-layout) .hist-filter-option,
 html:not(.mobile-layout) .hist-filter-row {
   padding-top: 6px;
@@ -150,9 +150,9 @@ html:not(.mobile-layout) .hist-filter-row {
   bottom: calc(100% + 4px);
 }
 
-/* header stays put; only the body scrolls when content (mostly the category
-   list) outgrows the panel's max-height, so the height otherwise tracks
-   content exactly, no leftover empty space and no stale content behind it */
+/* шапка на месте; прокручивается только тело, когда содержимое (в основном
+   список категорий) перерастает max-height панели, в остальных случаях высота
+   точно повторяет содержимое, без пустого места и без устаревшего содержимого за ним */
 .hist-filter-panel-head {
   display: flex;
   align-items: center;
@@ -188,10 +188,10 @@ html:not(.mobile-layout) .hist-filter-row {
   padding: 4px;
 }
 
-/* bottom fade signals there's more to scroll; scrollbar stays native and
-   visible, this is purely a decorative overlay above the last row.
-   is-scrolled-end (set in components.js) hides it once scrolled to the end,
-   which is also trivially true when nothing overflows in the first place */
+/* нижняя растушёвка показывает, что есть что прокручивать; полоса прокрутки
+   остаётся родной и видимой, это чисто декоративный слой над последней строкой.
+   is-scrolled-end (ставится в components.js) прячет её при прокрутке до конца,
+   что тривиально верно и когда переполнения нет вовсе */
 .hist-filter-panel-body::after {
   content: '';
   position: absolute;
@@ -284,8 +284,8 @@ html:not(.mobile-layout) .hist-filter-row {
   animation: hist-filter-pop-in 0.16s cubic-bezier(0.2, 0, 0.2, 1);
 }
 
-/* the panel stays visible while closing: JS defers `hidden` until the
-   animation ends (HIST_FILTER_CLOSE_MS in app.js) */
+/* панель остаётся видимой при закрытии: JS откладывает `hidden` до конца
+   анимации (HIST_FILTER_CLOSE_MS в app.js) */
 .hist-filter-select.is-closing .hist-filter-panel {
   animation: hist-filter-pop-out 0.13s cubic-bezier(0.4, 0, 1, 1) forwards;
   pointer-events: none;
@@ -309,8 +309,9 @@ html:not(.mobile-layout) .hist-filter-row {
   }
 }
 
-/* same durations/easings as the desktop pop in/out, just a slide instead of
-   a scale, and these two win on specificity over the rules above */
+/* те же длительности и кривые, что у десктопного появления и исчезновения,
+   только сдвиг вместо масштаба, и эти два правила выигрывают по специфичности
+   у правил выше */
 html.mobile-layout .hist-filter-select.open .hist-filter-panel {
   animation: hist-filter-sheet-in 0.16s cubic-bezier(0.2, 0, 0.2, 1);
 }
@@ -426,7 +427,7 @@ html.mobile-layout .hist-filter-select.is-closing .hist-filter-panel {
   color: var(--text-muted);
 }
 
-/* name column filter */
+/* фильтр по колонке имени */
 
 .name-filter-wrap {
   display: flex;
@@ -626,7 +627,7 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
   height: 14px;
 }
 
-/* mobile card toolbar name search */
+/* поиск по имени в мобильной панели карточки */
 
 .btn.btn-mobile-name-search {
   display: none;
@@ -657,9 +658,9 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
   overflow: hidden;
 }
 
-/* search/close button pair: a fixed-position stack, only its icon cross-fades.
-   Promoted out of .mobile-name-search-slot so its own box geometry never
-   depends on the slot's (animated) width. */
+/* пара кнопок поиска и закрытия: стопка с фиксированной позицией, перекрёстно
+   гаснет только иконка. Вынесена из .mobile-name-search-slot, чтобы геометрия
+   её собственного блока не зависела от (анимируемой) ширины слота. */
 .mobile-name-search-toggle {
   display: none;
 }
@@ -714,34 +715,34 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
 }
 
 /*
- * Mobile releases-card-header toolbar: name-search open/close animation.
+ * Мобильная панель шапки карточки релизов: анимация открытия и закрытия поиска по имени.
  *
- * Geometry model (all lengths relative to .card-header-toolbar, the single
- * positioning root: .card-toolbar-post-search is left `position: static`
- * on purpose so it never becomes an alternate containing block):
+ * Модель геометрии (все длины относительно .card-header-toolbar, единственного
+ * корня позиционирования: .card-toolbar-post-search намеренно оставлен
+ * `position: static`, чтобы никогда не стать альтернативным содержащим блоком):
  *
- *   T = .card-header-toolbar content width
- *   buttons-w = btn-h-sm + gap + btn-h-sm            (name-search button + filter button)
- *   content-right = buttons-w + gap                  (reserved strip on the right)
- *   W = T - content-right                             (width of the sliding panes)
+ *   T = ширина содержимого .card-header-toolbar
+ *   buttons-w = btn-h-sm + gap + btn-h-sm            (кнопка поиска по имени + кнопка фильтра)
+ *   content-right = buttons-w + gap                  (зарезервированная полоса справа)
+ *   W = T - content-right                             (ширина едущих панелей)
  *
- * .card-header-toolbar-shift (title/refresh/sort/force-all) and
- * .mobile-name-search-slot (the search-input field) are both pinned to the
- * exact same box (left: 0; right: content-right) at all times, in every
- * state (idle, animating, expanded). Only `transform: translateX()` and
- * `opacity` move them; nothing about their box (position/left/right/width)
- * ever changes, so the two states are true time-reverses of each other and
- * the two panes' edges stay perfectly adjacent (never overlapping, never
- * gapping) at every point of the animation, regardless of easing, because
- * both use the same `right` reserve and mirrored translateX(±100%).
+ * .card-header-toolbar-shift (заголовок/обновление/сортировка/форсировать всё) и
+ * .mobile-name-search-slot (поле ввода поиска) всегда прибиты к одному и тому же
+ * блоку (left: 0; right: content-right), в любом состоянии (покой, анимация,
+ * раскрыто). Двигают их только `transform: translateX()` и `opacity`; ничто в их
+ * блоке (position/left/right/width) не меняется, поэтому два состояния строго
+ * обратны друг другу во времени, а края двух панелей остаются идеально
+ * состыкованными (без нахлёста и без зазора) в каждой точке анимации, независимо
+ * от кривой, потому что обе используют один и тот же резерв `right` и зеркальные
+ * translateX(±100%).
  *
- * .mobile-name-search-toggle (the search button and close button, stacked
- * in the same spot) and .hist-filter-select (filter button) are pinned with
- * a constant `right` offset in EVERY state. The search button and the close
- * button never move at all: they occupy the same box and cross-fade via
- * opacity/visibility only (no display swap, no layout shift). The filter
- * button is the only fixed-position element that itself animates away
- * (transform + opacity, taken out of flow in both states, no max-width/flex).
+ * .mobile-name-search-toggle (кнопки поиска и закрытия, сложенные в одном месте)
+ * и .hist-filter-select (кнопка фильтра) прибиты постоянным отступом `right` в
+ * ЛЮБОМ состоянии. Кнопки поиска и закрытия не двигаются вообще: они занимают
+ * один и тот же блок и перекрёстно гаснут только через opacity/visibility (без
+ * подмены display, без сдвига раскладки). Кнопка фильтра единственный элемент с
+ * фиксированной позицией, который сам уезжает анимацией (transform + opacity,
+ * вынесен из потока в обоих состояниях, без max-width и flex).
  */
 
 html.mobile-layout .releases-card-header .card-header-toolbar {
@@ -789,10 +790,10 @@ html.mobile-layout .releases-card-header .card-header-toolbar-shift {
     visibility 0s linear 0s;
 }
 
-/* .card-header-toolbar-shift is squeezed into a fixed-height (--btn-h-sm)
-   absolutely-positioned box; without a nowrap guard a long release-card
-   title would wrap to a second line and get clipped instead of shrinking
-   the flex row, so it must ellipsize on one line here. */
+/* .card-header-toolbar-shift втиснут в абсолютно позиционированный блок
+   фиксированной высоты (--btn-h-sm); без защиты nowrap длинный заголовок
+   карточки релиза переносился бы на вторую строку и обрезался вместо сжатия
+   flex-строки, поэтому здесь он обязан ужиматься многоточием в одну строку. */
 html.mobile-layout .releases-card-header .card-header-toolbar-shift .card-title {
   white-space: nowrap;
   overflow: hidden;
@@ -847,9 +848,9 @@ html.mobile-layout .mobile-name-search-field .mobile-name-filter-input {
   min-width: 0;
 }
 
-/* filter button: fixed at the toolbar's right edge in every state; when the
-   name-search field is open it is the one element that leaves, via
-   transform + opacity only (never max-width), taken out of flow always. */
+/* кнопка фильтра: закреплена у правого края панели в любом состоянии; когда
+   поле поиска по имени открыто, она единственная уезжает, только через
+   transform + opacity (никогда max-width), и всегда вынесена из потока. */
 html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select {
   position: absolute;
   top: 0;
@@ -871,18 +872,18 @@ html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-s
   opacity: 0;
 }
 
-/* is-closing keeps the lift while the panel animates out: this wrap is its own
-   stacking context, so dropping back to z-index 2 mid-animation would slide the
-   panel under the toolbar siblings. transform: none is dropped here too, since
-   a transformed ancestor becomes the containing block for position: fixed
-   descendants, which would trap the bottom sheet inside the toolbar instead
-   of the viewport (same reason .app.page-scaled uses zoom, not transform).
-   transition: none is the part that actually makes that true the instant the
-   class lands: the base rule's transform transition still applies here
-   otherwise, so translateX(0) would tween to none over 0.32s, and for the
-   whole tween the computed value is an interpolated matrix, not the none
-   keyword, which keeps this wrap a containing block for the sheet the entire
-   time, that's the narrow column flash. */
+/* is-closing держит подъём, пока панель уезжает анимацией: эта обёртка сама по
+   себе контекст наложения, поэтому возврат к z-index 2 посреди анимации увёл бы
+   панель под соседей по панели инструментов. transform: none тоже убран здесь,
+   потому что трансформированный предок становится содержащим блоком для
+   потомков с position: fixed, а это заперло бы нижнюю шторку внутри панели
+   вместо вьюпорта (по той же причине .app.page-scaled использует zoom, а не
+   transform). Именно transition: none делает это правдой в момент появления
+   класса: иначе тут всё ещё действует переход transform из базового правила,
+   и translateX(0) 0.32s плавно шёл бы к none, а всё это время вычисленное
+   значение это интерполированная матрица, а не ключевое слово none, что
+   держит обёртку содержащим блоком для шторки всю анимацию, отсюда и вспышка
+   узкой колонки. */
 html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.open,
 html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.is-closing {
   z-index: 301;
@@ -890,9 +891,9 @@ html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filte
   transition: none;
 }
 
-/* search button / close button: constant position in every state, the
-   search button must never move a single pixel. Both buttons are stacked
-   in the same box; only the icon cross-fades via opacity/visibility. */
+/* кнопка поиска и кнопка закрытия: постоянная позиция в любом состоянии,
+   кнопка поиска не должна сдвинуться ни на пиксель. Обе кнопки сложены в
+   одном блоке; перекрёстно гаснет только иконка через opacity/visibility. */
 html.mobile-layout .btn.btn-mobile-name-search {
   display: inline-flex;
 }
@@ -975,12 +976,12 @@ html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-
     visibility 0s linear 0s;
 }
 
-/* Lock out all interaction while mid-transition. These selectors must win
-   over the steady-state `pointer-events: auto` rules above despite equal
-   specificity: an explicitly declared value always beats one inherited
-   from an .is-search-animating ancestor, so each target is listed
-   explicitly here (not relied on via inheritance), and this block is kept
-   last in the cascade so it wins the tie. */
+/* Блокируем всё взаимодействие на время перехода. Эти селекторы обязаны
+   победить правила `pointer-events: auto` устойчивого состояния выше, несмотря
+   на равную специфичность: явно объявленное значение всегда бьёт унаследованное
+   от предка с .is-search-animating, поэтому каждая цель перечислена здесь явно
+   (а не берётся наследованием), и этот блок держится последним в каскаде,
+   чтобы выиграть при равенстве. */
 html.mobile-layout .releases-card-header.is-search-animating .card-header-toolbar-shift,
 html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-slot,
 html.mobile-layout .releases-card-header.is-search-animating .card-toolbar-post-search > .hist-filter-select,

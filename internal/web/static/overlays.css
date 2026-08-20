@@ -1,4 +1,4 @@
-/* toasts */
+/* всплывающие уведомления */
 
 .toast-stack {
   position: fixed;
@@ -44,7 +44,7 @@
   }
 }
 
-/* offline banner */
+/* баннер отсутствия связи */
 
 /* снизу, а не сверху: сверху баннер перекрыл бы кнопку мобильного меню и
    держал бы её закрытой всё время, пока сервер недоступен */
@@ -84,7 +84,7 @@ body:has(.offline-banner.visible) .content {
   }
 }
 
-/* error popover */
+/* попап ошибки */
 
 .error-popover {
   position: absolute;

@@ -11,7 +11,7 @@ type HandlerConfig struct {
 	ListRefreshPerDay    int
 	StartHour            int
 	Categories           []string
-	Location             *time.Location // nil = time.Local
+	Location             *time.Location // nil = time.Local (локальная зона процесса)
 	Immediate            bool
 	ErrorStreakThreshold int
 }

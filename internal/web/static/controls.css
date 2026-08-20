@@ -1,4 +1,4 @@
-/* buttons */
+/* кнопки */
 
 .btn {
   display: inline-flex;
@@ -56,7 +56,7 @@
   height: var(--btn-icon-sm);
 }
 
-/* icon+text or icon-only modifier: makes the button at least square for its height tier */
+/* модификатор иконка+текст или только иконка: делает кнопку не уже квадрата для своей высоты */
 .btn-icon {
   min-width: var(--btn-h-md);
   padding: 0;
@@ -715,7 +715,7 @@
   margin-top: 18px;
 }
 
-/* forms */
+/* формы */
 
 .form-row {
   display: grid;
@@ -814,7 +814,7 @@
   height: 18px;
 }
 
-/* custom select */
+/* кастомный селект */
 
 .custom-select {
   position: relative;
@@ -1038,7 +1038,7 @@
   }
 }
 
-/* chip input */
+/* поле с чипами */
 
 .chip-input {
   display: flex;
@@ -1150,7 +1150,7 @@
   font-style: italic;
 }
 
-/* tracker name badges */
+/* значки с именами трекеров */
 
 .tracker-badge {
   display: inline-block;
@@ -1196,7 +1196,7 @@
   color: var(--hue-pink);
 }
 
-/* theme toggle */
+/* переключатель темы */
 
 .theme-toggle .theme-icon-dark {
   display: none;
@@ -1210,7 +1210,7 @@
   display: none;
 }
 
-/* misc */
+/* разное */
 
 .text-muted {
   color: var(--text-muted);

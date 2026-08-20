@@ -70,7 +70,7 @@ export async function refreshLogs(manual) {
     renderLogsFeed(el, data);
     updateRefreshedAt('logs-last-updated', 'logs.lastUpdated');
     updateDryRunButtonState();
-  } catch (_) { /* ponytail: silent refresh is best-effort */ }
+  } catch (_) { /* ponytail: тихое обновление по возможности, без гарантий */ }
 
   if (manual) {
     const btn = document.getElementById('logs-refresh-btn');

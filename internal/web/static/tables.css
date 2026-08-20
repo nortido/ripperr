@@ -1,4 +1,4 @@
-/* cards */
+/* карточки */
 
 .card {
   background: var(--surface);
@@ -51,7 +51,7 @@
   pointer-events: none;
 }
 
-/* tables */
+/* таблицы */
 
 .table-wrap {
   overflow-x: auto;

@@ -13,8 +13,8 @@ import { historyState } from './state.js';
 import { formatRunSlot, formatThenSlot, html, pageSizeQueryLimit, updateRefreshedAt } from './util.js';
 
 export const STOP_PENDING_MS = 90000;
-// a triggered run needs a moment to be picked up and to fetch the torrent list
-// before the server reports it as running; until then the UI trusts the click
+// запущенному прогону нужно время, чтобы его подхватили и загрузили список торрентов
+// до того, как сервер сообщит о работе; до этого интерфейс верит клику
 export const RUN_PENDING_MS = 12000;
 
 
@@ -29,7 +29,7 @@ export let dashboardServerRunning = false;
 export let dashboardDryRun = false;
 
 export let dashboardFetchGen = 0;
-// imported bindings are read-only, so other modules bump the generation through this
+// импортированные привязки только на чтение, поэтому другие модули двигают поколение через это
 export function nextDashboardFetchGen() {
   return ++dashboardFetchGen;
 }
@@ -173,7 +173,7 @@ export async function pollDashboardStatus() {
     applyRunStatus(effectiveRunning(status.running));
     updateNextRunCard(status.next_runs || []);
     updateDashboardAlerts(status.alerts || []);
-  } catch (_) { /* ponytail: polling is best-effort */ }
+  } catch (_) { /* ponytail: опрос по возможности, без гарантий */ }
 }
 
 export async function triggerRunCheck() {
@@ -194,7 +194,7 @@ export async function triggerRunCheck() {
     const text = await res.text();
     let data = null;
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { /* ignore */ }
+      try { data = JSON.parse(text); } catch (_) { /* игнорируем */ }
     }
     if (res.status === 202) {
       showToast(isRestart ? t('dash.checkRestarted') : t('dash.checkStarted'), 'success');
@@ -233,7 +233,7 @@ export async function triggerStopCheck() {
     const text = await res.text();
     let data = null;
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { /* ignore */ }
+      try { data = JSON.parse(text); } catch (_) { /* игнорируем */ }
     }
     if (res.status === 202) {
       showToast(t('dash.checkStopped'), 'success');
@@ -364,7 +364,7 @@ export async function refreshDashboard(manual) {
     syncPlanForceLocal((data.history && data.history.items) || []);
     renderDashboard(el, data.status, data.history, data.stats);
     updateRefreshedAt('dash-last-updated', 'dash.lastUpdated');
-  } catch (_) { /* ponytail: silent refresh is best-effort */ }
+  } catch (_) { /* ponytail: тихое обновление по возможности, без гарантий */ }
 
   if (manual) {
     const refreshBtn = document.getElementById('dash-refresh-btn');
@@ -522,7 +522,7 @@ export async function triggerDryRun(btn) {
     const text = await res.text();
     let data = null;
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { /* ignore */ }
+      try { data = JSON.parse(text); } catch (_) { /* игнорируем */ }
     }
     if (res.status === 202) {
       showToast(t('logs.dryRunStarted'), 'success');
@@ -547,7 +547,7 @@ export async function updateDryRunButtonState() {
     const busy = !!(status.running || status.stopping);
     btn.disabled = busy;
     btn.title = busy ? t('logs.dryRunBusy') : t('logs.dryRunHint');
-  } catch (_) { /* ponytail: best-effort */ }
+  } catch (_) { /* ponytail: по возможности, без гарантий */ }
 }
 
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// cf_clearance is kept in the FlareSolverr session; only forum session is required in DB.
+// cf_clearance хранится в сессии FlareSolverr; в БД нужна только сессия форума.
 var requiredCookieNames = []string{"bb_session"}
 
 func (t *Tracker) CookiesIncomplete(cookies []*http.Cookie) bool {

@@ -6,7 +6,7 @@ import { html, secureInputAttrs } from './util.js';
 
 export let integrationsCache = null;
 
-// trackers.js fills the cache too, and a module can only assign its own bindings
+// trackers.js тоже заполняет кеш, а модуль может присваивать только свои привязки
 export function setIntegrationsCache(doc) {
   integrationsCache = doc;
 }
@@ -149,8 +149,8 @@ export function renderIntegrations(el, data) {
   }
 }
 
-// hides the fields of the other channel rather than removing them, so text
-// already typed there survives clicking back and forth before saving
+// прячет поля другого канала, а не удаляет их, чтобы уже введённый текст
+// пережил переключения туда-сюда до сохранения
 function applyNotifyChannelType(el, type) {
   el.querySelectorAll('.notify-field-telegram').forEach(function (f) {
     f.classList.toggle('hidden', type !== 'telegram');
@@ -215,6 +215,6 @@ export function buildIntegrationsDoc() {
   return base;
 }
 
-// the view, filters and paging all live in the hash, so the whole location is
-// carried over and restored after login
+// вид, фильтры и постраничность живут в хеше, поэтому переносим и восстанавливаем
+// после входа весь location целиком
 

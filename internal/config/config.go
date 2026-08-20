@@ -17,16 +17,16 @@ type Manager struct {
 	MinutesToReconnect    int      `env:"MANAGER_MINUTES_TO_RECONNECT, default=5"`
 }
 
-// TrackerItem is one tracker's settings. Per-tracker env names come from the
-// prefix on each Tracker field; the defaults live in DefaultApp because a shared
-// type cannot carry a different `default=` per instance. `overwrite` is what lets
-// an env var win over the pre-filled default (go-envconfig otherwise skips a
-// field that is already non-zero).
+// TrackerItem это настройки одного трекера. Имена переменных окружения на трекер
+// берутся из префикса на каждом поле Tracker; значения по умолчанию лежат в DefaultApp,
+// потому что общий тип не может нести разный `default=` на экземпляр. `overwrite` даёт
+// переменной окружения победить предзаполненное значение (иначе go-envconfig пропускает
+// поле, которое уже не нулевое).
 type TrackerItem struct {
 	Name         string   `json:"name" env:"NAME, overwrite"`
 	Domain       string   `json:"domain" env:"DOMAIN, overwrite"`
-	ActiveDomain string   `json:"active_domain"` // DB-only override
-	Mirrors      []string `json:"mirrors"`       // DB-only override
+	ActiveDomain string   `json:"active_domain"` // переопределение только из БД
+	Mirrors      []string `json:"mirrors"`       // переопределение только из БД
 	Credentials  string   `json:"credentials" env:"CREDENTIALS, overwrite"`
 	Publicity    string   `json:"publicity" env:"PUBLICITY, overwrite"`
 	LoginURL     string   `json:"login_url" env:"LOGIN_URL, overwrite"`
@@ -64,7 +64,7 @@ func (t *Tracker) ByKey(key string) *TrackerItem {
 }
 
 type Runner struct {
-	WatchTag              string `env:"RUNNER_TAG, default=watch"` // env source; effective list in WatchTags
+	WatchTag              string `env:"RUNNER_TAG, default=watch"` // источник из окружения; действующий список в WatchTags
 	WatchTags             []string
 	MonthThresholdDays    int      `env:"RUNNER_FIRST_MONTH_UPDATE_THRESHOLD, default=1"`
 	HalfYearThresholdDays int      `env:"RUNNER_HALF_YEAR_UPDATE_THRESHOLD, default=7"`
@@ -79,7 +79,7 @@ type Runner struct {
 	CBRetries             int      `env:"RUNNER_CB_RETRIES, default=2"`
 	CBMinutesToRetry      int      `env:"RUNNER_CB_MINUTES_TO_RETRY, default=60"`
 	AllowedCategories     []string `env:"RUNNER_ALLOWED_CATEGORIES, default="`
-	Timezone              string   // DB-only override; empty = process local
+	Timezone              string   // переопределение только из БД; empty = process local
 }
 
 type Flaresolverr struct {
@@ -88,7 +88,7 @@ type Flaresolverr struct {
 }
 
 type Storage struct {
-	// empty means DBPath() derives it from ConfigDir
+	// пусто означает, что DBPath() выведет его из ConfigDir
 	Path string `env:"DB_PATH, default="`
 }
 

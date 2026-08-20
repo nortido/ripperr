@@ -1,4 +1,4 @@
-/* mobile stacked table rows */
+/* мобильные строки таблицы в столбик */
 
 html.mobile-layout .table-dash-releases .col-tracker {
   display: none;
@@ -54,8 +54,8 @@ html.mobile-layout .table-dash-releases .release-foot .tracker-badge {
   margin-left: 6px;
 }
 
-/* col-time and plan-recheck-cell are mutually exclusive (sort mode picks one),
-   so both take the same "time" grid area and share one rule */
+/* col-time и plan-recheck-cell взаимоисключающи (режим сортировки выбирает одну),
+   поэтому обе занимают одну область сетки "time" и делят одно правило */
 html.mobile-layout .table-dash-releases .col-time,
 html.mobile-layout .table-dash-releases .plan-recheck-cell {
   grid-area: time;
@@ -124,7 +124,7 @@ html.mobile-layout .page-size-select {
   flex: 0 0 auto;
 }
 
-/* responsive: mobile drawer */
+/* адаптив: мобильная шторка */
 
 @media (max-width: 900px) {
   .mobile-header {
@@ -385,8 +385,8 @@ html.mobile-layout .tracker-row .btn-test-tracker svg {
   height: var(--btn-icon-sm);
 }
 
-/* history filter bottom sheet: clears the home-bar/gesture-nav area on
-   notched phones, same idea as the sidebar's safe-area-inset-top above */
+/* нижняя шторка фильтра истории: обходит зону домашней полосы и жестовой навигации
+   на телефонах с вырезом, та же идея, что и safe-area-inset-top у боковой панели выше */
 html.mobile-layout .hist-filter-panel-body {
   padding-bottom: calc(4px + env(safe-area-inset-bottom));
 }

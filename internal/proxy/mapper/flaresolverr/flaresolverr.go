@@ -25,7 +25,7 @@ func PrepareParams(r *http.Request, opts *proxy.Options) (params *Payload) {
 	return
 }
 
-// cookiesForFlare strips cookie domain/path so FlareSolverr binds cookies to the request URL.
+// cookiesForFlare срезает домен и путь у кук, чтобы FlareSolverr привязал их к URL запроса.
 func cookiesForFlare(src []*http.Cookie) Cookies {
 	if len(src) == 0 {
 		return nil

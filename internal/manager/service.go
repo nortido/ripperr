@@ -45,9 +45,9 @@ func (m *manager) SubmitMagnet(ctx context.Context, magnet string, opts model.Ma
 	})
 }
 
-// replaceTorrent resolves the current name/comment of an existing torrent (by
-// hash) before deleting and re-adding it, so add receives the resolved opts
-// rather than the caller's original values.
+// replaceTorrent выясняет текущие имя и комментарий существующего торрента (по
+// хешу) до удаления и повторного добавления, чтобы add получил уже вычисленные opts,
+// а не исходные значения вызывающего.
 func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet string, opts model.ManagerAddFileOptions, add func(model.ManagerAddFileOptions) error) (err error) {
 	if opts.Hash != "" {
 		if name, comment, detailErr := m.client.GetTorrentDetails(ctx, opts.Hash); detailErr == nil {
@@ -77,10 +77,10 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 		if err = add(opts); err != nil {
 			return
 		}
-		// qbit's delete-with-files job from del() above can still be racing to
-		// take the freshly re-added torrent back down; only drop the safety
-		// net once presence survives the settle wait, otherwise leave it for
-		// the sweeper
+		// задача qbit на удаление с файлами из del() выше всё ещё может гнаться
+		// снести только что добавленный торрент; убираем страховку лишь когда
+		// присутствие переживает выжидание, иначе оставляем её
+		// подметальщику
 		if !m.client.ConfirmSettled(ctx, opts.Hash) {
 			return
 		}

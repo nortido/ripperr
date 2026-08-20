@@ -68,8 +68,8 @@ func TestList_Success(t *testing.T) {
 	}
 }
 
-// TestList_SkipsBadTorrent returns successful entries when one torrent's
-// properties fetch fails; the bad torrent is skipped and List returns ErrPartialList.
+// TestList_SkipsBadTorrent: при провале загрузки свойств одного торрента
+// возвращаются успешные записи; битый торрент пропускается, List отдаёт ErrPartialList.
 func TestList_SkipsBadTorrent(t *testing.T) {
 	torrents := []qbt.Torrent{
 		{Hash: "h1", Name: "torrent-1"},
@@ -111,9 +111,9 @@ func TestList_SkipsBadTorrent(t *testing.T) {
 	}
 }
 
-// TestList_ContextCancellationDoesNotHang is a regression test for the
-// original List() implementation, which could deadlock/leak goroutines when
-// the caller's context was canceled mid-flight.
+// TestList_ContextCancellationDoesNotHang это регрессионный тест на исходную
+// реализацию List(), которая могла зависать и течь горутинами, когда контекст
+// вызывающего отменяли на полпути.
 func TestList_ContextCancellationDoesNotHang(t *testing.T) {
 	unblock := make(chan struct{})
 	defer close(unblock)
@@ -176,9 +176,9 @@ func buildTestTorrent(t *testing.T) ([]byte, string) {
 	return buf.Bytes(), mi.HashInfoBytes().HexString()
 }
 
-// TestAddFromBuffer_WaitsForDeleteRace verifies that when DeleteEnabled and the
-// new torrent shares the replaced hash, add waits for the old torrent to disappear
-// instead of failing the pre-check immediately.
+// TestAddFromBuffer_WaitsForDeleteRace проверяет, что при DeleteEnabled и
+// совпадении хеша нового торрента с заменяемым добавление ждёт исчезновения
+// старого, а не валит предпроверку сразу.
 func TestAddFromBuffer_WaitsForDeleteRace(t *testing.T) {
 	data, hash := buildTestTorrent(t)
 	var infoCalls atomic.Int32

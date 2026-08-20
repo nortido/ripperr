@@ -1,6 +1,6 @@
-// Package flaresolverr contains a minimal FlareSolverr API client,
-// inlined from github.com/nortido/go-flaresolverr to fix a response
-// body leak and drop the dependency.
+// Пакет flaresolverr содержит минимальный клиент API FlareSolverr,
+// перенесённый внутрь из github.com/nortido/go-flaresolverr, чтобы починить
+// утечку тела ответа и убрать зависимость.
 package flaresolverr
 
 import (

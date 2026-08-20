@@ -23,7 +23,7 @@ func queryInt(r *http.Request, key string, def, min, max int) int {
 	if v < min {
 		v = def
 	}
-	// max <= 0 means no upper clamp; values above max are clamped, not defaulted
+	// max <= 0 значит без верхнего ограничения; значения выше max обрезаются, а не сбрасываются
 	if max > 0 && v > max {
 		v = max
 	}
@@ -35,8 +35,8 @@ func queryTrimmed(r *http.Request, key string, maxBytes int) string {
 	if len(v) <= maxBytes {
 		return v
 	}
-	// back off from the cut point to the last full rune boundary, so a
-	// multi-byte char straddling maxBytes never gets split in half
+	// отступаем от точки реза до последней полной границы руны, чтобы
+	// многобайтовый символ на границе maxBytes никогда не разрезало пополам
 	cut := maxBytes
 	for cut > 0 && !utf8.RuneStart(v[cut]) {
 		cut--
@@ -55,8 +55,8 @@ func (s *Server) checkLogFilterFromQuery(r *http.Request) storage.CheckLogFilter
 	return storage.CheckLogFilter{
 		Status:      r.URL.Query().Get("status"),
 		IgnoredOnly: ignoredOnly,
-		// ignored releases are never rechecked, so the plan view has nothing to
-		// show for them; the history view still lists them unless asked to filter
+		// игнорируемые релизы никогда не перепроверяются, поэтому в плане их показывать
+		// нечем; в истории они всё равно видны, пока не попросят отфильтровать
 		ExcludeIgnored: sortBy == "recheck" && !ignoredOnly,
 		SortBy:         sortBy,
 		Name:           queryTrimmed(r, "name", 200),
@@ -92,8 +92,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			Status:      e.Status,
 			Error:       e.Error,
 			ErrorStreak: e.ErrorStreak,
-			// the threshold lives in the schedule settings, so the flag is
-			// resolved here rather than re-derived by every client
+			// порог живёт в настройках расписания, поэтому флаг вычисляется
+			// здесь, а не выводится заново каждым клиентом
 			Broken:     f.BrokenStreak >= 1 && e.ErrorStreak >= f.BrokenStreak,
 			RecheckAt:  recheckAt,
 			ForceCheck: e.ForceCheck,
@@ -136,10 +136,10 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "history item not found")
 		return
 	}
-	// the flag alone would only survive until the next scheduled run; asking the
-	// runner starts the check now, and several forced releases join one pass.
-	// the queue is bounded, so a burst of clicks can still drop the request:
-	// the flag stays set and the item is checked on the next scheduled pass
+	// один только флаг дожил бы лишь до следующего запуска по расписанию; просьба к
+	// раннеру запускает проверку сейчас, и несколько форсированных релизов идут одним проходом.
+	// очередь ограничена, поэтому шквал кликов всё ещё может потерять запрос:
+	// флаг остаётся выставленным, и запись проверится на следующем проходе по расписанию
 	queued := true
 	if req.Force {
 		queued = s.runnerState.RequestForce(hash)
@@ -286,15 +286,15 @@ func (s *Server) handleDeleteIgnore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// otherwise the streak the entry was auto-ignored with survives the unignore
-	// and the very next error sends it straight back to the ignore list
+	// иначе серия ошибок, из-за которой запись автоигнорируется, переживёт снятие игнора
+	// и самая первая ошибка отправит её прямо обратно в список игнора
 	if err := s.db.ResetErrorStreak(r.Context(), hash); err != nil {
 		logger.Error(fmt.Sprintf("reset error streak for %s: %v", hash, err))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// redownloadSlot serializes force redownloads: qBittorrent deletes torrents
-// asynchronously, so a re-add running while another deletion is still in flight
-// gets silently rejected.
+// redownloadSlot выстраивает форсированные перекачки в очередь: qBittorrent удаляет
+// торренты асинхронно, поэтому добавление заново во время ещё не законченного удаления
+// молча отвергается.
 var redownloadSlot = make(chan struct{}, 1)

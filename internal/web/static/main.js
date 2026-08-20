@@ -6,8 +6,8 @@ import { initRouter, parseHash, showView } from './router.js';
 import { historyState } from './state.js';
 import { loadStoredPageSize } from './util.js';
 
-// i18n.js stays a classic script: login.html loads it on its own, so t() and
-// applyStaticI18n() are globals here rather than imports.
+// i18n.js остаётся обычным скриптом: login.html грузит его сам, поэтому t() и
+// applyStaticI18n() здесь глобальные, а не импортируемые.
 
 initTheme();
 applyStaticI18n();

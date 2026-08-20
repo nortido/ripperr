@@ -26,7 +26,7 @@ type scheduleOverlay struct {
 	MonitoredCategories   *[]string `json:"monitored_categories,omitempty"`
 	DeleteFilesCategories *[]string `json:"delete_files_categories,omitempty"`
 	WatchTags             *[]string `json:"watch_tags,omitempty"`
-	WatchTag              *string   `json:"watch_tag,omitempty"` // legacy read-only
+	WatchTag              *string   `json:"watch_tag,omitempty"` // устаревшее, только на чтение
 	Timezone              *string   `json:"timezone,omitempty"`
 }
 
@@ -147,8 +147,8 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	}
 }
 
-// applyTrackerOverlay overlays a patch onto one tracker: marshal drops the nil
-// pointers (omitempty), so Unmarshal only touches the keys the patch defines.
+// applyTrackerOverlay накладывает патч на один трекер: маршалинг выбрасывает нулевые
+// указатели (omitempty), поэтому Unmarshal трогает только заданные патчем ключи.
 func applyTrackerOverlay(item *config.TrackerItem, o trackerItemOverlay) error {
 	b, err := json.Marshal(o)
 	if err != nil {
@@ -318,8 +318,8 @@ func TrackersEffective(ctx context.Context, cfg *config.App, db settingsDB) (map
 	return m, nil
 }
 
-// mergePatch overlays filled fields from patch onto dst: during marshal nil-pointers
-// are dropped (omitempty), so Unmarshal only touches keys that the patch defines.
+// mergePatch накладывает заполненные поля патча на dst: при маршалинге нулевые указатели
+// выбрасываются (omitempty), поэтому Unmarshal трогает только заданные патчем ключи.
 func mergePatch[T any](dst *T, patch T) error {
 	b, err := json.Marshal(patch)
 	if err != nil {

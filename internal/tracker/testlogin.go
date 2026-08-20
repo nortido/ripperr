@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	// ErrUnknownTracker is returned when the tracker key is not in the registry.
+	// ErrUnknownTracker возвращается, когда ключа трекера нет в реестре.
 	ErrUnknownTracker = errors.New("unknown tracker key")
 )
 
@@ -41,9 +41,9 @@ type loginDB interface {
 	GetTracker(ctx context.Context, trackerID int) (*trackerModel.Tracker, error)
 }
 
-// TestLogin performs an isolated login test for one tracker using effective config.
-// Optional configPatch merges tracker fields (same shape as GET /api/trackers item) without saving.
-// It does not touch the production client cache or breaker alert registry.
+// TestLogin делает изолированную проверку входа для одного трекера на действующем конфиге.
+// Необязательный configPatch подмешивает поля трекера (той же формы, что элемент GET /api/trackers) без сохранения.
+// Он не трогает боевой кеш клиентов и реестр оповещений предохранителя.
 func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, configPatch json.RawMessage) error {
 	tid, ok := trackerIDByKey[key]
 	if !ok {
@@ -122,8 +122,8 @@ func testLoginAttrs(cfg config.App, key string, tid int, dbAttrs *trackerModel.T
 		*attrs = *dbAttrs
 		attrs.Exists = true
 	}
-	// settings win over the stored session, empty included: the test must check
-	// what the form holds, not fall back to cookies a previous login left in the DB
+	// настройки важнее сохранённой сессии, включая пустые: проверка должна смотреть
+	// на то, что в форме, а не откатываться к кукам, оставленным в БД прошлым входом
 	if it := cfg.Tracker.ByKey(key); it != nil {
 		attrs.Credentials = it.Credentials
 		attrs.Cookies = helper.ParseCookies(it.Cookies)

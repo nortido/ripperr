@@ -27,13 +27,13 @@ const (
 	maxErrorBody = 300
 )
 
-// var, not const: notify_test.go shortens this to avoid real sleeps
+// var, а не const: notify_test.go укорачивает это, чтобы не спать по-настоящему
 var notifyRetryDelay = 30 * time.Second
 
-// var, not const: notify_test.go points this at an httptest server
+// var, а не const: notify_test.go направляет это на сервер httptest
 var telegramAPIURL = "https://api.telegram.org/bot%s/sendMessage"
 
-// var, not const: notify_test.go points this at an httptest server
+// var, а не const: notify_test.go направляет это на сервер httptest
 var telegramGetUpdatesURL = "https://api.telegram.org/bot%s/getUpdates"
 
 type Config struct {
@@ -103,15 +103,15 @@ func (n *Notifier) wants() bool {
 	return n.cfg.Enabled
 }
 
-// the caller is a tracker worker or the circuit breaker: a slow telegram must not
-// hold either, so delivery runs detached and only complains to the log
+// вызывающий это воркер трекера или предохранитель: медленный telegram не должен
+// держать ни того ни другого, поэтому отправка идёт отдельно и только жалуется в лог
 func (n *Notifier) Notify(ev Event) {
 	if !n.HasTransport() || !n.wants() {
 		return
 	}
 	go func() {
-		// budget covers both attempts plus the pause between them, so a slow
-		// first try doesn't eat into the retry window
+		// бюджет покрывает обе попытки плюс паузу между ними, чтобы медленная
+		// первая попытка не съедала окно повтора
 		ctx, cancel := context.WithTimeout(context.Background(), 2*sendTimeout+notifyRetryDelay)
 		defer cancel()
 		var errs []error
@@ -131,8 +131,8 @@ func (n *Notifier) Notify(ev Event) {
 	}()
 }
 
-// transports are independent (a telegram 4xx must not block a webhook retry),
-// so retry happens per-transport rather than by re-running Send as a whole
+// транспорты независимы (4xx от telegram не должен блокировать повтор вебхука),
+// поэтому повтор идёт на каждый транспорт отдельно, а не перезапуском всего Send
 func sendWithRetry(ctx context.Context, send func(context.Context, Event) error, ev Event, transport string) error {
 	err := send(ctx, ev)
 	if err == nil {
@@ -157,8 +157,8 @@ func isRetryable(err error) bool {
 	if errors.As(err, &se) {
 		return se.status >= http.StatusInternalServerError
 	}
-	// no status attached means the request never got an HTTP response at all
-	// (dial/timeout/connection reset) - worth a second try
+	// отсутствие статуса значит, что запрос вообще не получил HTTP-ответа
+	// (дозвон/таймаут/сброс соединения), стоит второй попытки
 	return true
 }
 
@@ -185,8 +185,8 @@ func (n *Notifier) sendTelegram(ctx context.Context, ev Event) error {
 	if ev.URL != "" {
 		text += "\n" + ev.URL
 	}
-	// no parse_mode: release names carry brackets and underscores that would
-	// otherwise have to be escaped for markdown
+	// без parse_mode: в именах релизов есть скобки и подчёркивания, которые иначе
+	// пришлось бы экранировать для markdown
 	body, err := json.Marshal(map[string]any{
 		"chat_id":                  n.cfg.TelegramChatID,
 		"text":                     text,
@@ -232,8 +232,8 @@ func ResolveChatID(ctx context.Context, token string) (string, error) {
 		return "", fmt.Errorf("telegram getUpdates: %s (status %d)", msg, res.StatusCode)
 	}
 
-	// updates can be edited_message, channel_post, callback_query, etc.; only
-	// plain messages carry the chat we want, and we want the most recent one
+	// обновления бывают edited_message, channel_post, callback_query и прочие; только
+	// обычные сообщения несут нужный чат, и нам нужно самое свежее
 	var chatID int64
 	found := false
 	for _, u := range parsed.Result {

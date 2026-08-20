@@ -32,13 +32,12 @@ export function closePopovers() {
 }
 
 export function initGlobalDismiss() {
-  // width changes (rotation, devtools, desktop<->mobile breakpoint) can happen
-  // while the panel is open; re-run the same logic that open/content-switch
-  // already uses so a stale desktop inline max-height never survives into
-  // the mobile bottom sheet (or vice versa). Deferred a frame, same as
-  // layout.js's own resize handling, so html.mobile-layout has already been
-  // flipped (initLayout's listener is bound first, layout.js) by the time
-  // this reads it.
+  // ширина может поменяться (поворот, devtools, переход десктоп-мобильный) прямо
+  // при открытой панели; повторяем ту же логику, что и при открытии и смене
+  // содержимого, чтобы устаревший десктопный инлайновый max-height не переехал
+  // в мобильную нижнюю шторку (и наоборот). Отложено на кадр, как и собственная
+  // обработка ресайза в layout.js, чтобы к моменту чтения html.mobile-layout уже
+  // был переключён (слушатель initLayout вешается первым, layout.js)
   window.addEventListener('resize', function () {
     if (!openHistFilterSelect) return;
     requestAnimationFrame(function () {
@@ -57,11 +56,11 @@ export function initGlobalDismiss() {
     if (e.key === 'Escape') {
       const histPanel = openHistFilterSelect && openHistFilterSelect.querySelector('.hist-filter-panel');
       if (openCustomSelect) {
-        // a select layer open elsewhere on the page absorbs the first Escape
+        // слой селекта, открытый где-то ещё на странице, поглощает первый Escape
         closeOpenCustomSelect();
       } else if (histPanel && histPanel.dataset.filterGroup) {
-        // a group list open inside the filter popup absorbs the first Escape;
-        // the popup itself only closes on the next press
+        // список групп, открытый внутри попапа фильтра, поглощает первый Escape;
+        // сам попап закрывается только следующим нажатием
         renderHistFilterMain(openHistFilterSelect);
       } else {
         closeOpenHistFilterSelect();

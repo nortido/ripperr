@@ -1,7 +1,7 @@
 import { currentView } from './router.js';
 
-// one poller per view: the timers run only while that view is open and the tab
-// is visible; tasks marked onResume also fire the moment the tab comes back
+// один поллер на вид: таймеры идут только пока этот вид открыт, а вкладка
+// видима; задачи с пометкой onResume срабатывают ещё и в момент возврата вкладки
 export function createPoller(view, tasks) {
   let timers = [];
   let bound = false;

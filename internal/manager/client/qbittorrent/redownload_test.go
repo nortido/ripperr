@@ -15,11 +15,11 @@ import (
 	"trackerr/internal/model"
 )
 
-// redownloadStubServer simulates a qbit holding exactly one torrent, matching
-// the sequence ForceRedownload drives it through: export, list/details,
-// delete, then re-add. filesExistedAtDelete is captured inside the delete
-// handler itself so the assertion reflects the real ordering, not a guess
-// about timing.
+// redownloadStubServer изображает qbit ровно с одним торрентом и повторяет
+// последовательность, через которую его прогоняет ForceRedownload: выгрузка,
+// список/детали, удаление, повторное добавление. filesExistedAtDelete
+// фиксируется прямо в обработчике удаления, чтобы проверка отражала реальный
+// порядок, а не догадку о таймингах.
 type redownloadStubServer struct {
 	mu                   sync.Mutex
 	data                 []byte
@@ -30,10 +30,11 @@ type redownloadStubServer struct {
 	dir                  string
 	hash                 string
 	filesExistedAtDelete bool
-	// unsettleAfterAdd: when set, the re-added torrent answers present once
-	// (satisfying addTorrentVerified's ensurePresentAfterAdd check), then
-	// flips absent right after, before ForceRedownload's own post-add settle
-	// check runs. Models qbit's async delete job landing in between the two.
+	// unsettleAfterAdd: когда выставлен, добавленный заново торрент один раз
+	// отвечает присутствием (проходит проверку ensurePresentAfterAdd в
+	// addTorrentVerified), а сразу после переключается в отсутствие, до
+	// собственной проверки ForceRedownload после добавления. Моделирует
+	// асинхронную задачу удаления в qbit, попавшую между этими двумя.
 	unsettleAfterAdd bool
 	vanishNext       bool
 	server           *httptest.Server
@@ -215,9 +216,10 @@ func TestForceRedownload_NoBlackholeDirFailsBeforeDeleting(t *testing.T) {
 	}
 }
 
-// covers a read-only mount (e.g. blackhole bind-mounted ro by mistake): New
-// must still start (the dir already exists, MkdirAll is a no-op on it), and
-// ForceRedownload must refuse before touching qbit's delete endpoint.
+// покрывает монтирование только на чтение (например, blackhole по ошибке
+// примонтирован ro): New всё равно должен стартовать (каталог уже есть, MkdirAll
+// на нём ничего не делает), а ForceRedownload обязан отказать до того, как
+// тронет endpoint удаления в qbit.
 func TestForceRedownload_ReadOnlyBlackholeDirFailsBeforeDeleting(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: permission checks are bypassed")

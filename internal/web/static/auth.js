@@ -19,8 +19,8 @@ export async function loadAuthState() {
   }
   if (!authState.configured && !authSetupSkipped()) { gotoLogin(); return; }
   const logoutBtn = document.getElementById('logout-btn');
-  // under LAN bypass logout is a no-op: the cookie is cleared but the request is
-  // let in by IP anyway, so the button is hidden rather than left dead
+  // при обходе для LAN выход ничего не даёт: кука очищается, но запрос всё равно
+  // пропускается по IP, поэтому кнопку прячем, а не оставляем мёртвой
   if (logoutBtn) logoutBtn.classList.toggle('hidden', !(authState && authState.configured && !authState.lan_bypass));
 }
 
@@ -38,10 +38,10 @@ export function bindLogout() {
   btn.addEventListener('click', async function () {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (_) { /* ponytail: best-effort */ }
+    } catch (_) { /* ponytail: по возможности, без гарантий */ }
     try {
       localStorage.setItem(AUTH_SETUP_SKIP_KEY, '1');
-    } catch (_) { /* ponytail: best-effort */ }
+    } catch (_) { /* ponytail: по возможности, без гарантий */ }
     location.reload();
   });
 }

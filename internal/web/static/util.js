@@ -42,7 +42,7 @@ export function dismissAlertKey(key) {
   dismissed.add(key);
   try {
     localStorage.setItem(DISMISSED_ALERTS_KEY, JSON.stringify(Array.from(dismissed)));
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
 }
 
 export function pruneDismissedAlerts(alerts) {
@@ -58,7 +58,7 @@ export function pruneDismissedAlerts(alerts) {
   if (!changed) return;
   try {
     localStorage.setItem(DISMISSED_ALERTS_KEY, JSON.stringify(Array.from(dismissed)));
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
 }
 
 export function alertIncidentKey(alert) {
@@ -100,9 +100,9 @@ export function trackerDisplayDomain(tracker) {
 
 export const TRACKER_HUE_COUNT = 6;
 
-// the tracker set is fixed, so the hues are assigned by hand: hashing put // rutracker and teamhd on the same one. The four common trackers take the hues
-// that are furthest apart (blue, violet, amber, pink), leaving the two adjacent
-// blue-greens to the rare ones. 0 teal, 1 cyan, 2 blue, 3 violet, 4 amber, 5 pink
+// набор трекеров фиксирован, поэтому оттенки назначены вручную: хеширование сажало // rutracker и teamhd на один и тот же. Четыре частых трекера берут максимально
+// разнесённые оттенки (синий, фиолетовый, янтарный, розовый), оставляя два соседних
+// сине-зелёных редким. 0 бирюзовый, 1 голубой, 2 синий, 3 фиолетовый, 4 янтарный, 5 розовый
 export const TRACKER_HUES = {
   rutracker: 2,
   nnm: 3,
@@ -128,14 +128,14 @@ export function loadStoredPageSize(fallback) {
     if (raw === 'all') return 0;
     const n = parseInt(raw, 10);
     if (PAGE_SIZE_OPTIONS.indexOf(n) >= 0) return n;
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
   return fallback;
 }
 
 export function savePageSize(size) {
   try {
     localStorage.setItem(PAGE_SIZE_KEY, size === 0 ? 'all' : String(size));
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
 }
 
 export function pageSizeQueryLimit(size) {
@@ -192,8 +192,8 @@ export function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-// markup builder: every ${} substitution is escaped, so raw HTML can only enter
-// through another html`` result (or an array of them): no way to forget escapeHtml
+// сборщик разметки: каждая подстановка ${} экранируется, поэтому сырой HTML попадает
+// только через другой результат html`` (или их массив): забыть escapeHtml невозможно
 class Html {
   constructor(value) {
     this.value = value;
@@ -218,7 +218,7 @@ export function html(strings, ...values) {
   return new Html(out);
 }
 
-// escape hatch for markup that is a literal in the source, never data: the icon table
+// лазейка для разметки, которая является литералом в исходнике, а не данными: таблица иконок
 export function rawHtml(value) {
   return new Html(value == null ? '' : String(value));
 }
@@ -262,9 +262,9 @@ export function statusIcon(status, error, streak) {
     iconName = 'help';
     label = t('status.unknown');
   }
-  // the full error text belongs to the click popover only: a hover tooltip
-  // repeated it and covered the neighbouring rows. unknown carries the
-  // tracker's page fragment in the same field, so it gets the same badge
+  // полный текст ошибки только для попапа по клику: подсказка при наведении
+  // дублировала его и закрывала соседние строки. unknown несёт фрагмент
+  // страницы трекера в том же поле, поэтому получает тот же значок
   const attrs = (status === 'error' || status === 'unknown') && error
     ? html` data-error="${error}" class="${cls} status-error-badge"`
     : html` class="${cls}"`;

@@ -10,9 +10,9 @@ import (
 
 const dryRunLimit = 30
 
-// dryReport aggregates the outcome of a dry run. The last processed entry logs
-// the summary: push holds a distribution token until everything is queued, so
-// the counter cannot reach zero while entries are still being distributed.
+// dryReport собирает итог холостого прогона. Последняя обработанная запись пишет
+// сводку: push держит токен раздачи, пока всё не поставлено в очередь, поэтому
+// счётчик не может дойти до нуля, пока записи ещё раздаются.
 type dryReport struct {
 	remaining atomic.Int32
 	queued    atomic.Int32
@@ -30,8 +30,8 @@ func newDryReport(state *State) *dryReport {
 	return r
 }
 
-// add registers one queued entry. Must be called before the entry is sent to a
-// tracker channel, otherwise a fast worker could zero the counter too early.
+// add регистрирует одну поставленную в очередь запись. Вызывать до отправки записи
+// в канал трекера, иначе быстрый воркер обнулит счётчик слишком рано.
 func (r *dryReport) add() {
 	if r == nil {
 		return

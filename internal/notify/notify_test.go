@@ -139,9 +139,9 @@ func TestNotifySkipsWhenDisabled(t *testing.T) {
 	n := New(Config{WebhookURL: srv.URL, Enabled: false})
 	n.Notify(Event{Kind: KindUpdated, Text: "should not send"})
 
-	// wants() is checked synchronously before Notify ever spawns its delivery
-	// goroutine, so a non-blocking read proves nothing was scheduled - no
-	// sleep needed to "wait and see".
+	// wants() проверяется синхронно ещё до того, как Notify запустит горутину
+	// доставки, поэтому неблокирующее чтение доказывает, что ничего не запланировано,
+	// спать и ждать не нужно.
 	select {
 	case <-hit:
 		t.Fatal("webhook was called while notifications are disabled")
@@ -321,7 +321,7 @@ func TestNotifyDoesNotRetryWebhookOn4xx(t *testing.T) {
 		t.Fatal("webhook was not called")
 	}
 	// 4xx is not retryable, so sendWithRetry never reaches the delay branch;
-	// a short guard window is enough to catch an errant second request
+	// короткого окна хватает, чтобы поймать ошибочный второй запрос
 	select {
 	case <-hits:
 		t.Fatal("webhook was retried after 400")
@@ -346,9 +346,9 @@ func TestNotifyRetriesOnlyTheFailingTransport(t *testing.T) {
 	defer tgSrv.Close()
 	telegramAPIURL = tgSrv.URL + "/bot%s/sendMessage"
 
-	// a listener that accepts and immediately closes the connection makes the
-	// webhook client fail with a genuine network error (no HTTP status at
-	// all), without ever touching the real network
+	// слушатель, который принимает и тут же закрывает соединение, роняет
+	// клиент вебхука настоящей сетевой ошибкой (вообще без HTTP-статуса),
+	// не трогая при этом реальную сеть
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

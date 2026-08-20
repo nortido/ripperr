@@ -417,11 +417,11 @@ export function buildMobileNameSearchSlot() {
   const headerExpanded = active ? ' is-search-expanded' : '';
   return {
     headerClass: headerExpanded,
-    // .mobile-name-search-toggle is a sibling of .mobile-name-search-slot
-    // (not nested inside it): the search button and the close button must
-    // sit in a fixed-position box that is completely independent of the
-    // search-field's own animated geometry, so the search button is
-    // physically unable to move.
+    // .mobile-name-search-toggle это сосед .mobile-name-search-slot
+    // (а не вложен в него): кнопки поиска и закрытия обязаны лежать в блоке
+    // с фиксированной позицией, полностью независимом от анимируемой геометрии
+    // самого поля поиска, чтобы кнопка поиска физически не могла
+    // сдвинуться.
     html: html`<div class="${slotCls}"><div class="mobile-name-search-field"><input type="text" class="name-filter-input mobile-name-filter-input" value="${historyState.name}" placeholder="${t('dash.nameFilterPlaceholder')}" autocomplete="off"></div></div><div class="mobile-name-search-toggle"><button type="button" class="btn btn-sm btn-icon name-filter-clear mobile-name-filter-clear" title="${t('dash.nameFilterClear')}" aria-label="${t('dash.nameFilterClear')}"><span data-icon="x"></span></button><button type="button" class="${btnCls}" id="dash-mobile-name-search-btn" aria-haspopup="true" aria-expanded="${active ? 'true' : 'false'}" title="${title}" aria-label="${title}"><span data-icon="search"></span>${dotHtml}</button></div>`,
   };
 }

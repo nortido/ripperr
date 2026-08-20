@@ -283,8 +283,8 @@ func (s *service) destroyFlareSession(id int) {
 	}
 }
 
-// DestroyFlareSessions removes flare sessions of all trackers; called on shutdown
-// so FlareSolverr is not left with orphaned browser sessions.
+// DestroyFlareSessions удаляет flare-сессии всех трекеров; вызывается при остановке,
+// чтобы у FlareSolverr не осталось осиротевших сессий браузера.
 func (s *service) DestroyFlareSessions() {
 	for id := range s.handlerRegistry {
 		s.destroyFlareSession(id)

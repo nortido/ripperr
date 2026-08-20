@@ -641,7 +641,7 @@ func TestPutIntegrationsMerge(t *testing.T) {
 }
 
 func TestPutIntegrationsAutoResolvesChatID(t *testing.T) {
-	// stands in for Telegram's getUpdates endpoint
+	// подменяет endpoint getUpdates у Telegram
 	fakeTelegram := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true,"result":[{"message":{"chat":{"id":777}}}]}`))
 	}))
@@ -989,8 +989,8 @@ func TestPostPlanForceQueueFull(t *testing.T) {
 	state := runner.NewState()
 	srv := New(store, func() {}, testEffective, ":0", state, nil)
 
-	// the force queue is bounded; run it dry so RequestForce starts reporting
-	// false instead of hardcoding the package-private capacity here
+	// очередь форса ограничена; вычерпываем её, чтобы RequestForce начал возвращать
+	// false, вместо того чтобы зашивать здесь приватную ёмкость пакета
 	for state.RequestForce("filler") {
 	}
 
@@ -1549,7 +1549,7 @@ func TestHandleRedownload(t *testing.T) {
 	store := &fakeStore{}
 	srv := newTestServer(store)
 
-	// Test success
+	// Проверяем успех
 	testURL := "https://rutracker.org/forum/viewtopic.php?t=123"
 	testURLHash := storagePkg.URLHash(testURL)
 	entries := []*model.Entry{
@@ -1576,7 +1576,7 @@ func TestHandleRedownload(t *testing.T) {
 		t.Fatal("ok should be true")
 	}
 
-	// Test torrent not found
+	// Проверяем, что торрент не найден
 	qbitClientFactory = fakeQbitFactory(nil, nil)
 	req = httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
 	req.SetPathValue("hash", testURLHash)
@@ -1593,7 +1593,7 @@ func TestHandleRedownload(t *testing.T) {
 		t.Fatalf("error = %q, want torrent not found in qbittorrent", errResp["error"])
 	}
 
-	// Test ForceRedownload error
+	// Проверяем ошибку ForceRedownload
 	entries = []*model.Entry{
 		{
 			URL:  testURL,

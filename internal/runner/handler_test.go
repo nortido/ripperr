@@ -1271,9 +1271,9 @@ func TestPushDryRunLimitsAndSkipsWrites(t *testing.T) {
 	}
 }
 
-// barrierTracker holds every Response until two of them are in flight at once.
-// With a per-tracker lock the two workers meet at the barrier; with one global
-// lock the second never gets in and the test times out.
+// barrierTracker держит каждый Response, пока их не окажется два одновременно.
+// При блокировке на трекер два воркера встречаются на барьере; при одной глобальной
+// блокировке второй не заходит вовсе и тест падает по таймауту.
 type barrierTracker struct {
 	safeFakeTracker
 	arrive  chan struct{}

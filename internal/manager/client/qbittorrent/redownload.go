@@ -11,23 +11,23 @@ import (
 )
 
 const (
-	// redownloadAddAttempts is how many times the re-add is tried before failing.
+	// redownloadAddAttempts это сколько раз пробуем добавить заново до отказа.
 	redownloadAddAttempts = 3
 )
 
 var (
-	// redownloadSettleDelay gives qBittorrent time to finish deleting files: the
-	// torrent leaves the list right away, but the removal job keeps running and
-	// re-adding the same infohash too early is silently rejected.
+	// redownloadSettleDelay даёт qBittorrent время дочистить файлы: торрент
+	// уходит из списка сразу, но задача удаления продолжает работать, и
+	// слишком раннее повторное добавление того же infohash молча отвергается.
 	redownloadSettleDelay = 3 * time.Second
-	// redownloadRetryDelay is the pause between re-add attempts.
+	// redownloadRetryDelay это пауза между попытками добавить заново.
 	redownloadRetryDelay = 5 * time.Second
 )
 
 func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error {
 	logger.Info(fmt.Sprintf("force redownload: exporting torrent %s", torrentHash))
 
-	// Step 1: Export torrent to memory
+	// Шаг 1: выгружаем торрент в память
 	torrentData, err := c.client.ExportTorrentCtx(ctx, torrentHash)
 	if err != nil {
 		return fmt.Errorf("export torrent failed: %w", err)
@@ -36,13 +36,13 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		return fmt.Errorf("export torrent failed: empty result")
 	}
 
-	// Step 2: Get torrent name and comment
+	// Шаг 2: берём имя и комментарий торрента
 	name, comment, err := c.GetTorrentDetails(ctx, torrentHash)
 	if err != nil {
 		return fmt.Errorf("get torrent details failed: %w", err)
 	}
 
-	// Step 3: Get category, tag and other parameters
+	// Шаг 3: берём категорию, тег и прочие параметры
 	entries, err := c.List(ctx, model.FilterOptions{})
 	if err != nil && !errors.Is(err, model.ErrPartialList) {
 		return fmt.Errorf("list torrents failed: %w", err)
@@ -70,20 +70,20 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		MaxSeedingTime: entry.MaxSeedingTime,
 	}
 
-	// Step 4: blackhole the bytes and the add parameters before anything
-	// destructive happens. If qbit dies or the request is canceled anywhere
-	// after this point, the pair on disk is enough to finish the re-add later.
+	// Шаг 4: складываем байты и параметры добавления в blackhole до всего
+	// разрушительного. Если qbit умрёт или запрос отменят где-то дальше этой
+	// точки, пары на диске хватит, чтобы дозавершить повторное добавление позже.
 	if err = c.writeBlackholePair(torrentData, "", opts); err != nil {
 		return fmt.Errorf("blackhole write failed: %w", err)
 	}
 
-	// Step 5: Delete torrent with files, bypassing settings
+	// Шаг 5: удаляем торрент вместе с файлами в обход настроек
 	logger.Info(fmt.Sprintf("force redownload: deleting torrent %s with files", torrentHash))
 	if err = c.client.DeleteTorrentsCtx(ctx, []string{torrentHash}, true); err != nil {
 		return fmt.Errorf("delete torrent failed: %w", err)
 	}
 
-	// Step 6: Wait until torrent is gone
+	// Шаг 6: ждём, пока торрент исчезнет
 	logger.Info(fmt.Sprintf("force redownload: waiting for torrent %s to be deleted", torrentHash))
 	absent, err := c.waitUntilAbsent(ctx, torrentHash)
 	if err != nil {
@@ -93,8 +93,8 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		return fmt.Errorf("torrent did not disappear after deletion")
 	}
 
-	// Step 7: Let the removal job finish on disk, then confirm the torrent is
-	// really gone before reusing its infohash.
+	// Шаг 7: даём задаче удаления доработать на диске, потом убеждаемся, что
+	// торрент действительно исчез, прежде чем переиспользовать его infohash.
 	if err = sleepCtx(ctx, redownloadSettleDelay); err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		return fmt.Errorf("torrent reappeared after deletion")
 	}
 
-	// Step 8: Add torrent back from exported bytes, retrying a silent rejection
+	// Шаг 8: добавляем торрент обратно из выгруженных байтов, повторяя при молчаливом отказе
 	logger.Info(fmt.Sprintf("force redownload: re-adding torrent %s", torrentHash))
 	var addErr error
 	for attempt := 1; attempt <= redownloadAddAttempts; attempt++ {
@@ -115,7 +115,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 			break
 		}
 		if errors.Is(addErr, model.ErrAlreadyAdded) {
-			// A previous attempt landed after our check: the torrent is back.
+			// Предыдущая попытка дошла уже после нашей проверки: торрент вернулся.
 			logger.Info(fmt.Sprintf("force redownload: torrent %s is already back", torrentHash))
 			addErr = nil
 			break
@@ -126,19 +126,19 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		logger.Warn(fmt.Sprintf("force redownload: add attempt %d/%d for %s failed: %v",
 			attempt, redownloadAddAttempts, torrentHash, addErr))
 		if err = sleepCtx(ctx, redownloadRetryDelay); err != nil {
-			// leave the blackhole pair on disk: the sweeper picks it up later
+			// оставляем пару blackhole на диске: подметальщик подберёт её позже
 			return err
 		}
 	}
 	if addErr != nil {
-		// leave the blackhole pair on disk: the sweeper picks it up later
+		// оставляем пару blackhole на диске: подметальщик подберёт её позже
 		return fmt.Errorf("add torrent failed: %w", addErr)
 	}
 
-	// the add itself succeeded, but qbit's own delete-with-files job from step 5
-	// can still be racing to take the freshly re-added torrent back down; only
-	// drop the safety net once presence survives the same settle wait the
-	// sweeper trusts, otherwise leave it for the sweeper to sort out
+	// само добавление удалось, но задача qbit на удаление с файлами из шага 5
+	// всё ещё может гнаться снести только что добавленный торрент; убираем
+	// страховку лишь когда присутствие переживает ту же задержку, которой
+	// доверяет подметальщик, иначе оставляем разбираться ему
 	if !c.blackholeSettled(ctx, torrentHash) {
 		logger.Info(fmt.Sprintf("force redownload: %s not confirmed settled, leaving blackhole pair for the sweeper", torrentHash))
 		return nil

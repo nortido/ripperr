@@ -18,13 +18,13 @@ func NewState() *State {
 	return &State{trigger: make(chan bool, 1), force: make(chan string, forceQueueSize)}
 }
 
-// forceQueueSize bounds how many forced releases can wait to be picked up by
-// the runner; extras are dropped instead of blocking the HTTP handler, and a
-// dropped release keeps its force_check flag for the next scheduled pass. Sized
-// for "force all", which queues a whole filtered list at once, not for clicks.
+// forceQueueSize ограничивает, сколько форсированных релизов могут ждать, пока их
+// заберёт раннер; лишние отбрасываются, а не блокируют HTTP-обработчик, и
+// отброшенный релиз сохраняет флаг force_check до следующего прохода. Размер
+// рассчитан на "форсировать всё", ставящее в очередь весь отфильтрованный список разом, а не на клики.
 const forceQueueSize = 4096
 
-// normalQueueSize bounds how many entries can wait in a tracker's normal queue.
+// normalQueueSize ограничивает, сколько записей могут ждать в обычной очереди трекера.
 const normalQueueSize = 4096
 
 func (s *State) Running() bool {

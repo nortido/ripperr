@@ -15,7 +15,7 @@ type Service struct {
 	*sqlite.Client
 }
 
-// GetTracker shadows the embedded sqlite.Client method: it returns *tracker.Tracker, not *storage.Tracker.
+// GetTracker перекрывает метод встроенного sqlite.Client: он возвращает *tracker.Tracker, а не *storage.Tracker.
 func (s *Service) GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error) {
 	var sttr *storage.Tracker
 

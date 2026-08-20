@@ -60,8 +60,8 @@ func (c *authCache) set(doc *authDoc) {
 }
 
 func (s *Server) loadAuth(ctx context.Context) (*authDoc, error) {
-	// loaded is true even when doc is nil: "auth not configured" is itself
-	// a cached state, not a cache miss.
+	// loaded истинно даже когда doc нулевой: "авторизация не настроена" это тоже
+	// закешированное состояние, а не промах кеша.
 	if doc, loaded := s.authCache.get(); loaded {
 		return doc, nil
 	}

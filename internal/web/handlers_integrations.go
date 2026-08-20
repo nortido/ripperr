@@ -23,7 +23,7 @@ func (s *Server) handleGetIntegrations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, json.RawMessage(settings.IntegrationsJSON(&cfg)))
 }
 
-// ponytail: package vars so tests can fake Telegram without a live call, same pattern as qbitClientFactory
+// ponytail: переменные пакета, чтобы тесты подменяли Telegram без реального вызова, тот же приём, что и qbitClientFactory
 var telegramChatIDResolver = notify.ResolveChatID
 
 var sendNotification = func(ctx context.Context, cfg notify.Config, ev notify.Event) error {
@@ -60,14 +60,14 @@ func (s *Server) resolveTelegramChatID(ctx context.Context, body json.RawMessage
 		} `json:"notifications"`
 	}
 	if err := json.Unmarshal(body, &patch); err != nil {
-		return body, nil // let MergeIntegrations surface the JSON error
+		return body, nil // пусть ошибку JSON покажет MergeIntegrations
 	}
 	token := patch.Notifications.Telegram.BotToken
 	if token == nil {
 		return body, nil
 	}
 	if *token == "" {
-		// token cleared: drop whatever chat id was resolved for the old one
+		// токен очищен: выбрасываем любой chat id, вычисленный для старого
 		return setTelegramChatID(body, "")
 	}
 	cfg := s.effective()
@@ -82,9 +82,9 @@ func (s *Server) resolveTelegramChatID(ctx context.Context, body json.RawMessage
 }
 
 func setTelegramChatID(body json.RawMessage, chatID string) (json.RawMessage, error) {
-	// walk the raw patch as map[string]json.RawMessage instead of a mirrored
-	// struct, so fields we don't touch here (qbit, flaresolverr, proxy,
-	// webhook, enabled...) survive untouched even as the patch shape evolves
+	// обходим сырой патч как map[string]json.RawMessage, а не зеркальной
+	// структурой, чтобы поля, которые мы тут не трогаем (qbit, flaresolverr, proxy,
+	// webhook, enabled...), оставались нетронутыми даже по мере изменения формы патча
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(body, &top); err != nil {
 		return nil, err
@@ -253,15 +253,15 @@ type qbitCategoriesClient interface {
 	ForceRedownload(ctx context.Context, torrentHash string) error
 }
 
-// ponytail: per-request factory, no long-lived shared qbit client in HTTP handlers
+// ponytail: фабрика на каждый запрос, никакого долгоживущего общего клиента qbit в HTTP-обработчиках
 var qbitClientFactory = func(cfg model.ManagerConfig) (qbitCategoriesClient, error) {
 	return qbittorrent.New(cfg)
 }
 
 func (s *Server) qbitManagerConfig(cfg config.App) model.ManagerConfig {
-	// BlackholeDir stays unset here: qbittorrent.New MkdirAll's it when non-empty,
-	// and a connectivity test or categories fetch shouldn't create that dir as a
-	// side effect. handleRedownload sets it explicitly after calling this.
+	// BlackholeDir здесь не выставляется: qbittorrent.New делает по нему MkdirAll, когда он непустой,
+	// а проверка связи или загрузка категорий не должны создавать этот каталог
+	// побочным эффектом. handleRedownload выставляет его явно после этого вызова.
 	return model.ManagerConfig{
 		Host:     cfg.Manager.QbitTorrent.Host,
 		Username: cfg.Manager.QbitTorrent.Username,

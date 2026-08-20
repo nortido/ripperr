@@ -71,8 +71,9 @@ func main() {
 		return cfg
 	}
 
-	// registry survives reload, so the hook is wired once here; each call reads
-	// config fresh via effective() to pick up settings saved after startup
+	// реестр переживает перезагрузку, поэтому хук вешается здесь один раз; каждый
+	// вызов берёт свежий конфиг через effective(), чтобы подхватить настройки,
+	// сохранённые уже после старта
 	breakerAlerts.SetHook(func(open bool, tracker, errMsg string) {
 		n := notify.New(notify.Config(effective().Notify))
 		if open {
@@ -181,9 +182,10 @@ func connectDB(ctx context.Context, cfg config.App) (*sql.DB, *storage.Service, 
 	if err != nil {
 		return nil, nil, err
 	}
-	// a single writer connection sidesteps "database is locked" errors entirely. the rollback
-	// journal is used instead of WAL because WAL needs a shared-memory index file that a
-	// macOS bind mount does not keep coherent, so a host process opening the same file can drop committed transactions
+	// единственное пишущее соединение полностью снимает ошибки "database is locked".
+	// журнал отката используется вместо WAL, потому что WAL нужен файл индекса в
+	// разделяемой памяти, а bind mount в macOS не держит его согласованным, и процесс
+	// на хосте, открывший тот же файл, может потерять закоммиченные транзакции
 	dbConn.SetMaxOpenConns(1)
 	if err := dbConn.PingContext(ctx); err != nil {
 		_ = dbConn.Close()
@@ -201,9 +203,9 @@ func loadEnv() {
 	if dir == "" {
 		dir = config.DefaultConfigDir
 	}
-	// CONFIG_DIR itself isn't parsed via envconfig yet at this point (chicken-and-egg:
-	// it needs to be known before we can load the .env that might set other vars), so
-	// it's read straight from the OS env here.
+	// сам CONFIG_DIR на этом этапе ещё не разобран через envconfig (курица и яйцо:
+	// его нужно знать до загрузки .env, который может выставить остальные переменные),
+	// поэтому читаем его прямо из окружения ОС.
 	if envPath := filepath.Join(dir, ".env"); fileExists(envPath) {
 		_ = godotenv.Load(envPath)
 		return

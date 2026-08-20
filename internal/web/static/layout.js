@@ -21,7 +21,7 @@ export function applyTheme(theme) {
   });
   try {
     localStorage.setItem(THEME_KEY, t);
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
 }
 
 export function initTheme() {
@@ -45,7 +45,7 @@ export function loadSidebarCollapsedPref() {
 export function saveSidebarCollapsedPref(collapsed) {
   try {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
 }
 
 export const SIDEBAR_WIDE_MIN = 1200;
@@ -177,7 +177,7 @@ export function applyMobileLayout() {
     // одна строка таблицы. Начиная с 480px ужимать нечего
     if (scale < PAGE_SCALE_MAX) {
       app.classList.add('page-scaled');
-      // on the root so the value survives .app being re-rendered
+      // на корне, чтобы значение пережило перерисовку .app
       document.documentElement.style.setProperty('--page-scale', String(scale));
     } else {
       app.classList.remove('page-scaled');
@@ -193,9 +193,9 @@ export function applyMobileLayout() {
   if (layoutChanged) syncNameFilterLayout();
 }
 
-// the collapsed state is derived from the window width, so it has to land in the
-// same frame as the resize event: deferring it to rAF paints the sidebar expanded
-// first and then collapses it. Runs before the throttled applyMobileLayout.
+// свёрнутое состояние выводится из ширины окна, поэтому должно попасть в тот же
+// кадр, что и событие resize: перенос в rAF сначала рисует боковую панель развёрнутой
+// и только потом сворачивает её. Выполняется до придушенного applyMobileLayout.
 export function syncSidebarToWidth() {
   const mobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;
   const sidebar = mobile !== layoutWasMobile ? document.getElementById('sidebar') : null;

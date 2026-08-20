@@ -518,7 +518,7 @@ function initLang() {
   try {
     const stored = localStorage.getItem(LANG_KEY);
     if (stored === 'ru' || stored === 'en') currentLang = stored;
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
   document.documentElement.setAttribute('lang', currentLang);
 }
 
@@ -530,7 +530,7 @@ function setLang(lang) {
   const next = lang === 'en' ? 'en' : 'ru';
   try {
     localStorage.setItem(LANG_KEY, next);
-  } catch (_) { /* ponytail: localStorage may be unavailable */ }
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
   location.reload();
 }
 
@@ -561,9 +561,9 @@ function formatTimezoneLabel(entry) {
   return timezoneCityName(entry.id) + ' (' + offset + ')';
 }
 
-// timezoneOffset asks the platform for the zone's current UTC offset instead
-// of the server (Intl.DateTimeFormat with longOffset gives "GMT+03:00" style
-// strings, and plain "GMT" for UTC, hence the slice(3) and the UTC special case).
+// timezoneOffset спрашивает текущее смещение зоны от UTC у платформы, а не у
+// сервера (Intl.DateTimeFormat с longOffset даёт строки вида "GMT+03:00", а для
+// UTC просто "GMT", отсюда slice(3) и отдельный случай для UTC).
 function timezoneOffset(id) {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: id, timeZoneName: 'longOffset' }).formatToParts(new Date());
   const name = (parts.find(function (p) { return p.type === 'timeZoneName'; }) || {}).value || 'GMT';

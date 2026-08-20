@@ -272,8 +272,8 @@ func TestPurgeDuplicateNames(t *testing.T) {
 	if err := c.AddItem(ctx, &storage.Item{URLHash: "loser2", Name: " same release "}); err != nil {
 		t.Fatal(err)
 	}
-	// check_log enforces the same-name uniqueness itself, so a pre-existing loser row
-	// there is seeded directly, bypassing AddCheckLog's own upsert/self-cleanup logic
+	// check_log сам обеспечивает уникальность имени, поэтому заранее существующая проигравшая строка
+	// заводится там напрямую, в обход логики upsert и самоочистки в AddCheckLog
 	if _, err := c.db.ExecContext(ctx, `INSERT INTO check_log (url_hash, item_name, status) VALUES (?, ?, 'updated')`, "old-hash", "Same Release"); err != nil {
 		t.Fatal(err)
 	}
@@ -340,9 +340,9 @@ func TestForceCheckAllSkipsIgnoredWhenListDoes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// h1: has a check_log row, not ignored -> forced
-	// h2: no check_log row -> untouched
-	// h3: has a check_log row but is ignored -> untouched
+	// h1: строка в check_log есть, не игнорируется, значит форсируется
+	// h2: строки в check_log нет, значит не трогаем
+	// h3: строка в check_log есть, но запись игнорируется, значит не трогаем
 	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "h1", Status: "updated"}); err != nil {
 		t.Fatal(err)
 	}

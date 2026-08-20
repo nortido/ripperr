@@ -84,9 +84,9 @@ type cookieCompletenessChecker interface {
 	CookiesIncomplete(cookies []*http.Cookie) bool
 }
 
-// loginAuthValidator is implemented only by trackers that must have auth cookies
-// in the client after Flare login (e.g. kinozal uid/pass). Session-based trackers
-// (rutracker) do not implement it.
+// loginAuthValidator реализуют только трекеры, у которых после входа через Flare
+// в клиенте обязаны быть куки авторизации (например uid/pass у kinozal). Сессионные
+// трекеры (rutracker) его не реализуют.
 type loginAuthValidator interface {
 	LoginAuthIncomplete(cookies []*http.Cookie) bool
 	LoginAuthHint() string
