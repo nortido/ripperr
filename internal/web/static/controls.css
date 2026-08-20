@@ -357,11 +357,10 @@
   white-space: nowrap;
 }
 
-/* padding с отрицательным margin расширяет зону нажатия до 38 пикселей по
-   высоте, не сдвигая соседей в строке */
+/* без вертикального расширения: на лейбле висит stopPropagation, и разогнанная
+   зона нажатия съедала полосу строки, которая должна раскрывать трекер */
 .tracker-row-toggle {
-  margin: -8px 0;
-  padding: 8px 0;
+  margin: 0;
   font-size: 0;
   flex-shrink: 0;
 }
@@ -588,6 +587,22 @@
   50% { opacity: 0.85; }
 }
 
+/* спиннеры не выключаем: вращение здесь единственный признак «идёт запрос»,
+   без него кнопка выглядит зависшей. Замедляем, чтобы движение не мельтешило.
+   Пульсация строки декоративная, строка и так приглушена, её снимаем */
+@media (prefers-reduced-motion: reduce) {
+  .btn-refresh.is-spinning svg,
+  .btn-test-tracker.is-spinning svg,
+  .btn-action-redownload.is-spinning svg {
+    animation-duration: 2.4s;
+  }
+
+  .table-dash-releases tr.is-redownloading {
+    animation: none;
+    opacity: 0.65;
+  }
+}
+
 .btn-plan-force {
   color: var(--hue-amber);
   border-color: transparent;
@@ -705,10 +720,15 @@
   grid-column: 1 / -1;
 }
 
-/* одиночное числовое поле вне .form-row: во всю ширину карточки оно выглядит
-   как поле для длинного текста */
-.form-group-narrow {
-  max-width: 260px;
+/* поля прижаты к низу ячейки: подпись в две строки больше не сдвигает своё
+   поле вниз относительно соседей по ряду. Лишняя высота уходит над подписью.
+   margin-bottom внутри грида обнуляется: расстояние задаёт gap, а обнуление
+   этого margin только у :last-child сдвигало последнее поле ровно на 18px */
+.form-row > .form-group {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  margin-bottom: 0;
 }
 
 .form-label {
@@ -955,41 +975,32 @@
   font-size: 15px;
 }
 
+/* бегунок нарисован фоном, а не ::after: input это replaced element, и Firefox
+   не генерирует на нём псевдоэлементы, там переключатель оставался пустой
+   пилюлей без бегунка. Фон работает во всех движках, ездит background-position */
 .form-switch input {
   appearance: none;
   -webkit-appearance: none;
-  position: relative;
   flex-shrink: 0;
   width: 38px;
   height: 22px;
   margin: 0;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--seg-track-bg);
+  background-color: var(--seg-track-bg);
+  background-image: radial-gradient(circle at 50% 50%, var(--text-muted) 0 8px, transparent 8px);
+  background-repeat: no-repeat;
+  background-size: 20px 20px;
+  background-position: 0 50%;
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition);
-}
-
-.form-switch input::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  transition: transform var(--transition), background var(--transition);
+  transition: background-color var(--transition), background-position var(--transition), border-color var(--transition);
 }
 
 .form-switch input:checked {
-  background: var(--accent-from);
+  background-color: var(--accent-from);
+  background-image: radial-gradient(circle at 50% 50%, #fff 0 8px, transparent 8px);
+  background-position: 100% 50%;
   border-color: var(--accent-from);
-}
-
-.form-switch input:checked::after {
-  background: #fff;
-  transform: translateX(16px);
 }
 
 .form-switch input:focus-visible {
@@ -1007,8 +1018,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .form-switch input,
-  .form-switch input::after {
+  .form-switch input {
     transition-duration: 0.001ms;
   }
 }

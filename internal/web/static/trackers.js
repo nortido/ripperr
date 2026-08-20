@@ -16,10 +16,17 @@ export function activeDomainOptionsHtml(domain, mirrors, selected) {
   if (domain) {
     parts.push(html`<option value="${domain}"${sel === domain ? ' selected' : ''}>${domain}</option>`);
   }
+  const known = [domain];
   (mirrors || []).forEach(function (m) {
     if (!m || m === domain) return;
+    known.push(m);
     parts.push(html`<option value="${m}"${sel === m ? ' selected' : ''}>${m}</option>`);
   });
+  // сохранённый домен могли выкинуть из зеркал: без своей опции селект молча
+  // падает в "", расходится с _trackerSaved и трекер остаётся вечно грязным
+  if (sel && known.indexOf(sel) === -1) {
+    parts.push(html`<option value="${sel}" selected>${sel}</option>`);
+  }
   return html`${parts}`;
 }
 

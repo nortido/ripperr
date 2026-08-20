@@ -1167,7 +1167,11 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 }
 
-@media (min-width: 561px) and (max-width: 1440px) {
+/* до 1200px колонки времени и статуса узкие (110 и 84), там мельче шрифт и
+   поджатые поля действительно нужны, иначе «ПОСЛЕДНЯЯ ПРОВЕРКА» не влезает.
+   С 1200px они становятся 130 и 100, всё помещается обычными 12px, и прежняя
+   граница 1440 давала только видимый скачок шрифта и сдвиг колонки влево */
+@media (min-width: 561px) and (max-width: 1199px) {
   html:not(.mobile-layout) .table-dash-releases th.col-status,
   html:not(.mobile-layout) .table-dash-releases th.col-time,
   html:not(.mobile-layout) .table-dash-releases th.plan-recheck-cell {
@@ -1263,14 +1267,6 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 }
 
 @media (min-width: 901px) and (max-width: 1199px) {
-  .table-dash-releases th.col-status .th-label-full {
-    display: none;
-  }
-
-  .table-dash-releases th.col-status .th-label-short {
-    display: inline;
-  }
-
   .table-dash-releases th.col-status,
   .table-dash-releases th.col-time,
   .table-dash-releases th.plan-recheck-cell {
@@ -1282,10 +1278,6 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
     overflow-wrap: normal;
   }
 
-  .table-dash-releases .col-status {
-    width: 92px;
-    max-width: 92px;
-  }
 }
 
 @media (min-width: 901px) and (max-width: 1150px) {
@@ -1299,9 +1291,13 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
     padding-right: 8px;
   }
 
+  /* паддинг задан и для td: выше он сужается только у th, и чип трекера
+     оставался на исходных 20px, уезжая вправо от названия колонки */
   .table-dash-releases .col-tracker {
     width: 112px;
     max-width: 112px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 
   .table-dash-releases .col-time {

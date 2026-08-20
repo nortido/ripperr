@@ -105,15 +105,20 @@ export function refreshSidebarChrome() {
       hydrateIcons(btn);
     }
   }
+  // подсказка нужна только когда подпись скрыта. title="" это не отсутствие
+  // атрибута, а пустой атрибут, который остаётся висеть в разметке
   if (brand) {
     const showFull = !collapsed || overlay;
     brand.textContent = showFull ? 'trackerr' : 't';
-    brand.setAttribute('title', showFull ? '' : 'trackerr');
+    if (showFull) brand.removeAttribute('title');
+    else brand.setAttribute('title', 'trackerr');
   }
   const hideLabels = collapsed && !overlay;
   document.querySelectorAll('.sidebar-nav .nav-link, .sidebar-footer .nav-link').forEach(function (link) {
     const label = link.querySelector('.nav-label');
-    if (label) link.setAttribute('title', hideLabels ? label.textContent : '');
+    if (!label) return;
+    if (hideLabels) link.setAttribute('title', label.textContent);
+    else link.removeAttribute('title');
   });
 }
 

@@ -130,8 +130,10 @@ export function showView(view, updateHash) {
   }
   // проверка стоит после обновления хеша, а не в начале функции: на клике по
   // пункту меню showView вызывается дважды (сам клик и следом hashchange), и в
-  // начале функции подтверждение спрашивалось бы два раза
-  if (currentView === 'trackers' && view !== 'trackers' && hasUnsavedTrackers() &&
+  // начале функции подтверждение спрашивалось бы два раза.
+  // view не сравнивается с currentView: клик по уже активному пункту «Трекеры»
+  // хеш не меняет, доходит до loadTrackers() и точно так же стирает правки
+  if (currentView === 'trackers' && hasUnsavedTrackers() &&
       !confirm(t('trackers.unsavedWarn'))) {
     const back = buildHash('trackers');
     if (location.hash !== back) history.replaceState(null, '', back);
@@ -164,9 +166,12 @@ export function initRouter() {
     }
   });
 
-  // закрытие вкладки и перезагрузка мимо showView не проходят
+  // закрытие вкладки и перезагрузка мимо showView не проходят.
+  // Safari, включая iOS, показывает диалог по returnValue, а не по preventDefault
   window.addEventListener('beforeunload', function (e) {
-    if (currentView === 'trackers' && hasUnsavedTrackers()) e.preventDefault();
+    if (currentView !== 'trackers' || !hasUnsavedTrackers()) return;
+    e.preventDefault();
+    e.returnValue = '';
   });
 
 }

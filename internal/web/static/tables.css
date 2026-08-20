@@ -125,7 +125,10 @@
   vertical-align: middle;
 }
 
-.table-dash-releases .col-status {
+/* .table. в селекторе не для красоты: ниже стоит общее .table .col-status с
+   шириной 48px, и при равной специфичности оно перебивало эту ширину, потому
+   что идёт позже. Колонка схлопывалась до 48px, отсюда и короткая подпись */
+.table.table-dash-releases .col-status {
   width: 84px;
   max-width: 84px;
   text-align: center;
@@ -197,7 +200,9 @@ td.plan-recheck-cell {
     padding-right: 12px;
   }
 
-  .table-dash-releases .col-status {
+  /* .table. как у базового правила выше, иначе оно перебивает эту ширину
+     своей более высокой специфичностью и колонка остаётся 84px */
+  .table.table-dash-releases .col-status {
     width: 100px;
     max-width: 100px;
   }

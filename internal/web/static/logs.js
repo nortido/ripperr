@@ -105,7 +105,11 @@ export async function copyLogs(btn) {
   const text = visibleLogItems().map(function (item) {
     return formatLogTime(item.time) + ' [' + (item.level || 'INFO').toUpperCase() + '] ' + (item.message || '');
   }).join('\n');
-  if (!text) return;
+  // молчаливый выход выглядел как сломанная кнопка, когда под фильтром пусто
+  if (!text) {
+    showToast(t('logs.copyEmpty'), 'info');
+    return;
+  }
   try {
     // clipboard API живёт только в secure context, а приложение обычно открыто
     // по http на адрес в локальной сети, где его просто нет

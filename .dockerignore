@@ -1,0 +1,18 @@
+# Dockerfile делает COPY . /app, поэтому всё лишнее иначе уезжает в слой сборки.
+# .env хранит пароли трекеров, volume/ это боевая SQLite-база: в финальный образ
+# они не попадают (оттуда копируется только /app/main), но в кеше сборки лежат.
+# vendor/ не исключать: go build собирает из него, без него сборка упадёт.
+
+.git
+.gitignore
+.dockerignore
+.idea
+.cursor
+
+.env
+volume
+bin
+main
+
+.DS_Store
+*.md

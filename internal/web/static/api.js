@@ -12,6 +12,9 @@ function offlineBanner() {
     el.id = 'offline-banner';
     el.className = 'offline-banner';
     el.setAttribute('role', 'status');
+    // текст задаётся один раз при создании: если писать его в setOffline, то
+    // role="status" зачитает «нет связи» ровно в момент восстановления связи
+    el.textContent = t('common.offline');
     document.body.appendChild(el);
   }
   return el;
@@ -23,9 +26,7 @@ function offlineBanner() {
 export function setOffline(next) {
   if (offline === next) return;
   offline = next;
-  const el = offlineBanner();
-  el.textContent = t('common.offline');
-  el.classList.toggle('visible', next);
+  offlineBanner().classList.toggle('visible', next);
 }
 
 export async function fetchJSON(url, options = {}) {

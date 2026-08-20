@@ -75,6 +75,14 @@
   50% { opacity: 0.45; transform: scale(0.92); }
 }
 
+/* точка и так меняет цвет вместе с подписью «Идёт проверка», пульсация
+   декоративная и снимается целиком */
+@media (prefers-reduced-motion: reduce) {
+  .run-status-dot-active {
+    animation: none;
+  }
+}
+
 .page-title {
   font-size: 27px;
   font-weight: 700;

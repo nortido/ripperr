@@ -209,8 +209,8 @@ html.mobile-layout .page-size-select {
   }
 }
 
-/* mobile dashboard (480px base; JS масштабирует в пределах [0.8, 1], выше 480px
-   ширина отдаётся вьюпорту как есть, см. .app.page-scaled в base.css) */
+/* mobile dashboard (480px base; ниже 480px JS ужимает ровно в w/480, начиная с
+   480px не масштабирует вовсе, см. .app.page-scaled в base.css) */
 
 html.mobile-layout .content {
   padding-top: 12px;

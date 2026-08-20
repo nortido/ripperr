@@ -91,6 +91,9 @@
 
       if (skip) {
         skip.addEventListener('click', function () {
+          // подсказка над формой про открытый доступ легко проскакивается мимо
+          // глаз, а кнопка оставляет панель без пароля насовсем
+          if (!confirm(t('auth.laterWarn'))) return;
           try {
             localStorage.setItem('trackerr.auth.setupSkipped', '1');
           } catch (_) {}
