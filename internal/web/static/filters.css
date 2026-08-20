@@ -1364,6 +1364,7 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 
   .stat-card-next-run .stat-value {
     font-size: clamp(13px, 8.5cqi, 22px);
+    line-height: calc(22px * 1.2);
   }
 
   .stat-label {

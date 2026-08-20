@@ -148,10 +148,11 @@ export function updateNextRunCard(slots) {
   if (runs.length >= 2) {
     if (!subEl) {
       const body = card.querySelector('.stat-card-body');
-      if (body && valueEl) {
+      const labelEl = card.querySelector('.stat-label');
+      if (body && labelEl) {
         const sub = document.createElement('div');
         sub.className = 'stat-sub';
-        valueEl.insertAdjacentElement('afterend', sub);
+        labelEl.insertAdjacentElement('afterend', sub);
       }
     }
     const sub = card.querySelector('.stat-sub');
@@ -297,7 +298,7 @@ export function nextRunStatCard(slots) {
   const runs = slots || [];
   const first = runs[0] ? formatRunSlot(runs[0]) : t('common.emDash');
   const subLine = runs.length >= 2 ? html`<div class="stat-sub"><span class="stat-then-pill">${t('dash.then', { time: formatThenSlot(runs[1]) })}</span></div>` : '';
-  return html`<div class="stat-card stat-card-next-run"><div class="stat-card-body"><div class="stat-value">${first}</div>${subLine}<div class="stat-label">${t('dash.nextRun')}</div></div><div class="stat-icon stat-icon-green" data-icon="clock"></div></div>`;
+  return html`<div class="stat-card stat-card-next-run"><div class="stat-card-body"><div class="stat-value">${first}</div><div class="stat-label">${t('dash.nextRun')}</div>${subLine}</div><div class="stat-icon stat-icon-green" data-icon="clock"></div></div>`;
 }
 
 export async function fetchDashboardData() {

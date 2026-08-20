@@ -30,7 +30,13 @@ type redownloadStubServer struct {
 	dir                  string
 	hash                 string
 	filesExistedAtDelete bool
-	server               *httptest.Server
+	// unsettleAfterAdd: when set, the re-added torrent answers present once
+	// (satisfying addTorrentVerified's ensurePresentAfterAdd check), then
+	// flips absent right after, before ForceRedownload's own post-add settle
+	// check runs. Models qbit's async delete job landing in between the two.
+	unsettleAfterAdd bool
+	vanishNext       bool
+	server           *httptest.Server
 }
 
 func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string) *redownloadStubServer {
@@ -63,6 +69,10 @@ func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string)
 		var list []qbt.Torrent
 		if s.present {
 			list = append(list, s.torrent)
+			if s.vanishNext {
+				s.vanishNext = false
+				s.present = false
+			}
 		}
 		_ = json.NewEncoder(w).Encode(list)
 	})
@@ -87,6 +97,9 @@ func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string)
 		}
 		s.mu.Lock()
 		s.present = true
+		if s.unsettleAfterAdd {
+			s.vanishNext = true
+		}
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
@@ -138,6 +151,26 @@ func TestForceRedownload_WritesBlackholeBeforeDeleteAndCleansUpOnSuccess(t *test
 		t.Error("expected qbit delete to have been called")
 	}
 	assertPairGone(t, dir, hash)
+}
+
+func TestForceRedownload_UnconfirmedPresenceAfterAddLeavesBlackholeFiles(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data, hash := buildTestTorrent(t)
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+	stub.unsettleAfterAdd = true
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err = c.ForceRedownload(context.Background(), hash); err != nil {
+		t.Fatalf("expected ForceRedownload to return nil when presence is unconfirmed after add, got %v", err)
+	}
+
+	assertPairRemains(t, dir, hash)
 }
 
 func TestForceRedownload_AddFailureLeavesBlackholeFiles(t *testing.T) {

@@ -19,6 +19,9 @@ type stubClient struct {
 	incomingKnown     bool
 	addErr            error
 	blackholeWriteErr error
+	blackholeData     []byte
+	blackholeMagnet   string
+	confirmSettled    bool
 }
 
 func (s *stubClient) IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (bool, bool) {
@@ -26,10 +29,7 @@ func (s *stubClient) IncomingHashSameAs(buf *bytes.Buffer, magnet string, existi
 	if existing == "" {
 		return false, false
 	}
-	if s.incomingKnown {
-		return s.incomingSame, true
-	}
-	return true, true
+	return s.incomingSame, s.incomingKnown
 }
 
 func (s *stubClient) List(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error) {
@@ -58,8 +58,10 @@ func (s *stubClient) Delete(ctx context.Context, opts model.ManagerDeleteOptions
 	return nil
 }
 
-func (s *stubClient) WriteBlackholePair(data []byte, opts model.ManagerAddFileOptions) error {
+func (s *stubClient) WriteBlackholePair(data []byte, magnet string, opts model.ManagerAddFileOptions) error {
 	s.calls = append(s.calls, "blackhole-write")
+	s.blackholeData = data
+	s.blackholeMagnet = magnet
 	return s.blackholeWriteErr
 }
 
@@ -67,8 +69,13 @@ func (s *stubClient) RemoveBlackholePair(hash string) {
 	s.calls = append(s.calls, "blackhole-remove")
 }
 
+func (s *stubClient) ConfirmSettled(ctx context.Context, hash string) bool {
+	s.calls = append(s.calls, "confirm-settled")
+	return s.confirmSettled
+}
+
 func TestSubmit_PreservesNameAndCommentFromExistingTorrent(t *testing.T) {
-	stub := &stubClient{detName: "existing name", detCom: "existing comment"}
+	stub := &stubClient{detName: "existing name", detCom: "existing comment", incomingSame: true, incomingKnown: true, confirmSettled: true}
 	m := NewManager(stub)
 
 	opts := model.ManagerAddFileOptions{Hash: "abc", Name: "new name"}
@@ -82,7 +89,7 @@ func TestSubmit_PreservesNameAndCommentFromExistingTorrent(t *testing.T) {
 	if stub.addOpts.Comment != "existing comment" {
 		t.Errorf("expected comment filled from existing torrent, got %q", stub.addOpts.Comment)
 	}
-	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "blackhole-remove"}
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "confirm-settled", "blackhole-remove"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
 	}
@@ -107,20 +114,42 @@ func TestSubmit_NoHashSkipsDetailsLookup(t *testing.T) {
 }
 
 func TestSubmitMagnet_PreservesNameAndCommentAndOrder(t *testing.T) {
-	stub := &stubClient{detName: "existing name", detCom: "existing comment"}
+	stub := &stubClient{detName: "existing name", detCom: "existing comment", incomingSame: true, incomingKnown: true, confirmSettled: true}
 	m := NewManager(stub)
 
+	magnet := "magnet:?xt=urn:btih:X"
 	opts := model.ManagerAddFileOptions{Hash: "abc"}
-	if err := m.SubmitMagnet(context.Background(), "magnet:?xt=urn:btih:X", opts); err != nil {
+	if err := m.SubmitMagnet(context.Background(), magnet, opts); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if stub.addOpts.Name != "existing name" || stub.addOpts.Comment != "existing comment" {
 		t.Errorf("expected name/comment preserved, got %+v", stub.addOpts)
 	}
-	wantOrder := []string{"details", "incoming", "delete", "add"}
+	// same-hash magnet replace: blackholed (magnet, no bytes) before delete, removed after add
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "confirm-settled", "blackhole-remove"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
+	}
+	if stub.blackholeData != nil {
+		t.Errorf("expected no torrent bytes blackholed for a magnet submit, got %v", stub.blackholeData)
+	}
+	if stub.blackholeMagnet != magnet {
+		t.Errorf("expected magnet %q blackholed, got %q", magnet, stub.blackholeMagnet)
+	}
+}
+
+func TestSubmitMagnet_SameHashBlackholeWriteFailureAbortsReplace(t *testing.T) {
+	stub := &stubClient{incomingSame: true, incomingKnown: true, blackholeWriteErr: fmt.Errorf("disk full")}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "samehash"}
+	if err := m.SubmitMagnet(context.Background(), "magnet:?xt=urn:btih:X", opts); err == nil {
+		t.Fatal("expected blackhole write error")
+	}
+	wantOrder := []string{"details", "incoming", "blackhole-write"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v (no delete, no add)", stub.calls, wantOrder)
 	}
 }
 
@@ -154,16 +183,44 @@ func TestSubmit_DifferentHashAddFailureSkipsDelete(t *testing.T) {
 }
 
 func TestSubmit_SameHashBlackholesBeforeDeleteAndRemovesAfterAdd(t *testing.T) {
-	stub := &stubClient{incomingSame: true, incomingKnown: true}
+	stub := &stubClient{incomingSame: true, incomingKnown: true, confirmSettled: true}
 	m := NewManager(stub)
 
 	opts := model.ManagerAddFileOptions{Hash: "samehash"}
 	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "blackhole-remove"}
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "confirm-settled", "blackhole-remove"}
 	if !equalStrings(stub.calls, wantOrder) {
 		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
+	}
+}
+
+func TestSubmit_SameHashUnconfirmedSettleLeavesBlackholePairNoError(t *testing.T) {
+	stub := &stubClient{incomingSame: true, incomingKnown: true, confirmSettled: false}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "samehash"}
+	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "confirm-settled"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v (unsettled: pair left on disk, no remove)", stub.calls, wantOrder)
+	}
+}
+
+func TestSubmitMagnet_SameHashUnconfirmedSettleLeavesBlackholePairNoError(t *testing.T) {
+	stub := &stubClient{incomingSame: true, incomingKnown: true, confirmSettled: false}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "samehash"}
+	if err := m.SubmitMagnet(context.Background(), "magnet:?xt=urn:btih:X", opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantOrder := []string{"details", "incoming", "blackhole-write", "delete", "add", "confirm-settled"}
+	if !equalStrings(stub.calls, wantOrder) {
+		t.Errorf("call order = %v, want %v (unsettled: pair left on disk, no remove)", stub.calls, wantOrder)
 	}
 }
 

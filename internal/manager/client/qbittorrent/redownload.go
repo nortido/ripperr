@@ -73,7 +73,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 	// Step 4: blackhole the bytes and the add parameters before anything
 	// destructive happens. If qbit dies or the request is canceled anywhere
 	// after this point, the pair on disk is enough to finish the re-add later.
-	if err = c.writeBlackholePair(torrentData, opts); err != nil {
+	if err = c.writeBlackholePair(torrentData, "", opts); err != nil {
 		return fmt.Errorf("blackhole write failed: %w", err)
 	}
 
@@ -133,6 +133,15 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 	if addErr != nil {
 		// leave the blackhole pair on disk: the sweeper picks it up later
 		return fmt.Errorf("add torrent failed: %w", addErr)
+	}
+
+	// the add itself succeeded, but qbit's own delete-with-files job from step 5
+	// can still be racing to take the freshly re-added torrent back down; only
+	// drop the safety net once presence survives the same settle wait the
+	// sweeper trusts, otherwise leave it for the sweeper to sort out
+	if !c.blackholeSettled(ctx, torrentHash) {
+		logger.Info(fmt.Sprintf("force redownload: %s not confirmed settled, leaving blackhole pair for the sweeper", torrentHash))
+		return nil
 	}
 
 	removeBlackholePair(c.config.BlackholeDir, torrentHash)

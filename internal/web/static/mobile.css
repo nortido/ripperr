@@ -300,6 +300,9 @@ html.mobile-layout .stat-card-next-run .stat-value {
   overflow: hidden;
   padding-right: 2px;
   font-size: clamp(18px, 11cqi, 22px);
+  /* десктопная фиксация строки тут не нужна: чип скрыт, а высота карточек
+     подогнана отдельно */
+  line-height: 1.2;
 }
 
 html.mobile-layout .stat-card-next-run .stat-label {

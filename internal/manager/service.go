@@ -14,8 +14,9 @@ type client interface {
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
-	WriteBlackholePair(data []byte, opts model.ManagerAddFileOptions) (err error)
+	WriteBlackholePair(data []byte, magnet string, opts model.ManagerAddFileOptions) (err error)
 	RemoveBlackholePair(hash string)
+	ConfirmSettled(ctx context.Context, hash string) (settled bool)
 }
 
 type manager struct {
@@ -63,23 +64,24 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 	}
 	same, known := m.client.IncomingHashSameAs(buf, magnet, opts.Hash)
 	if known && same {
-		if buf == nil || buf.Len() == 0 {
-			// ponytail: magnet resubmits have no torrent bytes to blackhole here,
-			// so a same-hash magnet replace still deletes before adding with no
-			// protection window; close it if SubmitMagnet ever fetches metadata
-			// bytes before this point.
-			if err = del(); err != nil {
-				return
-			}
-			return add(opts)
+		var data []byte
+		if buf != nil {
+			data = buf.Bytes()
 		}
-		if err = m.client.WriteBlackholePair(buf.Bytes(), opts); err != nil {
+		if err = m.client.WriteBlackholePair(data, magnet, opts); err != nil {
 			return
 		}
 		if err = del(); err != nil {
 			return
 		}
 		if err = add(opts); err != nil {
+			return
+		}
+		// qbit's delete-with-files job from del() above can still be racing to
+		// take the freshly re-added torrent back down; only drop the safety
+		// net once presence survives the settle wait, otherwise leave it for
+		// the sweeper
+		if !m.client.ConfirmSettled(ctx, opts.Hash) {
 			return
 		}
 		m.client.RemoveBlackholePair(opts.Hash)
