@@ -3,12 +3,46 @@ import { authRedirecting, gotoLogin } from './auth.js';
 export let qbitCategoriesCache = null;
 export let qbitCategoriesUnavailable = false;
 
+export let offline = false;
+
+function offlineBanner() {
+  let el = document.getElementById('offline-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'offline-banner';
+    el.className = 'offline-banner';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+// вешается на fetchJSON, а не на конкретный поллер: статус дашборда глотает
+// свои ошибки молча, поэтому раньше отвалившийся сервер выглядел как живой,
+// а таймштамп «Обновлено» просто замирал
+export function setOffline(next) {
+  if (offline === next) return;
+  offline = next;
+  const el = offlineBanner();
+  el.textContent = t('common.offline');
+  el.classList.toggle('visible', next);
+}
+
 export async function fetchJSON(url, options = {}) {
   const headers = { ...options.headers };
   if (options.body && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch(url, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (err) {
+    // сам fetch отклонился: до сервера не дошли. Ответ с любым HTTP-кодом
+    // означает, что сервер на связи, отменённый запрос ни о чём не говорит
+    if (err.name !== 'AbortError') setOffline(true);
+    throw err;
+  }
+  setOffline(false);
   if (res.status === 401 && !url.startsWith('/api/auth/')) {
     gotoLogin();
     throw new Error(t('auth.required'));

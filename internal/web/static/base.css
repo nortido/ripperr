@@ -11,28 +11,30 @@
   --border-subtle: rgba(0, 0, 0, 0.14);
   --table-stripe: rgba(0, 0, 0, 0.025);
   --text: #111827;
-  --text-muted: #6b7280;
+  /* светлые оттенки подобраны под контраст 4.5:1 на трёх фонах сразу:
+     собственный tint, --surface и --bg. Тёмная тема считается отдельно ниже */
+  --text-muted: #5f6674;
   --text-empty: #78716c;
   --link: #047857;
   --link-hover: #059669;
   --accent-from: #047857;
   --accent-to: #0d9488;
   --accent-subtle: rgba(5, 150, 105, 0.14);
-  --hue-green: #059669;
+  --hue-green: #047653;
   --tint-green: rgba(5, 150, 105, 0.14);
-  --hue-teal: #0d9488;
+  --hue-teal: #0a746b;
   --tint-teal: rgba(13, 148, 136, 0.14);
-  --hue-cyan: #0891b2;
+  --hue-cyan: #06718a;
   --tint-cyan: rgba(8, 145, 178, 0.14);
-  --hue-blue: #2563eb;
+  --hue-blue: #235ede;
   --tint-blue: rgba(37, 99, 235, 0.14);
   --hue-violet: #7c3aed;
   --tint-violet: rgba(124, 58, 237, 0.14);
-  --hue-amber: #d97706;
+  --hue-amber: #995404;
   --tint-amber: rgba(217, 119, 6, 0.16);
-  --hue-pink: #db2777;
+  --hue-pink: #bf2268;
   --tint-pink: rgba(219, 39, 119, 0.14);
-  --hue-red: #dc2626;
+  --hue-red: #c22222;
   --tint-red: rgba(220, 38, 38, 0.15);
   --tint-warm: #78716c;
   --tint-warm-bg: rgba(120, 113, 108, 0.1);
@@ -73,9 +75,13 @@
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --sidebar-w: 260px;
   --sidebar-w-collapsed: 68px;
-  --release-link: #7a6fb8;
-  --release-link-hover: #6258a3;
+  --release-link: #6b5fae;
+  --release-link-hover: #574e91;
   --transition: 0.15s ease;
+  /* конец градиента для залитых белым текстом поверхностей (.btn-primary,
+     .nav-link.active). --accent-to для них слишком светлый: белое на нём
+     давало 3.7 в светлой теме и 2.5 в тёмной. Одно значение на обе темы */
+  --accent-grad-to: #0f766e;
 }
 
 [data-theme="dark"] {
@@ -170,6 +176,11 @@ a {
 
 /* zoom, not transform: a transformed element becomes the containing block for its
    fixed children (drawer, header, backdrop), zoom leaves them pinned to the viewport */
+/* класс вешается только когда экран уже, чем 480px: тогда --page-scale равен
+   w/480 и фиксированные 480px рисуются ровно в ширину экрана. Ширину через
+   calc(100% / scale) считать нельзя: Chrome то отдаёт 100% уже пересчитанным
+   под zoom, то нет, и деление срабатывает дважды. Начиная с 480px масштабировать
+   нечего, класс не вешается и приложение занимает всю ширину само */
 .app.page-scaled {
   width: 480px;
   zoom: var(--page-scale, 1);
@@ -377,7 +388,7 @@ body:has(.app.page-scaled) {
 }
 
 .nav-link.active {
-  background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
+  background: linear-gradient(90deg, var(--accent-from), var(--accent-grad-to));
   color: #fff;
   box-shadow: var(--shadow-primary);
 }

@@ -121,10 +121,18 @@
   cursor: pointer;
 }
 
+/* --border-subtle отличался от --border на 0.01 альфы, то есть наведение на
+   кликабельную карточку не давало никакой обратной связи */
 @media (hover: hover) {
   .stat-card-filter:hover {
-    border-color: var(--border-subtle);
+    border-color: var(--text-muted);
+    background: var(--bg-muted);
   }
+}
+
+.stat-card-filter:focus-visible {
+  outline: 2px solid var(--accent-from);
+  outline-offset: 2px;
 }
 
 .stat-card-active.stat-card-filter-green {

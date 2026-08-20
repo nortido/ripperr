@@ -4,7 +4,7 @@ import { closeMobileMenu } from './layout.js';
 import { loadLogs, stopLogsPolling } from './logs.js';
 import { loadSchedule } from './schedule.js';
 import { historyState } from './state.js';
-import { loadTrackers } from './trackers.js';
+import { hasUnsavedTrackers, loadTrackers } from './trackers.js';
 
 export const VIEW_HASH = {
   dashboard: '#dashboard',
@@ -128,6 +128,15 @@ export function showView(view, updateHash) {
       return;
     }
   }
+  // проверка стоит после обновления хеша, а не в начале функции: на клике по
+  // пункту меню showView вызывается дважды (сам клик и следом hashchange), и в
+  // начале функции подтверждение спрашивалось бы два раза
+  if (currentView === 'trackers' && view !== 'trackers' && hasUnsavedTrackers() &&
+      !confirm(t('trackers.unsavedWarn'))) {
+    const back = buildHash('trackers');
+    if (location.hash !== back) history.replaceState(null, '', back);
+    return;
+  }
   currentView = view;
   setActiveNav(view);
   closeMobileMenu();
@@ -153,6 +162,11 @@ export function initRouter() {
     if (view !== currentView || view === 'dashboard') {
       showView(view, false);
     }
+  });
+
+  // закрытие вкладки и перезагрузка мимо showView не проходят
+  window.addEventListener('beforeunload', function (e) {
+    if (currentView === 'trackers' && hasUnsavedTrackers()) e.preventDefault();
   });
 
 }

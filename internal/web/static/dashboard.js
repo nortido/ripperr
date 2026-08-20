@@ -263,13 +263,13 @@ export function statCard(value, label, iconName, variant, filterType) {
   let filterCls = '';
   let filterAttr = '';
   if (filterType) {
+    const active = filterType === 'ignored'
+      ? historyState.ignored
+      : !historyState.ignored && historyState.status === filterType;
     filterCls = ' stat-card-filter stat-card-filter-' + variant;
-    if (filterType !== 'ignored' && !historyState.ignored && historyState.status === filterType) {
-      filterCls += ' stat-card-active';
-    } else if (filterType === 'ignored' && historyState.ignored) {
-      filterCls += ' stat-card-active';
-    }
-    filterAttr = html` data-stat-filter="${filterType}" role="button" tabindex="0"`;
+    if (active) filterCls += ' stat-card-active';
+    // активный фильтр показывался только цветом рамки, скринридер о нём молчал
+    filterAttr = html` data-stat-filter="${filterType}" role="button" tabindex="0" aria-pressed="${active ? 'true' : 'false'}"`;
   }
   return html`<div class="stat-card${filterCls}"${filterAttr}><div class="stat-card-body"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div><div class="${iconCls}" data-icon="${iconName}"></div></div>`;
 }

@@ -4,6 +4,12 @@ import { syncNameFilterLayout } from './namefilter.js';
 export const THEME_KEY = 'trackerr-theme';
 export const SIDEBAR_COLLAPSED_KEY = 'trackerr-sidebar-collapsed';
 export const PAGE_SCALE_BASE = 480;
+// ограничен только сверху. Выше 1 масштаб раздувал вёрстку: на 880px выходило
+// 1.83 и заголовок рисовался 44px вместо 24. Снизу ограничивать нельзя: мобильный
+// макет свёрстан под 480px, и ровно w/480 это единственный масштаб, при котором
+// он влезает в экран целиком. С порогом 0.8 на ширине меньше 384px приложение
+// получало меньше 480 и правый край уезжал за экран
+export const PAGE_SCALE_MAX = 1;
 export const MOBILE_LAYOUT_MAX = 900;
 export let layoutWasMobile = false;
 
@@ -161,9 +167,17 @@ export function applyMobileLayout() {
   if (mobile) {
     const scale = w / PAGE_SCALE_BASE;
     document.documentElement.classList.add('mobile-layout');
-    app.classList.add('page-scaled');
-    // on the root so the value survives .app being re-rendered
-    document.documentElement.style.setProperty('--page-scale', String(scale));
+    // масштабируем только когда экран уже макета. Раньше класс висел всегда и на
+    // 880px давал zoom 1.83: заголовок рисовался 44px вместо 24, в окно влезала
+    // одна строка таблицы. Начиная с 480px ужимать нечего
+    if (scale < PAGE_SCALE_MAX) {
+      app.classList.add('page-scaled');
+      // on the root so the value survives .app being re-rendered
+      document.documentElement.style.setProperty('--page-scale', String(scale));
+    } else {
+      app.classList.remove('page-scaled');
+      document.documentElement.style.removeProperty('--page-scale');
+    }
   } else {
     document.documentElement.classList.remove('mobile-layout');
     app.classList.remove('page-scaled');

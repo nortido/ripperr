@@ -63,7 +63,7 @@
 }
 
 .btn-primary {
-  background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
+  background: linear-gradient(90deg, var(--accent-from), var(--accent-grad-to));
   color: #fff;
   border-color: transparent;
   box-shadow: var(--shadow-primary);
@@ -357,8 +357,11 @@
   white-space: nowrap;
 }
 
+/* padding с отрицательным margin расширяет зону нажатия до 38 пикселей по
+   высоте, не сдвигая соседей в строке */
 .tracker-row-toggle {
-  margin: 0;
+  margin: -8px 0;
+  padding: 8px 0;
   font-size: 0;
   flex-shrink: 0;
 }
@@ -441,8 +444,13 @@
   flex-shrink: 0;
 }
 
+/* .card-header по умолчанию space-between, из-за чего два селектора
+   разъезжались по разным краям карточки */
 .logs-card-header {
   flex-shrink: 0;
+  justify-content: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .logs-feed {
@@ -697,6 +705,12 @@
   grid-column: 1 / -1;
 }
 
+/* одиночное числовое поле вне .form-row: во всю ширину карточки оно выглядит
+   как поле для длинного текста */
+.form-group-narrow {
+  max-width: 260px;
+}
+
 .form-label {
   display: block;
   font-size: 13px;
@@ -909,21 +923,6 @@
   height: 16px;
 }
 
-.proxy-type-row {
-  display: grid;
-  grid-template-columns: 120px 1fr;
-  gap: 12px;
-  align-items: start;
-}
-
-.proxy-type-row .form-group {
-  margin-bottom: 0;
-}
-
-html.mobile-layout .proxy-type-row {
-  grid-template-columns: 1fr;
-}
-
 .form-hint {
   font-size: 13px;
   color: var(--text-empty);
@@ -943,18 +942,59 @@ html.mobile-layout .proxy-type-row {
   margin: 0 0 14px;
 }
 
+/* настоящий переключатель вместо нативного чекбокса с accent-color: он выпадал
+   из остальных кастомных контролов, а на тёмной карточке выключенное состояние
+   светилось белым квадратом. Заодно читается как «применяется сразу», в отличие
+   от полей формы рядом, которые ждут «Сохранить» */
 .form-switch {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: var(--btn-h-xs);
   cursor: pointer;
   font-size: 15px;
 }
 
 .form-switch input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent-from);
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--seg-track-bg);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.form-switch input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform var(--transition), background var(--transition);
+}
+
+.form-switch input:checked {
+  background: var(--accent-from);
+  border-color: var(--accent-from);
+}
+
+.form-switch input:checked::after {
+  background: #fff;
+  transform: translateX(16px);
+}
+
+.form-switch input:focus-visible {
+  outline: 2px solid var(--accent-from);
+  outline-offset: 2px;
 }
 
 .form-switch input:disabled {
@@ -964,6 +1004,13 @@ html.mobile-layout .proxy-type-row {
 .form-switch:has(input:disabled) {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .form-switch input,
+  .form-switch input::after {
+    transition-duration: 0.001ms;
+  }
 }
 
 /* chip input */

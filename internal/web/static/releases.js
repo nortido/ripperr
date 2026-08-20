@@ -2,7 +2,7 @@ import { fetchJSON, showToast } from './api.js';
 import { bindErrorBadges } from './components.js';
 import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardFetchGen, setRunPending, updateRunStatusUI } from './dashboard.js';
 import { hydrateIcons } from './icons.js';
-import { historyState } from './state.js';
+import { historyFiltered, historyState } from './state.js';
 import { formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, statusIcon, trackerBadgeHtml } from './util.js';
 
 export let planForceLocal = Object.create(null);
@@ -149,7 +149,10 @@ export function releaseTimeCellHtml(item) {
 
 export function buildReleaseRows(histItems) {
   if (!histItems || histItems.length === 0) {
-    return html`<tr class="table-empty"><td colspan="5">${t('dash.empty.releases')}</td></tr>`;
+    // пустой результат под фильтром это не пустая база: раньше оба случая
+    // показывали «Проверок ещё не было» и это вводило в заблуждение
+    const key = historyFiltered() ? 'dash.empty.filtered' : 'dash.empty.releases';
+    return html`<tr class="table-empty"><td colspan="5">${t(key)}</td></tr>`;
   }
   const rows = [];
   histItems.forEach(function (item) {
