@@ -21,7 +21,11 @@
   white-space: nowrap;
 }
 
+/* display: block убирает зазор под базовой линией: строчный svg внутри
+   обёртки растягивал её с 16px до 19.5px, и flex-центрирование кнопки
+   поднимало саму иконку на 1.75px выше центра */
 .btn svg {
+  display: block;
   width: var(--btn-icon-md);
   height: var(--btn-icon-md);
   flex-shrink: 0;
