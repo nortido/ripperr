@@ -29,9 +29,17 @@ export function updateIgnoredStatCard(count) {
   if (valueEl) valueEl.textContent = String(count);
 }
 
+// в покое иконка показывает текущее состояние, на ховере противоположное:
+// наведение на выключенное показывает, что получится после клика
 export function ignoreButtonIconsHtml(ignored) {
-  const idleIcon = ignored ? 'eyeOff' : 'eye';
-  const hoverIcon = ignored ? 'eye' : 'eyeOff';
+  const idleIcon = ignored ? 'eyeHidden' : 'eye';
+  const hoverIcon = ignored ? 'eye' : 'eyeHidden';
+  return html`<span class="icon-idle" data-icon="${idleIcon}"></span><span class="icon-hover" data-icon="${hoverIcon}"></span>`;
+}
+
+export function forceButtonIconsHtml(forced) {
+  const idleIcon = forced ? 'zapFilled' : 'zap';
+  const hoverIcon = forced ? 'zap' : 'zapFilled';
   return html`<span class="icon-idle" data-icon="${idleIcon}"></span><span class="icon-hover" data-icon="${hoverIcon}"></span>`;
 }
 
@@ -84,8 +92,7 @@ export function redownloadButtonHtml(hash) {
 export function planForceButtonHtml(hash, forced) {
   const btnTitle = forced ? t('dash.forceCancel') : t('dash.forceCheck');
   const btnCls = 'btn btn-icon-only btn-plan-force btn-action-force' + (forced ? ' is-active' : '');
-  const btnIcon = forced ? 'zapOff' : 'zap';
-  return html`<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" aria-pressed="${forced ? 'true' : 'false'}" data-hash="${hash}" data-force="${forced ? '1' : '0'}"><span data-icon="${btnIcon}"></span></button>`;
+  return html`<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" aria-pressed="${forced ? 'true' : 'false'}" data-hash="${hash}" data-force="${forced ? '1' : '0'}">${forceButtonIconsHtml(forced)}</button>`;
 }
 
 export function updatePlanForceButton(btn, hash, forced) {
@@ -97,7 +104,7 @@ export function updatePlanForceButton(btn, hash, forced) {
   btn.setAttribute('aria-pressed', forced ? 'true' : 'false');
   btn.setAttribute('data-hash', hash);
   btn.setAttribute('data-force', forced ? '1' : '0');
-  btn.innerHTML = html`<span data-icon="${forced ? 'zapOff' : 'zap'}"></span>`;
+  btn.innerHTML = forceButtonIconsHtml(forced);
   hydrateIcons(btn);
 }
 

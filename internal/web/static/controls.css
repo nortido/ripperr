@@ -513,8 +513,10 @@
   border-color: transparent;
 }
 
+/* оба состояния кнопки игнора одного оттенка: цвет обозначает сам контрол,
+   а состояние несут форма глифа и подложка, а не смена hue */
 .btn-action-ignore.btn-ignore {
-  color: var(--hue-green);
+  color: var(--hue-cyan);
   background: transparent;
   border-color: transparent;
 }
@@ -526,9 +528,9 @@
 
 @media (hover: hover) {
   .btn-action-ignore.btn-ignore:hover:not(:disabled) {
-    color: var(--hue-green);
-    border-color: var(--hue-green);
-    background: var(--tint-green);
+    color: var(--hue-cyan);
+    border-color: var(--hue-cyan);
+    background: var(--tint-cyan);
     box-shadow: none;
     filter: brightness(1.1) saturate(1.15);
   }
@@ -542,24 +544,33 @@
   }
 }
 
-.btn-action-ignore .icon-idle,
-.btn-action-ignore .icon-hover {
+/* подмена иконки на ховере: раньше правила были прибиты к кнопке игнора, теперь
+   работают везде, где разметка даёт пару .icon-idle и .icon-hover */
+.icon-idle,
+.icon-hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.btn-action-ignore .icon-hover {
+.icon-hover {
   display: none;
 }
 
 @media (hover: hover) {
-  .btn-action-ignore:hover:not(:disabled) .icon-idle {
+  .btn:hover:not(:disabled) .icon-idle {
     display: none;
   }
 
-  .btn-action-ignore:hover:not(:disabled) .icon-hover {
+  .btn:hover:not(:disabled) .icon-hover {
     display: inline-flex;
+  }
+
+  /* заливка приглушена, обводка остаётся сплошной: ховер подсвечивает нутро
+     иконки, а не перекрашивает её целиком. На контурных вариантах fill
+     остаётся none, поэтому правило их не задевает */
+  .btn:hover:not(:disabled) .icon-hover svg {
+    fill-opacity: 0.35;
   }
 }
 
