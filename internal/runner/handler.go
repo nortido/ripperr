@@ -53,7 +53,6 @@ type storage interface {
 	AddIgnore(ctx context.Context, hash, name, url string) error
 	AllItems(ctx context.Context) (map[string]*runnerModel.HistoryItem, error)
 	GetIgnoreSet(ctx context.Context) (map[string]struct{}, error)
-	ListDueItems(ctx context.Context) ([]storageModel.DueItem, error)
 	DeleteItem(ctx context.Context, urlHash string) error
 	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
@@ -299,11 +298,13 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 		return err
 	}
 
-	if !dry && forced == nil {
+	// форс-прогон тоже чистит: список торрентов он берёт целиком, тем же
+	// collectEntries, а пользователь жмёт кнопку как раз после удаления раздачи
+	if !dry {
 		if partial {
 			logger.Warn("history purge skipped: partial torrent list")
 		} else {
-			h.purgeStaleHistory(ctx, rawEntries)
+			h.purgeStaleHistory(ctx, rawEntries, items)
 		}
 	}
 	return nil
@@ -398,7 +399,7 @@ func entryMatchesWatchTags(entryTags string, watchTags []string) bool {
 	return false
 }
 
-func (h *handler) purgeStaleHistory(ctx context.Context, allEntries []*model.Entry) {
+func (h *handler) purgeStaleHistory(ctx context.Context, allEntries []*model.Entry, items map[string]*runnerModel.HistoryItem) {
 	present := make(map[string]struct{})
 	for _, e := range allEntries {
 		if e.URL == "" {
@@ -414,20 +415,18 @@ func (h *handler) purgeStaleHistory(ctx context.Context, allEntries []*model.Ent
 		logger.Warn("history purge skipped: no torrent URLs found")
 		return
 	}
-	due, err := h.storage.ListDueItems(ctx)
-	if err != nil {
-		logger.Warn(fmt.Sprintf("history purge skipped: list due items: %v", err))
-		return
-	}
-	for _, item := range due {
-		if _, ok := present[item.URLHash]; ok {
+	// чистится вся история, а не только записи с наступившим recheck_at: торрент
+	// удалили из qBittorrent, значит следить не за чем, и ждать своей очереди
+	// такая запись может месяцами
+	for hash, item := range items {
+		if _, ok := present[hash]; ok {
 			continue
 		}
-		if err = h.storage.DeleteItem(ctx, item.URLHash); err != nil {
-			logger.Error(fmt.Sprintf("history purge delete %s: %v", item.URLHash, err))
+		if err := h.storage.DeleteItem(ctx, hash); err != nil {
+			logger.Error(fmt.Sprintf("history purge delete %s: %v", hash, err))
 			continue
 		}
-		logger.Info(fmt.Sprintf("purged from history: %s", item.ItemName))
+		logger.Info(fmt.Sprintf("purged from history: %s", item.Name))
 	}
 }
 

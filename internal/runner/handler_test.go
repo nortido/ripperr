@@ -24,8 +24,6 @@ func timePtr(t time.Time) *time.Time { return &t }
 type fakeStorage struct {
 	ignore      map[string]struct{}
 	items       map[string]*runnerModel.HistoryItem
-	dueItems    []storageModel.DueItem
-	listErr     error
 	deleted     []string
 	checkStreak int
 	ignoreCalls []string
@@ -52,13 +50,6 @@ func (f *fakeStorage) AllItems(context.Context) (map[string]*runnerModel.History
 
 func (f *fakeStorage) GetIgnoreSet(context.Context) (map[string]struct{}, error) {
 	return f.ignore, nil
-}
-
-func (f *fakeStorage) ListDueItems(context.Context) ([]storageModel.DueItem, error) {
-	if f.listErr != nil {
-		return nil, f.listErr
-	}
-	return f.dueItems, nil
 }
 
 func (f *fakeStorage) DeleteItem(_ context.Context, urlHash string) error {
@@ -431,7 +422,8 @@ func TestPushSkipsHistoryPurgeOnPartialList(t *testing.T) {
 	const gone = "https://rutracker.org/forum/viewtopic.php?t=1"
 	const alive = "https://rutracker.org/forum/viewtopic.php?t=2"
 	goneHash := storagePkg.URLHash(gone)
-	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: goneHash, ItemName: "gone"}}}
+	hist := map[string]*runnerModel.HistoryItem{goneHash: {URLHash: goneHash, Name: "gone"}}
+	store := &fakeStorage{items: hist}
 	h := &handler{
 		manager: &fakeManager{
 			all:         []*model.Entry{{URL: alive, Name: "alive"}},
@@ -482,9 +474,10 @@ func TestPurgeStaleHistoryDeletesAbsent(t *testing.T) {
 	const gone = "https://rutracker.org/forum/viewtopic.php?t=1"
 	const alive = "https://rutracker.org/forum/viewtopic.php?t=2"
 	goneHash := storagePkg.URLHash(gone)
-	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: goneHash, ItemName: "gone"}}}
+	hist := map[string]*runnerModel.HistoryItem{goneHash: {URLHash: goneHash, Name: "gone"}}
+	store := &fakeStorage{items: hist}
 	h := &handler{storage: store}
-	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: alive}})
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: alive}}, hist)
 	if len(store.deleted) != 1 || store.deleted[0] != goneHash {
 		t.Fatalf("deleted = %v, want [%s]", store.deleted, goneHash)
 	}
@@ -493,9 +486,10 @@ func TestPurgeStaleHistoryDeletesAbsent(t *testing.T) {
 func TestPurgeStaleHistoryKeepsPresent(t *testing.T) {
 	const url = "https://rutracker.org/forum/viewtopic.php?t=2"
 	hash := storagePkg.URLHash(url)
-	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "alive"}}}
+	hist := map[string]*runnerModel.HistoryItem{hash: {URLHash: hash, Name: "alive"}}
+	store := &fakeStorage{items: hist}
 	h := &handler{storage: store}
-	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: url}})
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: url}}, hist)
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions, got %v", store.deleted)
 	}
@@ -503,9 +497,10 @@ func TestPurgeStaleHistoryKeepsPresent(t *testing.T) {
 
 func TestPurgeStaleHistorySkipsOnEmptyTorrentList(t *testing.T) {
 	hash := storagePkg.URLHash("https://example.com/topic")
-	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "x"}}}
+	hist := map[string]*runnerModel.HistoryItem{hash: {URLHash: hash, Name: "x"}}
+	store := &fakeStorage{items: hist}
 	h := &handler{storage: store}
-	h.purgeStaleHistory(context.Background(), nil)
+	h.purgeStaleHistory(context.Background(), nil, hist)
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions on empty torrent list, got %v", store.deleted)
 	}
@@ -513,25 +508,12 @@ func TestPurgeStaleHistorySkipsOnEmptyTorrentList(t *testing.T) {
 
 func TestPurgeStaleHistorySkipsOnNoTorrentURLs(t *testing.T) {
 	hash := storagePkg.URLHash("https://example.com/topic")
-	store := &fakeStorage{dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "x"}}}
+	hist := map[string]*runnerModel.HistoryItem{hash: {URLHash: hash, Name: "x"}}
+	store := &fakeStorage{items: hist}
 	h := &handler{storage: store}
-	h.purgeStaleHistory(context.Background(), []*model.Entry{{Name: "no comment"}})
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{Name: "no comment"}}, hist)
 	if len(store.deleted) != 0 {
 		t.Fatalf("expected no deletions when no torrent URLs found, got %v", store.deleted)
-	}
-}
-
-func TestPurgeStaleHistorySkipsOnListDueItemsError(t *testing.T) {
-	const url = "https://example.com/topic"
-	hash := storagePkg.URLHash(url)
-	store := &fakeStorage{
-		dueItems: []storageModel.DueItem{{URLHash: hash, ItemName: "x"}},
-		listErr:  fmt.Errorf("db down"),
-	}
-	h := &handler{storage: store}
-	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: url}})
-	if len(store.deleted) != 0 {
-		t.Fatalf("expected no deletions on ListDueItems error, got %v", store.deleted)
 	}
 }
 
@@ -1393,5 +1375,43 @@ func TestPushCallsGetEntriesOnce(t *testing.T) {
 	}
 	if mgr.getEntriesCalls != 1 {
 		t.Fatalf("GetEntries calls = %d, want 1", mgr.getEntriesCalls)
+	}
+}
+
+func TestPurgeStaleHistoryDeletesAbsentNotDueYet(t *testing.T) {
+	const gone = "https://rutor.is/torrent/922808"
+	const alive = "https://rutracker.org/forum/viewtopic.php?t=2"
+	goneHash := storagePkg.URLHash(gone)
+	later := time.Now().Add(14 * 24 * time.Hour)
+	items := map[string]*runnerModel.HistoryItem{
+		goneHash: {URLHash: goneHash, Name: "gone", URL: gone, RecheckAt: &later},
+	}
+	store := &fakeStorage{items: items}
+	h := &handler{storage: store}
+	h.purgeStaleHistory(context.Background(), []*model.Entry{{URL: alive}}, items)
+	if len(store.deleted) != 1 || store.deleted[0] != goneHash {
+		t.Fatalf("deleted = %v, want [%s]", store.deleted, goneHash)
+	}
+}
+
+func TestPushForcedPurgesHistoryOfDeletedTorrent(t *testing.T) {
+	const gone = "https://rutor.is/torrent/922808"
+	const alive = "https://rutracker.org/forum/viewtopic.php?t=2"
+	goneHash := storagePkg.URLHash(gone)
+	hist := map[string]*runnerModel.HistoryItem{goneHash: {URLHash: goneHash, Name: "gone", URL: gone}}
+	store := &fakeStorage{items: hist}
+	h := &handler{
+		manager:        &fakeManager{all: []*model.Entry{{URL: alive, Name: "alive"}}},
+		storage:        store,
+		trackerService: &fakeTracker{id: 1},
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, map[string]struct{}{goneHash: {}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != goneHash {
+		t.Fatalf("deleted = %v, want [%s]", store.deleted, goneHash)
 	}
 }

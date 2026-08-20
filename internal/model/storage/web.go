@@ -41,7 +41,3 @@ type IgnoreEntry struct {
 	AddedAt  time.Time
 }
 
-type DueItem struct {
-	URLHash  string
-	ItemName string
-}

@@ -327,24 +327,6 @@ func (c *Client) SaveSetting(ctx context.Context, key string, value json.RawMess
 	return err
 }
 
-func (c *Client) ListDueItems(ctx context.Context) ([]storage.DueItem, error) {
-	rows, err := c.db.QueryContext(ctx,
-		`SELECT url_hash, COALESCE(item_name, '') FROM history WHERE recheck_at <= unixepoch()`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var items []storage.DueItem
-	for rows.Next() {
-		var e storage.DueItem
-		if err = rows.Scan(&e.URLHash, &e.ItemName); err != nil {
-			return nil, err
-		}
-		items = append(items, e)
-	}
-	return items, rows.Err()
-}
-
 func (c *Client) DeleteItem(ctx context.Context, urlHash string) error {
 	if _, err := c.db.ExecContext(ctx, `DELETE FROM check_log WHERE url_hash = ?`, urlHash); err != nil {
 		return err
