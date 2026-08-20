@@ -19,9 +19,10 @@ func NewState() *State {
 }
 
 // forceQueueSize bounds how many forced releases can wait to be picked up by
-// the runner; clicking faster than that drops the extras instead of blocking
-// the HTTP handler.
-const forceQueueSize = 256
+// the runner; extras are dropped instead of blocking the HTTP handler, and a
+// dropped release keeps its force_check flag for the next scheduled pass. Sized
+// for "force all", which queues a whole filtered list at once, not for clicks.
+const forceQueueSize = 4096
 
 // normalQueueSize bounds how many entries can wait in a tracker's normal queue.
 const normalQueueSize = 4096

@@ -275,16 +275,21 @@ export function statCard(value, label, iconName, variant, filterType) {
 }
 
 
-export function buildHistoryQuery() {
-  const limit = pageSizeQueryLimit(historyState.limit);
-  let q = '/api/history?limit=' + limit + '&offset=' + historyState.offset +
-    '&sort=' + encodeURIComponent(historyState.sort);
+// набор фильтров списка отдельно от пагинации: тот же хвост уходит в форс всем,
+// чтобы кнопка накрывала ровно отфильтрованные релизы
+export function buildHistoryFilterParams() {
+  let q = '&sort=' + encodeURIComponent(historyState.sort);
   if (historyState.ignored) q += '&ignored=1';
   else if (historyState.status) q += '&status=' + encodeURIComponent(historyState.status);
   if (historyState.name) q += '&name=' + encodeURIComponent(historyState.name);
   if (historyState.tracker) q += '&tracker=' + encodeURIComponent(historyState.tracker);
   if (historyState.category) q += '&category=' + encodeURIComponent(historyState.category);
   return q;
+}
+
+export function buildHistoryQuery() {
+  const limit = pageSizeQueryLimit(historyState.limit);
+  return '/api/history?limit=' + limit + '&offset=' + historyState.offset + buildHistoryFilterParams();
 }
 
 export function buildSortControls() {
@@ -472,7 +477,7 @@ export function renderDashboard(el, status, history, stats) {
       const enable = !forceAllBtn.classList.contains('is-active');
       forceAllBtn.disabled = true;
       try {
-        const res = await fetchJSON('/api/plan/force-all', {
+        const res = await fetchJSON('/api/plan/force-all?' + buildHistoryFilterParams().slice(1), {
           method: 'POST',
           body: JSON.stringify({ force: enable }),
         });

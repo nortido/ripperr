@@ -33,6 +33,7 @@ type fakeStore struct {
 	pingErr          error
 	summary          storage.CheckLogSummary
 	resetStreakCalls []string
+	forceAllFilter   storage.CheckLogFilter
 }
 
 func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
@@ -167,25 +168,33 @@ func (f *fakeStore) SetForceCheck(_ context.Context, urlHash string, force bool)
 	return true, nil
 }
 
-func (f *fakeStore) ForceCheckAll(_ context.Context, force bool) (int64, error) {
+func (f *fakeStore) ForceCheckAll(_ context.Context, force bool, filter storage.CheckLogFilter) ([]string, int64, error) {
+	f.forceAllFilter = filter
 	if f.forceItems == nil {
-		return 0, nil
+		return nil, 0, nil
 	}
 	ignoreSet, _ := f.GetIgnoreSet(context.Background())
+	var hashes []string
 	var n int64
 	for hash := range f.forceItems {
 		if force {
 			if _, ignored := ignoreSet[hash]; ignored {
 				continue
 			}
-			f.forceItems[hash] = true
-			n++
+			hashes = append(hashes, hash)
+			if !f.forceItems[hash] {
+				f.forceItems[hash] = true
+				n++
+			}
 		} else {
-			f.forceItems[hash] = false
-			n++
+			hashes = append(hashes, hash)
+			if f.forceItems[hash] {
+				f.forceItems[hash] = false
+				n++
+			}
 		}
 	}
-	return n, nil
+	return hashes, n, nil
 }
 
 func (f *fakeStore) CheckLogSummary(context.Context) (storage.CheckLogSummary, error) {
@@ -1028,8 +1037,9 @@ func TestPostPlanForceAll(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Updated != 2 {
-		t.Fatalf("updated = %d, want 2", resp.Updated)
+	// h2 уже был форсирован, поэтому в счёт изменённых он не попадает
+	if resp.Updated != 1 {
+		t.Fatalf("updated = %d, want 1", resp.Updated)
 	}
 	if !store.forceItems["h1"] || !store.forceItems["h2"] {
 		t.Fatal("expected h1 and h2 forced")
@@ -1671,5 +1681,73 @@ func TestHandleRedownloadSerializes(t *testing.T) {
 
 	if peak := tracker.peak(); peak != 1 {
 		t.Fatalf("peak concurrency = %d, want 1", peak)
+	}
+}
+
+func TestPostPlanForceAllPassesListFilters(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{"h1": false}}
+	srv := newTestServer(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/force-all?sort=recheck&tracker=3&category=sonarr&name=from&status=error", nil)
+	w := httptest.NewRecorder()
+	srv.handlePlanForceAll(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	got := store.forceAllFilter
+	if got.TrackerID != 3 || got.Category != "sonarr" || got.Name != "from" || got.Status != "error" {
+		t.Fatalf("filter = %+v, want tracker 3, category sonarr, name from, status error", got)
+	}
+	if got.SortBy != "recheck" || !got.ExcludeIgnored {
+		t.Fatalf("filter = %+v, want sort recheck with ignored excluded", got)
+	}
+	if got.Limit != 0 || got.Offset != 0 {
+		t.Fatalf("filter = %+v, want no pagination", got)
+	}
+}
+
+func TestPostPlanForceAllKeepsIgnoredWhenListShowsThem(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{"h1": false}}
+	srv := newTestServer(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/force-all?ignored=1", nil)
+	w := httptest.NewRecorder()
+	srv.handlePlanForceAll(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if got := store.forceAllFilter; !got.IgnoredOnly || got.ExcludeIgnored {
+		t.Fatalf("filter = %+v, want ignored-only without exclusion", got)
+	}
+}
+
+func TestPostPlanForceAllQueuesCheckNow(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{"h1": false, "h2": false}}
+	srv := newTestServer(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/force-all", nil)
+	w := httptest.NewRecorder()
+	srv.handlePlanForceAll(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	queued := srv.runnerState.DrainForce()
+	if len(queued) != 2 {
+		t.Fatalf("queued = %v, want both forced releases", queued)
+	}
+}
+
+func TestPostPlanForceAllClearQueuesNothing(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{"h1": true}}
+	srv := newTestServer(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/force-all", bytes.NewReader([]byte(`{"force":false}`)))
+	w := httptest.NewRecorder()
+	srv.handlePlanForceAll(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if queued := srv.runnerState.DrainForce(); len(queued) != 0 {
+		t.Fatalf("queued = %v, want nothing on clear", queued)
 	}
 }

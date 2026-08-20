@@ -516,6 +516,16 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		}
 		if errors.Is(err, model.ErrAlreadyAdded) {
 			logger.Info(fmt.Sprint("already in qbittorrent, skipped: ", e.Name))
+			// история пишется как при обычном unchanged: торрент с этим
+			// инфохешем уже стоит, значит релиз актуален. Иначе force_check
+			// остаётся взведённым, а дата в истории старой, и каждый прогон
+			// снова считает релиз обновлённым и снова упирается в already added
+			if rep == nil {
+				if saveErr := h.saveHistory(ctx, ttid, e, pc.date); saveErr != nil {
+					h.logCheck(ctx, e, ttid, "error", saveErr.Error(), rep)
+					return saveErr
+				}
+			}
 			h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 			return nil
 		}

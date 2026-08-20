@@ -331,7 +331,7 @@ func TestSetForceCheck(t *testing.T) {
 	}
 }
 
-func TestForceCheckAllOnlyTouchesTrackedNonIgnored(t *testing.T) {
+func TestForceCheckAllSkipsIgnoredWhenListDoes(t *testing.T) {
 	c := newTestClient(t)
 	ctx := t.Context()
 
@@ -353,7 +353,7 @@ func TestForceCheckAllOnlyTouchesTrackedNonIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := c.ForceCheckAll(ctx, true)
+	_, n, err := c.ForceCheckAll(ctx, true, storage.CheckLogFilter{ExcludeIgnored: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,5 +447,81 @@ func TestIgnoreLifecycleAndResetErrorStreak(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].ErrorStreak != 0 {
 		t.Fatalf("entries = %+v, want single row with ErrorStreak 0", entries)
+	}
+}
+
+func TestForceCheckAllHonoursListFilter(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	for _, h := range []string{"h1", "h2"} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: h, Name: h}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "h1", TrackerTypeID: 3, Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h2", ItemName: "h2", TrackerTypeID: 1, Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+
+	hashes, n, err := c.ForceCheckAll(ctx, true, storage.CheckLogFilter{TrackerID: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("rows affected = %d, want 1", n)
+	}
+	if len(hashes) != 1 || hashes[0] != "h1" {
+		t.Fatalf("hashes = %v, want [h1]", hashes)
+	}
+
+	items, err := c.ListItems(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forced := make(map[string]bool, len(items))
+	for _, it := range items {
+		forced[it.URLHash] = it.ForceCheck
+	}
+	if !forced["h1"] || forced["h2"] {
+		t.Fatalf("forced = %+v, want only h1", forced)
+	}
+}
+
+func TestForceCheckAllCountsOnlyChangedRows(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	for _, h := range []string{"h1", "h2", "h3"} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: h, Name: h}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: h, ItemName: h, Status: "unchanged"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.SetForceCheck(ctx, "h1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	_, n, err := c.ForceCheckAll(ctx, true, storage.CheckLogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("forced rows = %d, want 2 (h1 was already forced)", n)
+	}
+
+	if _, err = c.SetForceCheck(ctx, "h2", false); err != nil {
+		t.Fatal(err)
+	}
+	_, n, err = c.ForceCheckAll(ctx, false, storage.CheckLogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("cleared rows = %d, want 2 (h2 was not forced)", n)
 	}
 }

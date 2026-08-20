@@ -700,12 +700,18 @@ func TestRunResetsStuckCounter(t *testing.T) {
 
 type loggingStorage struct {
 	fakeStorage
-	logs []storageModel.CheckLogEntry
+	logs  []storageModel.CheckLogEntry
+	saved []runnerModel.HistoryItem
 }
 
 func (l *loggingStorage) AddCheckLog(_ context.Context, e *storageModel.CheckLogEntry) (int, error) {
 	l.logs = append(l.logs, *e)
 	return l.checkStreak, nil
+}
+
+func (l *loggingStorage) SaveItem(_ context.Context, item *runnerModel.HistoryItem) error {
+	l.saved = append(l.saved, *item)
+	return nil
 }
 
 type mockPageClient struct{}
@@ -1413,5 +1419,32 @@ func TestPushForcedPurgesHistoryOfDeletedTorrent(t *testing.T) {
 	}
 	if len(store.deleted) != 1 || store.deleted[0] != goneHash {
 		t.Fatalf("deleted = %v, want [%s]", store.deleted, goneHash)
+	}
+}
+
+func TestWorkerSavesHistoryOnAlreadyAdded(t *testing.T) {
+	page := bytes.NewBufferString(strings.Repeat("x", 60))
+	store := &loggingStorage{}
+	old := time.Now().Add(-48 * time.Hour)
+	h := &handler{
+		config:  model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage: store,
+		manager: &errAlreadyAddedManager{},
+		trackerService: &updatingPageTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
+		},
+		mx: helper.KeyedMutex{},
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc", Timestamp: &old}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	// без записи истории force_check остаётся взведённым, а запись каждый прогон
+	// снова считается обновлённой и снова упирается в already added
+	if len(store.saved) != 1 {
+		t.Fatalf("saved = %d, want 1", len(store.saved))
+	}
+	if store.saved[0].RecheckAt == nil || !store.saved[0].RecheckAt.After(time.Now()) {
+		t.Fatalf("recheck_at = %v, want a future time", store.saved[0].RecheckAt)
 	}
 }

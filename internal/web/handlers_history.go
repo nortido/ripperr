@@ -44,34 +44,33 @@ func queryTrimmed(r *http.Request, key string, maxBytes int) string {
 	return v[:cut]
 }
 
-func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	limit := queryInt(r, "limit", 50, 1, 1000)
-	offset := queryInt(r, "offset", 0, 0, 0)
-	status := r.URL.Query().Get("status")
-	ignoredOnly := r.URL.Query().Get("ignored") == "1"
+// checkLogFilterFromQuery читает фильтры списка релизов из query. Один разбор на
+// список и на форс всем: иначе кнопка форса набирала бы не те записи, что видны.
+func (s *Server) checkLogFilterFromQuery(r *http.Request) storage.CheckLogFilter {
 	sortBy := r.URL.Query().Get("sort")
 	if sortBy != "recheck" {
 		sortBy = "checked"
 	}
-	nameFilter := queryTrimmed(r, "name", 200)
-	trackerID := queryInt(r, "tracker", 0, 1, 0)
-	categoryFilter := queryTrimmed(r, "category", 200)
-	brokenStreak := s.effective().Runner.ErrorStreakThreshold
-	// ignored releases are never rechecked, so the plan view has nothing to
-	// show for them; the history view still lists them unless asked to filter
-	excludeIgnored := sortBy == "recheck" && !ignoredOnly
-	items, total, err := s.db.ListCheckLog(r.Context(), storage.CheckLogFilter{
-		Limit:          limit,
-		Offset:         offset,
-		Status:         status,
-		IgnoredOnly:    ignoredOnly,
-		ExcludeIgnored: excludeIgnored,
+	ignoredOnly := r.URL.Query().Get("ignored") == "1"
+	return storage.CheckLogFilter{
+		Status:      r.URL.Query().Get("status"),
+		IgnoredOnly: ignoredOnly,
+		// ignored releases are never rechecked, so the plan view has nothing to
+		// show for them; the history view still lists them unless asked to filter
+		ExcludeIgnored: sortBy == "recheck" && !ignoredOnly,
 		SortBy:         sortBy,
-		Name:           nameFilter,
-		BrokenStreak:   brokenStreak,
-		TrackerID:      trackerID,
-		Category:       categoryFilter,
-	})
+		Name:           queryTrimmed(r, "name", 200),
+		BrokenStreak:   s.effective().Runner.ErrorStreakThreshold,
+		TrackerID:      queryInt(r, "tracker", 0, 1, 0),
+		Category:       queryTrimmed(r, "category", 200),
+	}
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	f := s.checkLogFilterFromQuery(r)
+	f.Limit = queryInt(r, "limit", 50, 1, 1000)
+	f.Offset = queryInt(r, "offset", 0, 0, 0)
+	items, total, err := s.db.ListCheckLog(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -95,7 +94,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			ErrorStreak: e.ErrorStreak,
 			// the threshold lives in the schedule settings, so the flag is
 			// resolved here rather than re-derived by every client
-			Broken:     brokenStreak >= 1 && e.ErrorStreak >= brokenStreak,
+			Broken:     f.BrokenStreak >= 1 && e.ErrorStreak >= f.BrokenStreak,
 			RecheckAt:  recheckAt,
 			ForceCheck: e.ForceCheck,
 		}
@@ -162,12 +161,23 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 			force = *req.Force
 		}
 	}
-	n, err := s.db.ForceCheckAll(r.Context(), force)
+	hashes, n, err := s.db.ForceCheckAll(r.Context(), force, s.checkLogFilterFromQuery(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int64{"updated": n})
+	// как и у одиночного форса, флага мало: он дожил бы только до планового
+	// прогона, а кнопка должна запускать проверку сразу. Очередь ограничена,
+	// не влезшие релизы сохраняют флаг и уйдут в ближайший плановый прогон
+	queued := 0
+	if force {
+		for _, hash := range hashes {
+			if s.runnerState.RequestForce(hash) {
+				queued++
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"updated": n, "queued": int64(queued)})
 }
 
 func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {

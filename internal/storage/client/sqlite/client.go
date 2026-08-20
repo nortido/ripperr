@@ -161,18 +161,14 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 	return errorStreak, err
 }
 
-func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]storage.CheckLogEntry, int, error) {
-	var total int
-	from := `check_log c`
-	join := ` LEFT JOIN history h ON h.url_hash = c.url_hash`
+// checkLogFilterClause собирает join и WHERE ровно так, как их видит список
+// дашборда: тот же набор условий переиспользует ForceCheckAll, иначе форс всем
+// расходился бы с тем, что показано на экране.
+func checkLogFilterClause(f storage.CheckLogFilter) (join, clause string, args []any) {
+	join = ` LEFT JOIN history h ON h.url_hash = c.url_hash`
 	if f.IgnoredOnly {
 		join += ` INNER JOIN "ignore" i ON i.url_hash = c.url_hash`
 	}
-	countQ := "SELECT COUNT(*) FROM " + from + join
-	listQ := `SELECT c.id, c.checked_at, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
-	          h.recheck_at, COALESCE(h.force_check, 0)
-	          FROM ` + from + join
-	var args []any
 	var where []string
 	if f.Status == "broken" {
 		brokenStreak := f.BrokenStreak
@@ -203,10 +199,21 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 		where = append(where, `NOT EXISTS (SELECT 1 FROM "ignore" ig WHERE ig.url_hash = c.url_hash)`)
 	}
 	if len(where) > 0 {
-		clause := " WHERE " + strings.Join(where, " AND ")
-		countQ += clause
-		listQ += clause
+		clause = " WHERE " + strings.Join(where, " AND ")
 	}
+	return
+}
+
+func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]storage.CheckLogEntry, int, error) {
+	var total int
+	from := `check_log c`
+	join, clause, args := checkLogFilterClause(f)
+	countQ := "SELECT COUNT(*) FROM " + from + join
+	listQ := `SELECT c.id, c.checked_at, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
+	          h.recheck_at, COALESCE(h.force_check, 0)
+	          FROM ` + from + join
+	countQ += clause
+	listQ += clause
 	if err := c.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -369,27 +376,46 @@ func (c *Client) SetForceCheck(ctx context.Context, urlHash string, force bool) 
 	return n > 0, nil
 }
 
-func (c *Client) ForceCheckAll(ctx context.Context, force bool) (int64, error) {
-	checkLogExists := `EXISTS (SELECT 1 FROM check_log c WHERE c.url_hash = history.url_hash)`
-	if force {
-		res, err := c.db.ExecContext(ctx, `
-UPDATE history SET force_check = 1
-WHERE `+checkLogExists+`
-AND NOT EXISTS (
-	SELECT 1 FROM "ignore" i WHERE i.url_hash = history.url_hash
-)`)
-		if err != nil {
-			return 0, err
-		}
-		return res.RowsAffected()
-	}
-	res, err := c.db.ExecContext(ctx, `
-UPDATE history SET force_check = 0
-WHERE `+checkLogExists)
+// ForceCheckAll помечает отфильтрованные релизы и возвращает их url_hash: раннеру
+// они нужны, чтобы форс всем стартовал проверку сразу, как одиночный.
+func (c *Client) ForceCheckAll(ctx context.Context, force bool, f storage.CheckLogFilter) ([]string, int64, error) {
+	join, clause, args := checkLogFilterClause(f)
+	// строки выбираются тем же условием, что и список дашборда, поэтому форс
+	// ложится ровно на отфильтрованные релизы, а не на всю историю
+	sub := `SELECT c.url_hash FROM check_log c` + join + clause
+	rows, err := c.db.QueryContext(ctx, sub, args...)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
-	return res.RowsAffected()
+	defer func() { _ = rows.Close() }()
+	var hashes []string
+	for rows.Next() {
+		var hash string
+		if err = rows.Scan(&hash); err != nil {
+			return nil, 0, err
+		}
+		hashes = append(hashes, hash)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	flag := 0
+	if force {
+		flag = 1
+	}
+	// условие force_check <> ? отсекает строки, которые и так в нужном состоянии,
+	// поэтому RowsAffected считает реально изменённые релизы, а не весь фильтр
+	res, err := c.db.ExecContext(ctx,
+		`UPDATE history SET force_check = ? WHERE force_check <> ? AND url_hash IN (`+sub+`)`,
+		append([]any{flag, flag}, args...)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, 0, err
+	}
+	return hashes, n, nil
 }
 
 func (c *Client) Ping(ctx context.Context) error {

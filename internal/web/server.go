@@ -29,7 +29,7 @@ type store interface {
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
-	ForceCheckAll(ctx context.Context, force bool) (int64, error)
+	ForceCheckAll(ctx context.Context, force bool, f storage.CheckLogFilter) (hashes []string, n int64, err error)
 	GetTracker(ctx context.Context, trackerID int) (*tracker.Tracker, error)
 }
 
