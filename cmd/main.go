@@ -128,6 +128,7 @@ func main() {
 			Location:             scheduleLoc,
 			Immediate:            first,
 			ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
+			MagnetTimeout:        cfg.Runner.MagnetTimeout,
 		}
 
 		done := make(chan struct{})

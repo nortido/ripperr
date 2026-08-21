@@ -5,6 +5,7 @@ import "time"
 type Entry struct {
 	Hash           string
 	Category       string
+	SavePath       string
 	Tag            string
 	URL            string
 	TopicID        string

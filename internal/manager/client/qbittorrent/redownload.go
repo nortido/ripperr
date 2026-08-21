@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"trackerr/internal/manager/blackhole"
 	"trackerr/internal/model"
 	"trackerr/internal/system/logger"
 )
@@ -16,10 +17,6 @@ const (
 )
 
 var (
-	// redownloadSettleDelay даёт qBittorrent время дочистить файлы: торрент
-	// уходит из списка сразу, но задача удаления продолжает работать, и
-	// слишком раннее повторное добавление того же infohash молча отвергается.
-	redownloadSettleDelay = 3 * time.Second
 	// redownloadRetryDelay это пауза между попытками добавить заново.
 	redownloadRetryDelay = 5 * time.Second
 )
@@ -64,6 +61,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 		Name:           name,
 		Comment:        comment,
 		Category:       entry.Category,
+		SavePath:       entry.SavePath,
 		Tag:            entry.Tag,
 		AutoManaged:    entry.AutoManaged,
 		MaxRatio:       entry.MaxRatio,
@@ -73,7 +71,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 	// Шаг 4: складываем байты и параметры добавления в blackhole до всего
 	// разрушительного. Если qbit умрёт или запрос отменят где-то дальше этой
 	// точки, пары на диске хватит, чтобы дозавершить повторное добавление позже.
-	if err = c.writeBlackholePair(torrentData, "", opts); err != nil {
+	if err = c.bh.Write(torrentData, "", opts); err != nil {
 		return fmt.Errorf("blackhole write failed: %w", err)
 	}
 
@@ -95,7 +93,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 
 	// Шаг 7: даём задаче удаления доработать на диске, потом убеждаемся, что
 	// торрент действительно исчез, прежде чем переиспользовать его infohash.
-	if err = sleepCtx(ctx, redownloadSettleDelay); err != nil {
+	if err = sleepCtx(ctx, blackhole.SettleDelay); err != nil {
 		return err
 	}
 	present, err := c.torrentExists(ctx, torrentHash)
@@ -139,12 +137,12 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string) error 
 	// всё ещё может гнаться снести только что добавленный торрент; убираем
 	// страховку лишь когда присутствие переживает ту же задержку, которой
 	// доверяет подметальщик, иначе оставляем разбираться ему
-	if !c.blackholeSettled(ctx, torrentHash) {
+	if !c.bh.Settled(ctx, torrentHash) {
 		logger.Info(fmt.Sprintf("force redownload: %s not confirmed settled, leaving blackhole pair for the sweeper", torrentHash))
 		return nil
 	}
 
-	removeBlackholePair(c.config.BlackholeDir, torrentHash)
+	c.bh.Remove(torrentHash)
 	logger.Info(fmt.Sprintf("force redownload: completed for torrent %s", torrentHash))
 	return nil
 }

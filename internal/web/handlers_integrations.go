@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"trackerr/internal/config"
+	"trackerr/internal/manager"
 	"trackerr/internal/manager/client/qbittorrent"
+	"trackerr/internal/manager/client/transmission"
 	"trackerr/internal/model"
 	"trackerr/internal/notify"
 	"trackerr/internal/settings"
@@ -23,7 +25,7 @@ func (s *Server) handleGetIntegrations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, json.RawMessage(settings.IntegrationsJSON(&cfg)))
 }
 
-// ponytail: переменные пакета, чтобы тесты подменяли Telegram без реального вызова, тот же приём, что и qbitClientFactory
+// ponytail: переменные пакета, чтобы тесты подменяли Telegram без реального вызова, тот же приём, что и managerClientFactory
 var telegramChatIDResolver = notify.ResolveChatID
 
 var sendNotification = func(ctx context.Context, cfg notify.Config, ev notify.Event) error {
@@ -143,7 +145,12 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.Kind {
 	case "qbit":
-		_, err := qbittorrent.New(s.qbitManagerConfig(cfg))
+		// проверяет именно qbit-карточку, даже когда активен transmission: обе
+		// карточки настраиваются и проверяются независимо друг от друга
+		_, err := qbittorrent.New(qbitManagerConfigFrom(cfg))
+		s.testResult(w, err)
+	case "transmission":
+		_, err := transmission.New(transmissionManagerConfigFrom(cfg))
 		s.testResult(w, err)
 	case "flaresolverr":
 		s.testResult(w, testFlaresolverr(cfg))
@@ -162,7 +169,7 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 		}
 		s.testResult(w, sendNotification(ctx, notify.Config(cfg.Notify), notify.Event{Kind: notify.KindTest, Text: "trackerr: connectivity test"}))
 	default:
-		writeError(w, http.StatusBadRequest, "kind must be qbit, flaresolverr, proxy, or notify")
+		writeError(w, http.StatusBadRequest, "kind must be qbit, transmission, flaresolverr, proxy, or notify")
 	}
 }
 
@@ -186,6 +193,24 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 		}
 		cfg.Manager.QbitTorrent.Username = c.Username
 		cfg.Manager.QbitTorrent.Password = c.Password
+	case "transmission":
+		var c struct {
+			Host     string `json:"host"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return cfg, err
+		}
+		if c.Host != "" {
+			norm, err := settings.EnsureScheme(c.Host, "http")
+			if err != nil {
+				return cfg, err
+			}
+			cfg.Manager.Transmission.Host = norm
+		}
+		cfg.Manager.Transmission.Username = c.Username
+		cfg.Manager.Transmission.Password = c.Password
 	case "flaresolverr":
 		var c struct {
 			URL       string `json:"url"`
@@ -234,7 +259,7 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 		cfg.Notify.WebhookURL = c.Webhook.URL
 		cfg.Notify.Enabled = c.Enabled
 	default:
-		return cfg, fmt.Errorf("kind must be qbit, flaresolverr, proxy, or notify")
+		return cfg, fmt.Errorf("kind must be qbit, transmission, flaresolverr, proxy, or notify")
 	}
 	return cfg, nil
 }
@@ -247,21 +272,18 @@ func (s *Server) testResult(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusOK, testResultResp{OK: true})
 }
 
-type qbitCategoriesClient interface {
+type managerClient interface {
 	GetCategories(ctx context.Context) ([]string, error)
 	List(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error)
 	ForceRedownload(ctx context.Context, torrentHash string) error
 }
 
-// ponytail: фабрика на каждый запрос, никакого долгоживущего общего клиента qbit в HTTP-обработчиках
-var qbitClientFactory = func(cfg model.ManagerConfig) (qbitCategoriesClient, error) {
-	return qbittorrent.New(cfg)
+// ponytail: фабрика на каждый запрос, никакого долгоживущего общего клиента загрузок в HTTP-обработчиках
+var managerClientFactory = func(kind string, cfg model.ManagerConfig) (managerClient, error) {
+	return manager.NewClient(kind, cfg)
 }
 
-func (s *Server) qbitManagerConfig(cfg config.App) model.ManagerConfig {
-	// BlackholeDir здесь не выставляется: qbittorrent.New делает по нему MkdirAll, когда он непустой,
-	// а проверка связи или загрузка категорий не должны создавать этот каталог
-	// побочным эффектом. handleRedownload выставляет его явно после этого вызова.
+func qbitManagerConfigFrom(cfg config.App) model.ManagerConfig {
 	return model.ManagerConfig{
 		Host:     cfg.Manager.QbitTorrent.Host,
 		Username: cfg.Manager.QbitTorrent.Username,
@@ -269,17 +291,35 @@ func (s *Server) qbitManagerConfig(cfg config.App) model.ManagerConfig {
 	}
 }
 
+func transmissionManagerConfigFrom(cfg config.App) model.ManagerConfig {
+	return model.ManagerConfig{
+		Host:     cfg.Manager.Transmission.Host,
+		Username: cfg.Manager.Transmission.Username,
+		Password: cfg.Manager.Transmission.Password,
+	}
+}
+
+func (s *Server) managerConfig(cfg config.App) model.ManagerConfig {
+	// BlackholeDir здесь не выставляется: конструктор клиента делает по нему MkdirAll, когда он непустой,
+	// а проверка связи или загрузка категорий не должны создавать этот каталог
+	// побочным эффектом. handleRedownload выставляет его явно после этого вызова.
+	if manager.NormalizeClient(cfg.Manager.Client) == manager.ClientTransmission {
+		return transmissionManagerConfigFrom(cfg)
+	}
+	return qbitManagerConfigFrom(cfg)
+}
+
 func (s *Server) handleGetCategories(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	cfg := s.effective()
-	qbc, err := qbitClientFactory(s.qbitManagerConfig(cfg))
+	mc, err := managerClientFactory(cfg.Manager.Client, s.managerConfig(cfg))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	cats, err := qbc.GetCategories(ctx)
+	cats, err := mc.GetCategories(ctx)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

@@ -1,14 +1,34 @@
 package config
 
+import "strings"
+
+// NormalizeClient приводит значение MANAGER_CLIENT (env, .env, БД настроек) к
+// одному каноническому виду в одном месте: env-переменные и старые записи
+// настроек попадаются в любом регистре и с пробелами (MANAGER_CLIENT=Transmission),
+// а manager, settings и web сравнивают его буквально с "qbit"/"transmission",
+// поэтому без нормализации такое значение уходит не в ту ветку.
+func NormalizeClient(kind string) string {
+	return strings.ToLower(strings.TrimSpace(kind))
+}
+
 type Log struct {
 	Level string `env:"LOG_LEVEL, default=info"`
 }
 
 type Manager struct {
+	// Client выбирает активный клиент загрузок: "qbit" или "transmission"
+	Client      string `env:"MANAGER_CLIENT, default=qbit"`
 	QbitTorrent struct {
 		Host     string `env:"QBIT_URL, default=localhost:8068"`
 		Username string `env:"QBIT_USER, default=admin"`
 		Password string `env:"QBIT_PASS, default=adminadmin"`
+	}
+	Transmission struct {
+		Host string `env:"TRANSMISSION_URL, default=localhost:9091"`
+		// у Transmission аутентификация часто выключена, поэтому пустые логин
+		// и пароль это нормальное значение по умолчанию, в отличие от qbit
+		Username string `env:"TRANSMISSION_USER, default="`
+		Password string `env:"TRANSMISSION_PASS, default="`
 	}
 	PausedMaxRatio        float64  `env:"MANAGER_PAUSED_MAX_RATIO, default=2"`
 	DeleteEnabled         bool     `env:"MANAGER_DELETE_ENABLED, default=true"`
@@ -79,6 +99,7 @@ type Runner struct {
 	CBRetries             int      `env:"RUNNER_CB_RETRIES, default=2"`
 	CBMinutesToRetry      int      `env:"RUNNER_CB_MINUTES_TO_RETRY, default=60"`
 	AllowedCategories     []string `env:"RUNNER_ALLOWED_CATEGORIES, default="`
+	MagnetTimeout         int64    `env:"RUNNER_MAGNET_TIMEOUT, default=60"`
 	Timezone              string   // переопределение только из БД; empty = process local
 }
 

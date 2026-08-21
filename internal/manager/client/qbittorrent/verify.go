@@ -14,24 +14,11 @@ import (
 )
 
 func (c *Client) IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (same bool, known bool) {
-	if existing == "" {
-		return false, false
+	var data []byte
+	if buf != nil {
+		data = buf.Bytes()
 	}
-	if buf != nil && buf.Len() > 0 {
-		hash, err := torrentmeta.InfoHash(buf.Bytes())
-		if err != nil {
-			return false, false
-		}
-		return strings.EqualFold(hash, existing), true
-	}
-	if magnet != "" {
-		hash, ok := torrentmeta.BtihFromMagnet(magnet)
-		if !ok {
-			return false, false
-		}
-		return strings.EqualFold(hash, existing), true
-	}
-	return false, false
+	return torrentmeta.SameHash(data, magnet, existing)
 }
 
 func (c *Client) torrentExists(ctx context.Context, hash string) (bool, error) {

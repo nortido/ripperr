@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
@@ -12,7 +13,6 @@ import (
 	"trackerr/internal/helper/breakeralerts"
 	"trackerr/internal/helper/tlsclient"
 	"trackerr/internal/manager"
-	"trackerr/internal/manager/client/qbittorrent"
 	"trackerr/internal/model"
 	proxyModel "trackerr/internal/model/proxy"
 	"trackerr/internal/notify"
@@ -25,29 +25,47 @@ import (
 
 func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg model.HandlerConfig, runnerState *runner.State, alerts *breakeralerts.Registry) error {
 	var (
-		qbc        *qbittorrent.Client
+		mc         manager.Client
 		px         proxy.IClient
 		ht         *http.Client
 		downloadHt helper.HTTPDoer
 		err        error
 	)
 
-	qbtcfg := model.ManagerConfig{
-		Host:               cfg.Manager.QbitTorrent.Host,
-		Username:           cfg.Manager.QbitTorrent.Username,
-		Password:           cfg.Manager.QbitTorrent.Password,
+	mcfg := model.ManagerConfig{
 		PausedMaxRatio:     cfg.Manager.PausedMaxRatio,
 		DeleteEnabled:      cfg.Manager.DeleteEnabled,
 		DeleteFilesEnabled: cfg.Manager.DeleteFilesEnabled,
 		DeleteCategories:   cfg.Manager.DeleteFilesCategories,
 		BlackholeDir:       cfg.BlackholeDirPath(),
 	}
+	// поля хоста/логина/пароля берутся у активного клиента, остальные общие для обоих;
+	// нормализация в одном месте, иначе MANAGER_CLIENT=Transmission (регистр,
+	// пробелы из env) уходит в ветку qbit за учётными данными и потом падает с
+	// ErrUnknownClient
+	clientName := manager.NormalizeClient(cfg.Manager.Client)
+	if clientName == manager.ClientTransmission {
+		mcfg.Host = cfg.Manager.Transmission.Host
+		mcfg.Username = cfg.Manager.Transmission.Username
+		mcfg.Password = cfg.Manager.Transmission.Password
+	} else {
+		mcfg.Host = cfg.Manager.QbitTorrent.Host
+		mcfg.Username = cfg.Manager.QbitTorrent.Username
+		mcfg.Password = cfg.Manager.QbitTorrent.Password
+		if clientName == "" {
+			clientName = manager.ClientQbit
+		}
+	}
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if qbc, err = qbittorrent.New(qbtcfg); err != nil {
-			err = fmt.Errorf("failed to connect to qbittorrent: %w", err)
+		if mc, err = manager.NewClient(clientName, mcfg); err != nil {
+			// неизвестный вид клиента никогда не подключится, повторять бессмысленно
+			if errors.Is(err, manager.ErrUnknownClient) {
+				return err
+			}
+			err = fmt.Errorf("failed to connect to %s: %w", clientName, err)
 			logger.Error(err.Error())
 			t := time.NewTimer(time.Duration(cfg.Manager.MinutesToReconnect) * time.Minute)
 			select {
@@ -110,11 +128,11 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		return err
 	}
 
-	rn := runner.NewRunner(tr, manager.NewManager(qbc), db, handlerCfg, runnerState, notify.New(notify.Config(cfg.Notify)))
+	rn := runner.NewRunner(tr, manager.NewManager(mc), db, handlerCfg, runnerState, notify.New(notify.Config(cfg.Notify)))
 
 	bhDone := make(chan struct{})
 	go func() {
-		qbc.SweepBlackhole(ctx)
+		mc.SweepBlackhole(ctx)
 		close(bhDone)
 	}()
 

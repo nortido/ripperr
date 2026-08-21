@@ -12,6 +12,7 @@ import (
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
+	"trackerr/internal/manager/blackhole"
 	"trackerr/internal/model"
 )
 
@@ -123,10 +124,10 @@ func (s *redownloadStubServer) wasDeleted() bool {
 
 func withFastRedownloadTimings(t *testing.T) {
 	t.Helper()
-	origSettle, origRetry := redownloadSettleDelay, redownloadRetryDelay
-	redownloadSettleDelay = 10 * time.Millisecond
+	origSettle, origRetry := blackhole.SettleDelay, redownloadRetryDelay
+	blackhole.SettleDelay = 10 * time.Millisecond
 	redownloadRetryDelay = 10 * time.Millisecond
-	t.Cleanup(func() { redownloadSettleDelay, redownloadRetryDelay = origSettle, origRetry })
+	t.Cleanup(func() { blackhole.SettleDelay, redownloadRetryDelay = origSettle, origRetry })
 }
 
 func TestForceRedownload_WritesBlackholeBeforeDeleteAndCleansUpOnSuccess(t *testing.T) {

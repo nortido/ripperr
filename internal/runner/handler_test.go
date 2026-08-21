@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
+
 	"trackerr/internal/helper"
 	"trackerr/internal/model"
 	proxyModel "trackerr/internal/model/proxy"
@@ -966,7 +969,9 @@ type errAlreadyAddedManager struct {
 	fakeManager
 }
 
-func (m *errAlreadyAddedManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
+func (m *errAlreadyAddedManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
+	// submit больше не зовёт SubmitMagnet вовсе, а h.magnetFetch в этом тесте
+	// не задан, поэтому запись реально уходит файловым путём через Submit
 	return fmt.Errorf("%w: test", model.ErrAlreadyAdded)
 }
 
@@ -1030,9 +1035,105 @@ type submitTrackingManager struct {
 	submitted bool
 }
 
-func (m *submitTrackingManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
+func (m *submitTrackingManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
 	m.submitted = true
 	return nil
+}
+
+// magnetTrackingManager различает, каким путём ушла раздача (Submit файлом с
+// уже собранными байтами или ветка SubmitMagnet, которую submit теперь вовсе
+// не зовёт) и запоминает переданные Submit байты, чтобы тест мог проверить
+// комментарий внутри них.
+type magnetTrackingManager struct {
+	fakeManager
+	submitCalled       bool
+	submitMagnetCalled bool
+	lastSubmitData     []byte
+}
+
+func (m *magnetTrackingManager) Submit(_ context.Context, buf *bytes.Buffer, _ model.ManagerAddFileOptions) error {
+	m.submitCalled = true
+	if buf != nil {
+		m.lastSubmitData = buf.Bytes()
+	}
+	return nil
+}
+
+func (m *magnetTrackingManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
+	m.submitMagnetCalled = true
+	return nil
+}
+
+func buildTestTorrentBytes(t *testing.T, comment string) []byte {
+	t.Helper()
+	info := metainfo.Info{PieceLength: 16384, Pieces: make([]byte, 20), Name: "test.txt", Length: 0}
+	infoBytes, err := bencode.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	mi := metainfo.MetaInfo{InfoBytes: infoBytes, Comment: comment}
+	var buf bytes.Buffer
+	if err := mi.Write(&buf); err != nil {
+		t.Fatalf("write metainfo: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestSubmit_MagnetMetadataSuccessUsesFileSubmitWithComment(t *testing.T) {
+	mgr := &magnetTrackingManager{}
+	h := &handler{
+		manager: mgr,
+		config:  model.HandlerConfig{MagnetTimeout: 5},
+		magnetFetch: func(context.Context, string) ([]byte, error) {
+			// комментарий здесь не тот, что должен оказаться в файле после submit:
+			// его подставляет torrentmeta.SetComment внутри buildTorrentFromMagnet
+			return buildTestTorrentBytes(t, "raw"), nil
+		},
+	}
+	e := &model.Entry{Name: "test", Magnet: "magnet:?xt=urn:btih:abc", URL: "https://example.com/t/1"}
+
+	if err := h.submit(context.Background(), 1, mockPageClient{}, e, nil); err != nil {
+		t.Fatalf("submit err = %v", err)
+	}
+	if mgr.submitMagnetCalled {
+		t.Error("SubmitMagnet must never be called from submit anymore")
+	}
+	if !mgr.submitCalled {
+		t.Fatal("expected Submit to be called with the built torrent bytes")
+	}
+	mi, err := metainfo.Load(bytes.NewReader(mgr.lastSubmitData))
+	if err != nil {
+		t.Fatalf("submitted data is not a valid torrent: %v", err)
+	}
+	if mi.Comment == "" || mi.Comment == "raw" {
+		t.Errorf("comment = %q, want the tracker topic comment stamped by submit", mi.Comment)
+	}
+}
+
+func TestSubmit_MagnetMetadataFailureFallsBackToTrackerDownload(t *testing.T) {
+	page := bytes.NewBufferString(strings.Repeat("x", 60))
+	mgr := &magnetTrackingManager{}
+	h := &handler{
+		manager:        mgr,
+		trackerService: &pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
+		magnetFetch: func(context.Context, string) ([]byte, error) {
+			return nil, fmt.Errorf("swarm unreachable: test")
+		},
+	}
+	e := &model.Entry{Name: "test", Magnet: "magnet:?xt=urn:btih:abc", TopicID: "123"}
+
+	if err := h.submit(context.Background(), 1, mockPageClient{}, e, nil); err != nil {
+		t.Fatalf("submit err = %v", err)
+	}
+	if mgr.submitMagnetCalled {
+		t.Error("SubmitMagnet must never be called from submit anymore")
+	}
+	if !mgr.submitCalled {
+		t.Fatal("expected Submit (downloaded .torrent path) to be called instead")
+	}
+	if !bytes.Equal(mgr.lastSubmitData, page.Bytes()) {
+		t.Errorf("expected fallback to submit the bytes downloaded from the tracker page")
+	}
 }
 
 func runForceCheckWorkerTest(t *testing.T, forceCheck bool) (status string, submitted bool) {
@@ -1131,7 +1232,7 @@ func TestWorkerUpdatedOnForceCheck(t *testing.T) {
 		t.Fatalf("status = %q, want updated", status)
 	}
 	if !submitted {
-		t.Fatal("expected SubmitMagnet to be called")
+		t.Fatal("expected Submit to be called")
 	}
 }
 
@@ -1141,7 +1242,7 @@ func TestWorkerUnchangedWithoutForceCheckSameDates(t *testing.T) {
 		t.Fatalf("status = %q, want unchanged", status)
 	}
 	if submitted {
-		t.Fatal("expected SubmitMagnet not to be called")
+		t.Fatal("expected Submit not to be called")
 	}
 }
 
@@ -1166,7 +1267,7 @@ type failingSubmitManager struct {
 	submitTrackingManager
 }
 
-func (m *failingSubmitManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
+func (m *failingSubmitManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
 	return fmt.Errorf("submit failed")
 }
 

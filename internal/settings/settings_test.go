@@ -149,6 +149,174 @@ func TestValidateSchedule(t *testing.T) {
 	}
 }
 
+func TestApplyOverridesClientAndTransmission(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: "qbit"},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"client":"transmission","transmission":{"host":"tm-host","username":"u","password":"p"}}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "transmission" {
+		t.Errorf("client = %q, want transmission", cfg.Manager.Client)
+	}
+	if cfg.Manager.Transmission.Host != "http://tm-host" {
+		t.Errorf("transmission host = %q, want http://tm-host (normalized)", cfg.Manager.Transmission.Host)
+	}
+	if cfg.Manager.Transmission.Username != "u" || cfg.Manager.Transmission.Password != "p" {
+		t.Errorf("transmission creds = %q/%q, want u/p", cfg.Manager.Transmission.Username, cfg.Manager.Transmission.Password)
+	}
+}
+
+func TestApplyOverridesUnknownClientIgnored(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: "qbit"},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"client":"deluge"}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "qbit" {
+		t.Errorf("client = %q, want qbit (unknown value ignored)", cfg.Manager.Client)
+	}
+}
+
+func TestApplyOverridesEmptyClientPatchKeepsExisting(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: "transmission"},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"client":""}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "transmission" {
+		t.Errorf("client = %q, want transmission (empty patch value keeps active client)", cfg.Manager.Client)
+	}
+}
+
+func TestApplyOverridesOldJSONWithoutClientKeepsQbit(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: "qbit"},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"qbit":{"host":"old-host"}}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "qbit" {
+		t.Errorf("client = %q, want qbit", cfg.Manager.Client)
+	}
+	if cfg.Manager.QbitTorrent.Host != "http://old-host" {
+		t.Errorf("qbit host = %q", cfg.Manager.QbitTorrent.Host)
+	}
+}
+
+// TestApplyOverridesEnvMixedCaseClientNormalized: MANAGER_CLIENT=Transmission из
+// env (регистр, случайные пробелы) обязан дойти до cfg.Manager.Client в
+// каноническом виде без всякого оверлея из БД настроек, иначе он молча ушёл бы
+// в ветку qbit за учётными данными где-то дальше по коду.
+func TestApplyOverridesEnvMixedCaseClientNormalized(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: " Transmission "},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "transmission" {
+		t.Errorf("client = %q, want transmission (normalized)", cfg.Manager.Client)
+	}
+}
+
+// TestApplyOverridesPatchMixedCaseClientApplied: патч со значением "Transmission"
+// (как прислал бы UI без принудительного lower-case) обязан пройти валидацию и
+// применить транссмишн, а не молча остаться на qbit.
+func TestApplyOverridesPatchMixedCaseClientApplied(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: "qbit"},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"client":"Transmission"}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "transmission" {
+		t.Errorf("client = %q, want transmission", cfg.Manager.Client)
+	}
+}
+
+func TestIntegrationsJSONIncludesClientAndTransmission(t *testing.T) {
+	cfg := &config.App{
+		Manager: config.Manager{Client: "transmission"},
+	}
+	cfg.Manager.Transmission.Host = "http://tm-host"
+	cfg.Manager.Transmission.Username = "u"
+	cfg.Manager.Transmission.Password = "p"
+
+	var got struct {
+		Client       string `json:"client"`
+		Transmission struct {
+			Host     string `json:"host"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		} `json:"transmission"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Client != "transmission" {
+		t.Errorf("client = %q, want transmission", got.Client)
+	}
+	if got.Transmission.Host != "http://tm-host" || got.Transmission.Username != "u" || got.Transmission.Password != "p" {
+		t.Errorf("transmission = %+v", got.Transmission)
+	}
+}
+
+// TestIntegrationsJSONNormalizesRawEnvCasing: cfg.Manager.Client как его кладёт
+// env-парсер из MANAGER_CLIENT=Transmission (без похода через ApplyOverrides),
+// GET /api/integrations обязан отдать "transmission", а не сырое "Transmission",
+// иначе ни один вариант селекта в UI не выбран.
+func TestIntegrationsJSONNormalizesRawEnvCasing(t *testing.T) {
+	cfg := &config.App{
+		Manager: config.Manager{Client: "Transmission"},
+	}
+	var got struct {
+		Client string `json:"client"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Client != "transmission" {
+		t.Errorf("client = %q, want transmission", got.Client)
+	}
+}
+
 func TestMergeIntegrationsPartial(t *testing.T) {
 	db := &fakeSettingsDB{data: map[string]json.RawMessage{
 		"integrations": json.RawMessage(`{"qbit":{"host":"old","username":"u","password":"p"},"flaresolverr":{"url":"http://flare","timeout_ms":30000},"proxy":{"download_proxy":"http://proxy"}}`),
@@ -271,6 +439,55 @@ func TestSchedulePatchWatchTagsEmptyAllowed(t *testing.T) {
 	}
 	if o.WatchTags == nil || len(*o.WatchTags) != 0 {
 		t.Fatalf("WatchTags = %v, want []", o.WatchTags)
+	}
+}
+
+func TestApplyOverridesMagnetTimeoutOverridesEnv(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7, MagnetTimeout: 60},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"schedule": json.RawMessage(`{"magnet_timeout":120}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.MagnetTimeout != 120 {
+		t.Errorf("MagnetTimeout = %d, want 120", cfg.Runner.MagnetTimeout)
+	}
+}
+
+func TestApplyOverridesMagnetTimeoutAbsentKeepsEnv(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7, MagnetTimeout: 60},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"schedule": json.RawMessage(`{"start_hour":9}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.MagnetTimeout != 60 {
+		t.Errorf("MagnetTimeout = %d, want 60 (from env, key absent)", cfg.Runner.MagnetTimeout)
+	}
+}
+
+func TestScheduleJSONIncludesMagnetTimeout(t *testing.T) {
+	cfg := &config.App{
+		Runner: config.Runner{MagnetTimeout: 90},
+	}
+	var got struct {
+		MagnetTimeout int64 `json:"magnet_timeout"`
+	}
+	if err := json.Unmarshal(ScheduleJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.MagnetTimeout != 90 {
+		t.Errorf("magnet_timeout = %d, want 90", got.MagnetTimeout)
 	}
 }
 

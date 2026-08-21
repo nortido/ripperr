@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"trackerr/internal/helper"
+	"trackerr/internal/helper/magnetmeta"
+	"trackerr/internal/helper/torrentmeta"
 	"trackerr/internal/model"
 	"trackerr/internal/model/proxy"
 	runnerModel "trackerr/internal/model/runner"
@@ -44,6 +46,9 @@ type trackerService interface {
 type manager interface {
 	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
+	// SubmitMagnet больше не зовётся из runner (см. submit), метод остаётся в
+	// интерфейсе и у клиентов только ради подметальщика blackhole для старых
+	// magnet-пар, записанных прежней версией
 	SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 }
 
@@ -70,6 +75,10 @@ type handler struct {
 	state          *State
 	notifier       *notify.Notifier
 	gen            uint32
+	// magnetFetch добывает метаданные по магниту сам, без участия клиента
+	// загрузок; поле, а не прямой вызов magnetmeta.Fetch, чтобы тесты могли
+	// подменить его, тем же приёмом, что уже используют manager и trackerService
+	magnetFetch func(ctx context.Context, magnet string) (data []byte, err error)
 }
 
 // task несёт запись воркеру трекера. Ненулевой report значит, что запись
@@ -649,17 +658,26 @@ func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *mo
 		Name:           e.Name,
 		Hash:           e.Hash,
 		Category:       e.Category,
+		SavePath:       e.SavePath,
 		Tag:            e.Tag,
 		AutoManaged:    e.AutoManaged,
 		MaxRatio:       e.MaxRatio,
 		MaxSeedingTime: e.MaxSeedingTime,
 		Comment:        entryTopicURL(tc, e),
 	}
+
+	// добыча метаданных по магниту идёт первой и не трогает клиент загрузок:
+	// решение "магнит не вышел, идём на трекер" обязано быть принято до того,
+	// как manager.Submit внутри себя удалит старый торрент и добавит новый
 	if e.Magnet != "" {
-		if err = h.manager.SubmitMagnet(ctx, e.Magnet, opts); err != nil {
-			err = fmt.Errorf("submit magnet error: %w", err)
+		if data, buildErr := h.buildTorrentFromMagnet(ctx, e.Magnet, opts.Comment); buildErr == nil {
+			if err = h.manager.Submit(ctx, bytes.NewBuffer(data), opts); err != nil {
+				err = fmt.Errorf("submit error: %w", err)
+			}
+			return
+		} else {
+			logger.Warn(fmt.Sprintf("magnet metadata fetch failed for %s: %v, falling back to tracker download", e.Name, buildErr))
 		}
-		return
 	}
 
 	var b *bytes.Buffer
@@ -671,6 +689,24 @@ func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *mo
 		err = fmt.Errorf("submit error: %w", err)
 	}
 	return
+}
+
+func (h *handler) buildTorrentFromMagnet(ctx context.Context, magnet, comment string) (data []byte, err error) {
+	if h.magnetFetch == nil {
+		return nil, errors.New("magnet fetch is not configured")
+	}
+	timeout := time.Duration(h.config.MagnetTimeout) * time.Second
+	if timeout <= 0 {
+		// ponytail: нулевой/отрицательный таймаут в конфиге не должен вешать
+		// раздачу навсегда, минута это разумный потолок по умолчанию
+		timeout = time.Minute
+	}
+	fctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if data, err = h.magnetFetch(fctx, magnet); err != nil {
+		return nil, err
+	}
+	return torrentmeta.SetComment(data, comment)
 }
 
 func entryTopicURL(tc client.IClient, e *model.Entry) string {
@@ -744,5 +780,6 @@ func NewRunner(tracker trackerService, manager manager, storage storage, config 
 		config:         config,
 		state:          state,
 		notifier:       notifier,
+		magnetFetch:    magnetmeta.Fetch,
 	}
 }

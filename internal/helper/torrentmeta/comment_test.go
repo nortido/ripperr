@@ -35,9 +35,24 @@ func buildMinimalTorrent(t *testing.T, comment string) []byte {
 func TestSetComment_RoundTrip(t *testing.T) {
 	data := buildMinimalTorrent(t, "old comment")
 
+	beforeHash, err := InfoHash(data)
+	if err != nil {
+		t.Fatalf("InfoHash before: %v", err)
+	}
+
 	updated, err := SetComment(data, "new comment")
 	if err != nil {
 		t.Fatalf("SetComment: %v", err)
+	}
+
+	// комментарий не часть info-словаря, поэтому его подмена не должна двигать
+	// инфохеш; переезд на перекодировку словаря сломал бы это молча
+	afterHash, err := InfoHash(updated)
+	if err != nil {
+		t.Fatalf("InfoHash after: %v", err)
+	}
+	if beforeHash != afterHash {
+		t.Errorf("infohash changed after SetComment: before %q, after %q", beforeHash, afterHash)
 	}
 
 	mi, err := metainfo.Load(bytes.NewReader(updated))

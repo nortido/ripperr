@@ -13,6 +13,7 @@ type ManagerAddFileOptions struct {
 	Hash           string
 	Name           string
 	Category       string
+	SavePath       string
 	Tag            string
 	AutoManaged    bool
 	MaxRatio       float64

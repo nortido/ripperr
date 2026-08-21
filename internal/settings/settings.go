@@ -21,6 +21,7 @@ type scheduleOverlay struct {
 	ThresholdHalfYear     *int      `json:"threshold_half_year,omitempty"`
 	ThresholdYear         *int      `json:"threshold_year,omitempty"`
 	ErrorStreakThreshold  *int      `json:"error_streak_threshold,omitempty"`
+	MagnetTimeout         *int64    `json:"magnet_timeout,omitempty"`
 	DeleteEnabled         *bool     `json:"delete_enabled,omitempty"`
 	DeleteFilesEnabled    *bool     `json:"delete_files_enabled,omitempty"`
 	MonitoredCategories   *[]string `json:"monitored_categories,omitempty"`
@@ -45,11 +46,17 @@ type trackerItemOverlay struct {
 }
 
 type integrationsOverlay struct {
-	Qbit struct {
+	Client *string `json:"client,omitempty"`
+	Qbit   struct {
 		Host     *string `json:"host,omitempty"`
 		Username *string `json:"username,omitempty"`
 		Password *string `json:"password,omitempty"`
 	} `json:"qbit"`
+	Transmission struct {
+		Host     *string `json:"host,omitempty"`
+		Username *string `json:"username,omitempty"`
+		Password *string `json:"password,omitempty"`
+	} `json:"transmission"`
 	Flaresolverr struct {
 		URL       *string `json:"url,omitempty"`
 		TimeoutMS *int    `json:"timeout_ms,omitempty"`
@@ -125,6 +132,9 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	if o.ErrorStreakThreshold != nil {
 		cfg.Runner.ErrorStreakThreshold = *o.ErrorStreakThreshold
 	}
+	if o.MagnetTimeout != nil {
+		cfg.Runner.MagnetTimeout = *o.MagnetTimeout
+	}
 	if o.MonitoredCategories != nil {
 		cfg.Runner.AllowedCategories = *o.MonitoredCategories
 	}
@@ -172,6 +182,16 @@ func ApplyTrackerKey(cfg *config.App, key string, o trackerItemOverlay) {
 }
 
 func applyIntegrations(cfg *config.App, o integrationsOverlay) {
+	if o.Client != nil {
+		switch client := config.NormalizeClient(*o.Client); client {
+		case "":
+			// пустая строка = не менять активный клиент, ValidateIntegrationsPatch её пропускает намеренно
+		case "qbit", "transmission":
+			cfg.Manager.Client = client
+		default:
+			logger.Warn(fmt.Sprintf("settings %s: unknown client %q, keeping %q", sqlite.SettingIntegrations, *o.Client, cfg.Manager.Client))
+		}
+	}
 	if o.Qbit.Host != nil {
 		cfg.Manager.QbitTorrent.Host = *o.Qbit.Host
 	}
@@ -180,6 +200,15 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	}
 	if o.Qbit.Password != nil {
 		cfg.Manager.QbitTorrent.Password = *o.Qbit.Password
+	}
+	if o.Transmission.Host != nil {
+		cfg.Manager.Transmission.Host = *o.Transmission.Host
+	}
+	if o.Transmission.Username != nil {
+		cfg.Manager.Transmission.Username = *o.Transmission.Username
+	}
+	if o.Transmission.Password != nil {
+		cfg.Manager.Transmission.Password = *o.Transmission.Password
 	}
 	if o.Flaresolverr.URL != nil {
 		cfg.Flaresolverr.Host = *o.Flaresolverr.URL
@@ -212,6 +241,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		ThresholdHalfYear     int      `json:"threshold_half_year"`
 		ThresholdYear         int      `json:"threshold_year"`
 		ErrorStreakThreshold  int      `json:"error_streak_threshold"`
+		MagnetTimeout         int64    `json:"magnet_timeout"`
 		DeleteEnabled         bool     `json:"delete_enabled"`
 		DeleteFilesEnabled    bool     `json:"delete_files_enabled"`
 		MonitoredCategories   []string `json:"monitored_categories"`
@@ -225,6 +255,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		ThresholdHalfYear:    cfg.Runner.HalfYearThresholdDays,
 		ThresholdYear:        cfg.Runner.YearThresholdDays,
 		ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
+		MagnetTimeout:        cfg.Runner.MagnetTimeout,
 		MonitoredCategories:  cfg.Runner.AllowedCategories,
 		WatchTags:            cfg.Runner.WatchTags,
 		Timezone:             cfg.Runner.Timezone,
@@ -247,11 +278,17 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 
 func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s := struct {
-		Qbit struct {
+		Client string `json:"client"`
+		Qbit   struct {
 			Host     string `json:"host"`
 			Username string `json:"username"`
 			Password string `json:"password"`
 		} `json:"qbit"`
+		Transmission struct {
+			Host     string `json:"host"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		} `json:"transmission"`
 		Flaresolverr struct {
 			URL       string `json:"url"`
 			TimeoutMS int    `json:"timeout_ms"`
@@ -270,9 +307,13 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 			Enabled bool `json:"enabled"`
 		} `json:"notifications"`
 	}{}
+	s.Client = config.NormalizeClient(cfg.Manager.Client)
 	s.Qbit.Host = cfg.Manager.QbitTorrent.Host
 	s.Qbit.Username = cfg.Manager.QbitTorrent.Username
 	s.Qbit.Password = cfg.Manager.QbitTorrent.Password
+	s.Transmission.Host = cfg.Manager.Transmission.Host
+	s.Transmission.Username = cfg.Manager.Transmission.Username
+	s.Transmission.Password = cfg.Manager.Transmission.Password
 	s.Flaresolverr.URL = cfg.Flaresolverr.Host
 	s.Flaresolverr.TimeoutMS = cfg.Flaresolverr.MaxTimeout
 	s.Proxy.DownloadProxy = cfg.Runner.DownloadProxy

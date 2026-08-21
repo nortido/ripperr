@@ -14,6 +14,7 @@ import (
 	qbt "github.com/autobrr/go-qbittorrent"
 	"golang.org/x/sync/errgroup"
 
+	"trackerr/internal/manager/blackhole"
 	"trackerr/internal/model"
 	"trackerr/internal/system/logger"
 )
@@ -25,6 +26,7 @@ var (
 type Client struct {
 	client *qbt.Client
 	config model.ManagerConfig
+	bh     *blackhole.Store
 }
 
 func (c *Client) List(ctx context.Context, _ model.FilterOptions) (entries []*model.Entry, err error) {
@@ -200,6 +202,7 @@ func New(config model.ManagerConfig) (c *Client, err error) {
 	cl := &Client{
 		config: config,
 	}
+	cl.bh = blackhole.New(config.BlackholeDir, cl)
 	if err = cl.getClient(); err != nil {
 		return
 	}

@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"trackerr/internal/manager"
+	"trackerr/internal/manager/client/transmission"
 	"trackerr/internal/model"
 	"trackerr/internal/model/storage"
 	storagePkg "trackerr/internal/storage"
@@ -181,6 +183,16 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
+	cfg := s.effective()
+	if manager.NormalizeClient(cfg.Manager.Client) == manager.ClientTransmission {
+		// известно заранее и без обращения к клиенту: не занимаем общий семафор
+		// перекачек и не тянем список торрентов ради ошибки, которая не зависит
+		// ни от одного из них. errors.Is(err, transmission.ErrRedownloadUnsupported)
+		// ниже остаётся второй линией на случай прямого вызова ForceRedownload.
+		writeError(w, http.StatusNotImplemented, transmission.ErrRedownloadUnsupported.Error())
+		return
+	}
+
 	urlHash := r.PathValue("hash")
 	if urlHash == "" {
 		writeError(w, http.StatusBadRequest, "hash required")
@@ -198,16 +210,15 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := s.effective()
-	mc := s.qbitManagerConfig(cfg)
-	mc.BlackholeDir = cfg.BlackholeDirPath()
-	qbc, err := qbitClientFactory(mc)
+	mcfg := s.managerConfig(cfg)
+	mcfg.BlackholeDir = cfg.BlackholeDirPath()
+	mc, err := managerClientFactory(cfg.Manager.Client, mcfg)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	entries, err := qbc.List(ctx, model.FilterOptions{})
+	entries, err := mc.List(ctx, model.FilterOptions{})
 	if err != nil && !errors.Is(err, model.ErrPartialList) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -221,11 +232,15 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if entry == nil {
-		writeError(w, http.StatusNotFound, "torrent not found in qbittorrent")
+		writeError(w, http.StatusNotFound, "torrent not found in the download client")
 		return
 	}
 
-	if err = qbc.ForceRedownload(ctx, entry.Hash); err != nil {
+	if err = mc.ForceRedownload(ctx, entry.Hash); err != nil {
+		if errors.Is(err, transmission.ErrRedownloadUnsupported) {
+			writeError(w, http.StatusNotImplemented, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

@@ -73,3 +73,15 @@ func TestNormalizeIntegrationsPatch(t *testing.T) {
 		t.Errorf("flare url = %q", *o.Flaresolverr.URL)
 	}
 }
+
+func TestNormalizeIntegrationsPatchTransmissionHost(t *testing.T) {
+	host := "localhost:9091"
+	o := integrationsOverlay{}
+	o.Transmission.Host = &host
+	if err := normalizeIntegrationsPatch(&o); err != nil {
+		t.Fatal(err)
+	}
+	if *o.Transmission.Host != "http://localhost:9091" {
+		t.Errorf("transmission host = %q", *o.Transmission.Host)
+	}
+}

@@ -15,6 +15,7 @@ import (
 
 	"trackerr/internal/config"
 	"trackerr/internal/helper/breakeralerts"
+	"trackerr/internal/manager/client/transmission"
 	"trackerr/internal/model"
 	"trackerr/internal/model/storage"
 	"trackerr/internal/model/tracker"
@@ -320,8 +321,8 @@ func TestStaticCacheHeaders(t *testing.T) {
 }
 
 func TestGetCategories(t *testing.T) {
-	fakeQbitFactory := func(cats []string, err error) func(model.ManagerConfig) (qbitCategoriesClient, error) {
-		return func(_ model.ManagerConfig) (qbitCategoriesClient, error) {
+	fakeQbitFactory := func(cats []string, err error) func(string, model.ManagerConfig) (managerClient, error) {
+		return func(_ string, _ model.ManagerConfig) (managerClient, error) {
 			if err != nil {
 				return nil, err
 			}
@@ -329,13 +330,13 @@ func TestGetCategories(t *testing.T) {
 		}
 	}
 
-	orig := qbitClientFactory
-	defer func() { qbitClientFactory = orig }()
+	orig := managerClientFactory
+	defer func() { managerClientFactory = orig }()
 
 	store := &fakeStore{}
 	srv := newTestServer(store)
 
-	qbitClientFactory = fakeQbitFactory([]string{"tv", "movies"}, nil)
+	managerClientFactory = fakeQbitFactory([]string{"tv", "movies"}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/categories", nil)
 	w := httptest.NewRecorder()
 	srv.handleGetCategories(w, req)
@@ -352,7 +353,7 @@ func TestGetCategories(t *testing.T) {
 		t.Fatalf("categories = %v", resp.Categories)
 	}
 
-	qbitClientFactory = fakeQbitFactory(nil, fmt.Errorf("connection refused"))
+	managerClientFactory = fakeQbitFactory(nil, fmt.Errorf("connection refused"))
 	req = httptest.NewRequest(http.MethodGet, "/api/categories", nil)
 	w = httptest.NewRecorder()
 	srv.handleGetCategories(w, req)
@@ -386,6 +387,27 @@ func TestPutScheduleValidation(t *testing.T) {
 	}
 	if !reloaded {
 		t.Error("reload not called")
+	}
+}
+
+func TestPutScheduleMagnetTimeout(t *testing.T) {
+	store := &fakeStore{}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+
+	body := []byte(`{"start_hour":8,"list_refresh_per_day":4,"threshold_month":1,"threshold_half_year":2,"threshold_year":3,"magnet_timeout":601}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/schedule", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handlePutSchedule(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for out-of-range magnet_timeout", w.Code)
+	}
+
+	body = []byte(`{"start_hour":8,"list_refresh_per_day":4,"threshold_month":1,"threshold_half_year":2,"threshold_year":3,"magnet_timeout":90}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/schedule", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.handlePutSchedule(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 for valid magnet_timeout", w.Code)
 	}
 }
 
@@ -1391,13 +1413,13 @@ func TestGetHistorySummary(t *testing.T) {
 }
 
 func TestHistoryRoutesDoNotConflict(t *testing.T) {
-	orig := qbitClientFactory
-	defer func() { qbitClientFactory = orig }()
+	orig := managerClientFactory
+	defer func() { managerClientFactory = orig }()
 
 	testURL := "https://rutracker.org/forum/viewtopic.php?t=999"
 	testURLHash := storagePkg.URLHash(testURL)
 	entries := []*model.Entry{{URL: testURL, Hash: "abc999", Name: "Route Test"}}
-	qbitClientFactory = func(_ model.ManagerConfig) (qbitCategoriesClient, error) {
+	managerClientFactory = func(_ string, _ model.ManagerConfig) (managerClient, error) {
 		return &fakeQbitClient{entries: entries}, nil
 	}
 
@@ -1534,8 +1556,8 @@ func TestHealthzDatabaseError(t *testing.T) {
 }
 
 func TestHandleRedownload(t *testing.T) {
-	fakeQbitFactory := func(entries []*model.Entry, forceRedownloadErr error) func(model.ManagerConfig) (qbitCategoriesClient, error) {
-		return func(_ model.ManagerConfig) (qbitCategoriesClient, error) {
+	fakeQbitFactory := func(entries []*model.Entry, forceRedownloadErr error) func(string, model.ManagerConfig) (managerClient, error) {
+		return func(_ string, _ model.ManagerConfig) (managerClient, error) {
 			return &fakeQbitClient{
 				entries:            entries,
 				forceRedownloadErr: forceRedownloadErr,
@@ -1543,8 +1565,8 @@ func TestHandleRedownload(t *testing.T) {
 		}
 	}
 
-	orig := qbitClientFactory
-	defer func() { qbitClientFactory = orig }()
+	orig := managerClientFactory
+	defer func() { managerClientFactory = orig }()
 
 	store := &fakeStore{}
 	srv := newTestServer(store)
@@ -1560,7 +1582,7 @@ func TestHandleRedownload(t *testing.T) {
 		},
 	}
 
-	qbitClientFactory = fakeQbitFactory(entries, nil)
+	managerClientFactory = fakeQbitFactory(entries, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
 	req.SetPathValue("hash", testURLHash)
 	w := httptest.NewRecorder()
@@ -1577,7 +1599,7 @@ func TestHandleRedownload(t *testing.T) {
 	}
 
 	// Проверяем, что торрент не найден
-	qbitClientFactory = fakeQbitFactory(nil, nil)
+	managerClientFactory = fakeQbitFactory(nil, nil)
 	req = httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
 	req.SetPathValue("hash", testURLHash)
 	w = httptest.NewRecorder()
@@ -1589,8 +1611,8 @@ func TestHandleRedownload(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
 		t.Fatal(err)
 	}
-	if errResp["error"] != "torrent not found in qbittorrent" {
-		t.Fatalf("error = %q, want torrent not found in qbittorrent", errResp["error"])
+	if errResp["error"] != "torrent not found in the download client" {
+		t.Fatalf("error = %q, want torrent not found in the download client", errResp["error"])
 	}
 
 	// Проверяем ошибку ForceRedownload
@@ -1601,13 +1623,122 @@ func TestHandleRedownload(t *testing.T) {
 			Name: "Test Torrent",
 		},
 	}
-	qbitClientFactory = fakeQbitFactory(entries, fmt.Errorf("redownload failed"))
+	managerClientFactory = fakeQbitFactory(entries, fmt.Errorf("redownload failed"))
 	req = httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
 	req.SetPathValue("hash", testURLHash)
 	w = httptest.NewRecorder()
 	srv.handleRedownload(w, req)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502, body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRedownloadTransmissionUnsupportedReturns501(t *testing.T) {
+	orig := managerClientFactory
+	defer func() { managerClientFactory = orig }()
+
+	testURL := "https://rutracker.org/forum/viewtopic.php?t=456"
+	testURLHash := storagePkg.URLHash(testURL)
+	entries := []*model.Entry{{URL: testURL, Hash: "abc456", Name: "Transmission Torrent"}}
+	managerClientFactory = func(_ string, _ model.ManagerConfig) (managerClient, error) {
+		return &fakeQbitClient{entries: entries, forceRedownloadErr: transmission.ErrRedownloadUnsupported}, nil
+	}
+
+	store := &fakeStore{}
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = "transmission"
+		return cfg
+	}
+	srv := New(store, func() {}, effective, ":0", runner.NewState(), nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
+	req.SetPathValue("hash", testURLHash)
+	w := httptest.NewRecorder()
+	srv.handleRedownload(w, req)
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501, body: %s", w.Code, w.Body.String())
+	}
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatal(err)
+	}
+	if errResp["error"] != transmission.ErrRedownloadUnsupported.Error() {
+		t.Fatalf("error = %q, want %q", errResp["error"], transmission.ErrRedownloadUnsupported.Error())
+	}
+}
+
+// TestHandleRedownloadTransmissionSkipsSemaphore проверяет, что 501 для
+// Transmission отдаётся до попытки занять redownloadSlot: если бы клиент
+// проверялся после взятия семафора (как раньше), вызов заблокировался бы на
+// уже занятом слоте вплоть до 5-минутного контекста запроса вместо мгновенного ответа.
+func TestHandleRedownloadTransmissionSkipsSemaphore(t *testing.T) {
+	redownloadSlot <- struct{}{}
+	defer func() { <-redownloadSlot }()
+
+	store := &fakeStore{}
+	effective := func() config.App {
+		cfg := testEffective()
+		// с учётом регистра и пробелов, как реальный MANAGER_CLIENT из env
+		cfg.Manager.Client = " Transmission "
+		return cfg
+	}
+	srv := New(store, func() {}, effective, ":0", runner.NewState(), nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/history/somehash/redownload", nil)
+	req.SetPathValue("hash", "somehash")
+	w := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		srv.handleRedownload(w, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleRedownload blocked on the redownload semaphore instead of returning 501 early")
+	}
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501, body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleTestIntegrationUsesClientSpecificConfigWhenTransmissionActive(t *testing.T) {
+	store := &fakeStore{}
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = "transmission"
+		cfg.Manager.QbitTorrent.Host = "http://127.0.0.1:1"
+		cfg.Manager.QbitTorrent.Username = "u"
+		cfg.Manager.QbitTorrent.Password = "p"
+		cfg.Manager.Transmission.Host = "http://127.0.0.1:2"
+		return cfg
+	}
+	srv := New(store, func() {}, effective, ":0", runner.NewState(), nil)
+
+	// kind=qbit обязан обращаться к qbit-хосту, даже когда активен transmission
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader([]byte(`{"kind":"qbit"}`)))
+	w := httptest.NewRecorder()
+	srv.handleTestIntegration(w, req)
+	var resp testResultResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "127.0.0.1:1") {
+		t.Fatalf("qbit test error = %q, want dial error mentioning 127.0.0.1:1", resp.Error)
+	}
+
+	// kind=transmission обязан обращаться к transmission-хосту
+	req = httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader([]byte(`{"kind":"transmission"}`)))
+	w = httptest.NewRecorder()
+	srv.handleTestIntegration(w, req)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "127.0.0.1:2") {
+		t.Fatalf("transmission test error = %q, want dial error mentioning 127.0.0.1:2", resp.Error)
 	}
 }
 
@@ -1646,15 +1777,15 @@ func TestPostRunStopBlocksFurtherRuns(t *testing.T) {
 }
 
 func TestHandleRedownloadSerializes(t *testing.T) {
-	orig := qbitClientFactory
-	defer func() { qbitClientFactory = orig }()
+	orig := managerClientFactory
+	defer func() { managerClientFactory = orig }()
 
 	testURL := "https://rutracker.org/forum/viewtopic.php?t=777"
 	testURLHash := storagePkg.URLHash(testURL)
 	entries := []*model.Entry{{URL: testURL, Hash: "abc777", Name: "Serialized"}}
 	tracker := &concurrencyTracker{}
 
-	qbitClientFactory = func(_ model.ManagerConfig) (qbitCategoriesClient, error) {
+	managerClientFactory = func(_ string, _ model.ManagerConfig) (managerClient, error) {
 		return &fakeQbitClient{
 			entries:           entries,
 			redownloadDelay:   50 * time.Millisecond,

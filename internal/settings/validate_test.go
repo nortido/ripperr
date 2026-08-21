@@ -125,3 +125,49 @@ func TestValidateTrackerPatchErrorMessages(t *testing.T) {
 		t.Fatalf("want scheme error, got %v", err)
 	}
 }
+
+func TestSchedulePatchMagnetTimeoutBounds(t *testing.T) {
+	base := `{"start_hour":7,"list_refresh_per_day":2,"threshold_month":1,"threshold_half_year":1,"threshold_year":1`
+	ok := []string{base + `,"magnet_timeout":5}`, base + `,"magnet_timeout":600}`}
+	for _, patch := range ok {
+		if _, err := SchedulePatchFromJSON(json.RawMessage(patch)); err != nil {
+			t.Errorf("%s: unexpected error: %v", patch, err)
+		}
+	}
+	bad := []string{base + `,"magnet_timeout":4}`, base + `,"magnet_timeout":601}`}
+	for _, patch := range bad {
+		if _, err := SchedulePatchFromJSON(json.RawMessage(patch)); err == nil {
+			t.Errorf("%s: expected error", patch)
+		}
+	}
+}
+
+func TestSchedulePatchMagnetTimeoutAbsentAllowed(t *testing.T) {
+	o, err := SchedulePatchFromJSON(json.RawMessage(`{
+		"start_hour":7,"list_refresh_per_day":2,
+		"threshold_month":1,"threshold_half_year":1,"threshold_year":1
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.MagnetTimeout != nil {
+		t.Fatalf("MagnetTimeout = %v, want nil (key absent means keep current)", o.MagnetTimeout)
+	}
+}
+
+func TestIntegrationsPatchFromJSONClient(t *testing.T) {
+	// "Transmission" в любом регистре и с пробелами должен проходить валидацию
+	// так же, как канонический "transmission": UI и MANAGER_CLIENT из env
+	// присылают его без гарантии регистра
+	for _, v := range []string{"qbit", "transmission", "", "Transmission", " transmission ", "QBIT"} {
+		if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"client":"` + v + `"}`)); err != nil {
+			t.Errorf("client=%q: unexpected error: %v", v, err)
+		}
+	}
+	if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"client":"deluge"}`)); err == nil {
+		t.Fatal("expected error for unknown client")
+	}
+	if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"qbit":{"host":"x"}}`)); err != nil {
+		t.Fatalf("missing client key should not error: %v", err)
+	}
+}

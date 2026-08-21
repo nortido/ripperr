@@ -74,6 +74,13 @@ func normalizeIntegrationsPatch(o *integrationsOverlay) error {
 		}
 		o.Qbit.Host = &norm
 	}
+	if o.Transmission.Host != nil && strings.TrimSpace(*o.Transmission.Host) != "" {
+		norm, err := EnsureScheme(*o.Transmission.Host, "http")
+		if err != nil {
+			return fmt.Errorf("transmission.host: %w", err)
+		}
+		o.Transmission.Host = &norm
+	}
 	if o.Flaresolverr.URL != nil && strings.TrimSpace(*o.Flaresolverr.URL) != "" {
 		norm, err := EnsureScheme(*o.Flaresolverr.URL, "http")
 		if err != nil {
@@ -98,12 +105,23 @@ func NormalizeAppIntegrations(cfg *config.App) error {
 	if cfg == nil {
 		return nil
 	}
+	// один раз здесь, в конце ApplyOverrides: дальше по коду (IntegrationsJSON,
+	// managerConfig, factory) читают уже приведённое значение, а не сырое
+	// MANAGER_CLIENT из env в любом регистре
+	cfg.Manager.Client = config.NormalizeClient(cfg.Manager.Client)
 	if strings.TrimSpace(cfg.Manager.QbitTorrent.Host) != "" {
 		norm, err := EnsureScheme(cfg.Manager.QbitTorrent.Host, "http")
 		if err != nil {
 			return fmt.Errorf("qbit.host: %w", err)
 		}
 		cfg.Manager.QbitTorrent.Host = norm
+	}
+	if strings.TrimSpace(cfg.Manager.Transmission.Host) != "" {
+		norm, err := EnsureScheme(cfg.Manager.Transmission.Host, "http")
+		if err != nil {
+			return fmt.Errorf("transmission.host: %w", err)
+		}
+		cfg.Manager.Transmission.Host = norm
 	}
 	if strings.TrimSpace(cfg.Flaresolverr.Host) != "" {
 		norm, err := EnsureScheme(cfg.Flaresolverr.Host, "http")

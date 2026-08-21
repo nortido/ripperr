@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"trackerr/internal/config"
 )
 
 var allowedRefreshPerDay = []int{1, 2, 3, 4, 6, 8, 12, 24}
@@ -18,6 +20,7 @@ type Schedule struct {
 	ThresholdHalfYear     int      `json:"threshold_half_year"`
 	ThresholdYear         int      `json:"threshold_year"`
 	ErrorStreakThreshold  int      `json:"error_streak_threshold"`
+	MagnetTimeout         int64    `json:"magnet_timeout"`
 	MonitoredCategories   []string `json:"monitored_categories"`
 	DeleteFilesCategories []string `json:"delete_files_categories"`
 }
@@ -48,6 +51,9 @@ func ValidateSchedule(s *Schedule) error {
 	}
 	if s.ErrorStreakThreshold != 0 && s.ErrorStreakThreshold < 1 {
 		return fmt.Errorf("error_streak_threshold must be >= 1")
+	}
+	if s.MagnetTimeout != 0 && (s.MagnetTimeout < 5 || s.MagnetTimeout > 600) {
+		return fmt.Errorf("magnet_timeout must be 5..600")
 	}
 	s.MonitoredCategories = normalizeStringList(s.MonitoredCategories)
 	s.DeleteFilesCategories = normalizeStringList(s.DeleteFilesCategories)
@@ -120,6 +126,14 @@ func ValidateSchedulePatch(o scheduleOverlay) error {
 		}
 		errorStreakThreshold = *o.ErrorStreakThreshold
 	}
+	// необязательное: отсутствует в документах, сохранённых до появления поля
+	var magnetTimeout int64 = 60
+	if o.MagnetTimeout != nil {
+		if *o.MagnetTimeout < 5 || *o.MagnetTimeout > 600 {
+			return fmt.Errorf("magnet_timeout must be 5..600")
+		}
+		magnetTimeout = *o.MagnetTimeout
+	}
 	s := Schedule{
 		StartHour:            *o.StartHour,
 		ListRefreshPerDay:    *o.ListRefreshPerDay,
@@ -127,6 +141,7 @@ func ValidateSchedulePatch(o scheduleOverlay) error {
 		ThresholdHalfYear:    *o.ThresholdHalfYear,
 		ThresholdYear:        *o.ThresholdYear,
 		ErrorStreakThreshold: errorStreakThreshold,
+		MagnetTimeout:        magnetTimeout,
 	}
 	if o.MonitoredCategories != nil {
 		s.MonitoredCategories = *o.MonitoredCategories
@@ -321,6 +336,16 @@ func IntegrationsPatchFromJSON(raw json.RawMessage) (integrationsOverlay, error)
 }
 
 func ValidateIntegrationsPatch(o integrationsOverlay) error {
+	// пустая строка = не менять активный клиент; неизвестное значение отклоняем на
+	// границе, а не молча роняем в applyIntegrations (там это вторая линия обороны
+	// для старых баз, куда битое значение попало в обход этой проверки). Сравниваем
+	// нормализованное значение, иначе "Transmission" из UI/старого патча 400-ится
+	// здесь же, хотя applyIntegrations его бы принял.
+	if o.Client != nil {
+		if client := config.NormalizeClient(*o.Client); client != "" && client != "qbit" && client != "transmission" {
+			return fmt.Errorf("client must be qbit or transmission")
+		}
+	}
 	if o.Flaresolverr.TimeoutMS != nil && *o.Flaresolverr.TimeoutMS < 1 {
 		return fmt.Errorf("flaresolverr.timeout_ms must be >= 1")
 	}
