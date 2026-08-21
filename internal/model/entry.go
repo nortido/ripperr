@@ -16,4 +16,5 @@ type Entry struct {
 	URLHash        string
 	Update         bool
 	Magnet         string
+	Poster         string
 }

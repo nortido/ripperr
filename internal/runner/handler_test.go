@@ -732,6 +732,7 @@ func (mockPageClient) Detect(string) bool                                       
 func (mockPageClient) Headers() *http.Header                                    { return &http.Header{} }
 func (mockPageClient) ParseDate(*bytes.Buffer, bool) *time.Time                 { return nil }
 func (mockPageClient) ParseDownloadID(*bytes.Buffer, bool) string               { return "" }
+func (mockPageClient) ParsePoster(*bytes.Buffer, bool) string                   { return "" }
 func (mockPageClient) ParseMagnet(*bytes.Buffer, bool) string                   { return "" }
 func (mockPageClient) Cookies() []*http.Cookie                                  { return nil }
 func (mockPageClient) InitClient(context.Context, *tracker.Tracker, bool) error { return nil }

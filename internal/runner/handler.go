@@ -584,7 +584,7 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 			}
 		}
 	case "updated":
-		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL))
+		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL, e.Poster))
 	}
 }
 
@@ -621,6 +621,7 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 	pc.date = cur
 	if pc.changed {
 		e.Magnet = tc.ParseMagnet(b, encoded)
+		e.Poster = tc.ParsePoster(b, encoded)
 		return
 	}
 	if rep == nil {

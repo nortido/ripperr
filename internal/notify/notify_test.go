@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,38 +20,38 @@ func TestEventTextsDistinguishTypesAndCarrySubject(t *testing.T) {
 		wantKw  string
 		wantSub string
 	}{
-		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1"), "qBittorrent", "Some.Release.2026"},
+		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1", ""), "qBittorrent", "Some.Release.2026"},
 		{"broken", BrokenEvent("Broken.Release", "https://example.com/t2", 5), "игнор", "Broken.Release"},
 		{"tracker down", TrackerDownEvent("rutracker", "connection refused"), "недоступен", "rutracker"},
 		{"tracker up", TrackerUpEvent("rutracker"), "возобновлены", "rutracker"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if !strings.Contains(c.ev.Text, c.wantKw) {
-				t.Errorf("text %q does not contain distinguishing keyword %q", c.ev.Text, c.wantKw)
+			if !strings.Contains(c.ev.plain(), c.wantKw) {
+				t.Errorf("text %q does not contain distinguishing keyword %q", c.ev.plain(), c.wantKw)
 			}
-			if !strings.Contains(c.ev.Text, c.wantSub) {
-				t.Errorf("text %q does not contain subject %q", c.ev.Text, c.wantSub)
+			if !strings.Contains(c.ev.plain(), c.wantSub) {
+				t.Errorf("text %q does not contain subject %q", c.ev.plain(), c.wantSub)
 			}
 			for _, other := range cases {
 				if other.name == c.name {
 					continue
 				}
-				if strings.Contains(other.ev.Text, c.wantKw) {
+				if strings.Contains(other.ev.plain(), c.wantKw) {
 					t.Errorf("keyword %q meant to distinguish %q also appears in %q text", c.wantKw, c.name, other.name)
 				}
 			}
 		})
 	}
-	if BrokenEvent("x", "", 5).Text == "" || !strings.Contains(BrokenEvent("x", "", 3).Text, "3") {
+	if BrokenEvent("x", "", 5).plain() == "" || !strings.Contains(BrokenEvent("x", "", 3).plain(), "3") {
 		t.Error("broken event text does not carry the streak count")
 	}
 }
 
 func TestTrackerDownEventCarriesErrorText(t *testing.T) {
 	ev := TrackerDownEvent("rutracker", "connection refused")
-	if !strings.Contains(ev.Text, "connection refused") {
-		t.Errorf("text %q does not contain the error message", ev.Text)
+	if !strings.Contains(ev.plain(), "connection refused") {
+		t.Errorf("text %q does not contain the error message", ev.plain())
 	}
 }
 
@@ -415,5 +416,331 @@ func TestSendDoesNotRetry(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&count); got != 1 {
 		t.Errorf("request count = %d, want 1 (Send must not retry)", got)
+	}
+}
+
+func TestSendTelegramUsesPhotoWhenImageSet(t *testing.T) {
+	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
+	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
+
+	var paths []string
+	var body struct {
+		Photo   string `json:"photo"`
+		Caption string `json:"caption"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
+	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := UpdatedEvent("Some.Release", "https://example.com/t1", "http://127.0.0.1:1/poster.jpg")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || !strings.HasSuffix(paths[0], "/sendPhoto") {
+		t.Fatalf("requests = %v, want a single sendPhoto", paths)
+	}
+	if body.Photo != "http://127.0.0.1:1/poster.jpg" {
+		t.Errorf("photo = %q", body.Photo)
+	}
+	if !strings.Contains(body.Caption, "Some.Release") || !strings.Contains(body.Caption, "https://example.com/t1") {
+		t.Errorf("caption %q lost the release name or link", body.Caption)
+	}
+}
+
+func TestSendTelegramFallsBackToMessageWhenPhotoRejected(t *testing.T) {
+	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
+	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
+
+	var paths []string
+	var text string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/sendPhoto") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"ok":false,"description":"wrong file identifier"}`))
+			return
+		}
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		text = body.Text
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
+	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := UpdatedEvent("Some.Release", "https://example.com/t1", "http://127.0.0.1:1/dead.jpg")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatalf("photo failure must not fail the whole send: %v", err)
+	}
+	if len(paths) != 2 || !strings.HasSuffix(paths[1], "/sendMessage") {
+		t.Fatalf("requests = %v, want sendPhoto then sendMessage", paths)
+	}
+	if !strings.Contains(text, "Some.Release") {
+		t.Errorf("fallback text %q lost the release name", text)
+	}
+}
+
+func TestTelegramCaptionTruncatedToLimit(t *testing.T) {
+	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
+	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
+	telegramAPIURL = "http://127.0.0.1:1/bot%s/sendMessage"
+
+	var caption string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Caption string `json:"caption"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		caption = body.Caption
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := Event{Kind: KindUpdated, Text: strings.Repeat("я", 2000), ImageURL: "http://127.0.0.1:1/poster.jpg"}
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if got := len([]rune(caption)); got != maxCaption {
+		t.Errorf("caption length = %d runes, want %d", got, maxCaption)
+	}
+}
+
+func TestSendTelegramUploadsImageBytes(t *testing.T) {
+	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
+	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
+	telegramAPIURL = "http://127.0.0.1:1/bot%s/sendMessage"
+
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("JPEGBYTES"))
+	}))
+	defer img.Close()
+
+	var gotFile, gotCaption, gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		gotCaption = r.FormValue("caption")
+		f, _, err := r.FormFile("photo")
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer func() { _ = f.Close() }()
+		b, _ := io.ReadAll(f)
+		gotFile = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := UpdatedEvent("Some.Release", "https://example.com/t1", img.URL+"/poster.jpg")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if gotFile != "JPEGBYTES" {
+		t.Errorf("uploaded file = %q, want the fetched image bytes", gotFile)
+	}
+	if !strings.HasPrefix(gotContentType, "multipart/form-data") {
+		t.Errorf("content-type = %q, want multipart", gotContentType)
+	}
+	if !strings.Contains(gotCaption, "Some.Release") {
+		t.Errorf("caption %q lost the release name", gotCaption)
+	}
+}
+
+func TestSendTelegramFallsBackToURLWhenImageNotFetchable(t *testing.T) {
+	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
+	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
+	telegramAPIURL = "http://127.0.0.1:1/bot%s/sendMessage"
+
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer img.Close()
+
+	var gotPhoto string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Photo string `json:"photo"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotPhoto = body.Photo
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := UpdatedEvent("Some.Release", "https://example.com/t1", img.URL+"/poster.jpg")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if gotPhoto != img.URL+"/poster.jpg" {
+		t.Errorf("photo = %q, want the original link so telegram fetches it itself", gotPhoto)
+	}
+}
+
+func TestTelegramMessageLinksSubjectInsteadOfBareURL(t *testing.T) {
+	orig := telegramAPIURL
+	defer func() { telegramAPIURL = orig }()
+
+	var body struct {
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := UpdatedEvent("Some.Release.2026", "https://example.com/forum/viewtopic.php?t=1", "")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	want := `<a href="https://example.com/forum/viewtopic.php?t=1">Some.Release.2026</a>`
+	if !strings.Contains(body.Text, want) {
+		t.Errorf("text %q does not carry the linked name %q", body.Text, want)
+	}
+	if body.ParseMode != "HTML" {
+		t.Errorf("parse_mode = %q, want HTML", body.ParseMode)
+	}
+	if strings.Contains(body.Text, "\nhttps://example.com/forum/viewtopic.php?t=1") {
+		t.Errorf("text %q still repeats the link on its own line", body.Text)
+	}
+}
+
+func TestTelegramMessageEscapesNameForHTML(t *testing.T) {
+	orig := telegramAPIURL
+	defer func() { telegramAPIURL = orig }()
+
+	var body struct {
+		Text string `json:"text"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := UpdatedEvent("Release <b> & (2026) [x_264]", "https://example.com/t?a=1&b=2", "")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body.Text, "<b>") {
+		t.Errorf("text %q leaks raw markup from the release name", body.Text)
+	}
+	if !strings.Contains(body.Text, "(2026) [x_264]") {
+		t.Errorf("text %q mangled brackets and underscores", body.Text)
+	}
+	if !strings.Contains(body.Text, "https://example.com/t?a=1&amp;b=2") {
+		t.Errorf("text %q did not escape the ampersand in the link", body.Text)
+	}
+}
+
+func TestTelegramEventsWithoutSubjectStayPlain(t *testing.T) {
+	orig := telegramAPIURL
+	defer func() { telegramAPIURL = orig }()
+
+	var body struct {
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	if err := n.Send(context.Background(), TrackerDownEvent("rutracker", "connection refused")); err != nil {
+		t.Fatal(err)
+	}
+	if body.ParseMode != "" {
+		t.Errorf("parse_mode = %q, want none for a message without a link", body.ParseMode)
+	}
+	if !strings.Contains(body.Text, "connection refused") {
+		t.Errorf("text %q lost the error message", body.Text)
+	}
+}
+
+func TestTelegramCaptionTrimsNameNotMarkup(t *testing.T) {
+	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
+	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
+	telegramAPIURL = "http://127.0.0.1:1/bot%s/sendMessage"
+
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("JPEGBYTES"))
+	}))
+	defer img.Close()
+
+	var caption, parseMode string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		caption = r.FormValue("caption")
+		parseMode = r.FormValue("parse_mode")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	ev := UpdatedEvent(strings.Repeat("я", 2000), "https://example.com/t1", img.URL+"/poster.jpg")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if parseMode != "HTML" {
+		t.Errorf("parse_mode = %q, want HTML", parseMode)
+	}
+	if !strings.HasSuffix(caption, "</a>") {
+		t.Errorf("caption %q was cut inside the link markup", caption)
+	}
+	// в caption у telegram считается видимый текст, а не разметка
+	visible := len([]rune(stripTags(caption)))
+	if visible > maxCaption {
+		t.Errorf("visible caption length = %d runes, want at most %d", visible, maxCaption)
+	}
+}
+
+func stripTags(s string) string {
+	for {
+		open := strings.Index(s, "<")
+		if open < 0 {
+			return s
+		}
+		closed := strings.Index(s[open:], ">")
+		if closed < 0 {
+			return s
+		}
+		s = s[:open] + s[open+closed+1:]
 	}
 }

@@ -1,8 +1,10 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -120,4 +122,16 @@ func withActiveDomain(tr client.ITracker, domain string) client.ITracker {
 		loginURL:    trackerModel.ReplaceURLHost(tr.LoginLink(), domain),
 		downloadURL: trackerModel.ReplaceURLHost(tr.DownloadLink(""), domain),
 	}
+}
+
+// адрес постера трекеры вида kinozal собирают из своего домена, а он у клиента
+// подменён на живое зеркало: без подмены ссылка ведёт на домен, который и был
+// признан недоступным
+func (d *domainOverride) ParsePoster(b *bytes.Buffer, encoded bool) string {
+	poster := d.ITracker.ParsePoster(b, encoded)
+	u, err := url.Parse(poster)
+	if err != nil || u.Host != d.ITracker.GetDomain() {
+		return poster
+	}
+	return trackerModel.ReplaceURLHost(poster, d.domain)
 }

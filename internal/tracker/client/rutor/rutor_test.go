@@ -114,3 +114,36 @@ func TestParseMagnetIgnoresMagnetAboveDownloadBlock(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestParsePoster(t *testing.T) {
+	tr := New(tracker.Tracker{Domain: "rutor.info"})
+	html := `<img src="//cdnbunny.org/logo.jpg" alt="rutor.info logo" />
+<img src="//cdnbunny.org/i/magnet.gif">
+<table id="details"><tr><td></td><td><br /><img src="https://i123.fastpic.org/big/2024/0830/cb/poster.jpg" /><br /><b>Название: </b>Test`
+	if got, want := tr.ParsePoster(bytes.NewBufferString(html), false), "https://i123.fastpic.org/big/2024/0830/cb/poster.jpg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestParsePosterProtocolRelative(t *testing.T) {
+	tr := New(tracker.Tracker{Domain: "rutor.info"})
+	html := `<table id="details"><tr><td><img src="//i123.fastpic.org/big/poster.jpg" /></td></tr></table>`
+	if got, want := tr.ParsePoster(bytes.NewBufferString(html), false), "https://i123.fastpic.org/big/poster.jpg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestParsePosterNoMatch(t *testing.T) {
+	tr := New(tracker.Tracker{Domain: "rutor.info"})
+	if got := tr.ParsePoster(bytes.NewBufferString(`<img src="//cdnbunny.org/logo.jpg">`), false); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestParsePosterPlainImageTag(t *testing.T) {
+	tr := New(tracker.Tracker{Domain: "rutor.info"})
+	html := `<table id="details"><tr><td style="vertical-align:top;"></td><td><br /><img src="https://i3.imageban.ru/out/2023/04/26/a9574d66f990c18d110ecec8d0635c91.png"><br /><b>Название: </b>Test`
+	if got, want := tr.ParsePoster(bytes.NewBufferString(html), false), "https://i3.imageban.ru/out/2023/04/26/a9574d66f990c18d110ecec8d0635c91.png"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

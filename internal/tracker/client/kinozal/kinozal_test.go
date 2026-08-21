@@ -100,3 +100,20 @@ func TestParseDate_CP1251Encoded(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestParsePosterSkipsSiteChrome(t *testing.T) {
+	tr := New(tracker.Tracker{Domain: "kinozal.tv"})
+	html := `<img src="/pic/logo_kinozal.png?v=3" alt="Кинозал">
+<div class="bx1 justify"><img src="//s.kinozal.tv/pic/poster/1234.jpg" class="p200"></div>`
+	if got, want := tr.ParsePoster(bytes.NewBufferString(html), true), "https://s.kinozal.tv/pic/poster/1234.jpg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestParsePosterRelativePathGetsHost(t *testing.T) {
+	tr := New(tracker.Tracker{Domain: "kinozal.tv"})
+	html := `<img src="/pic/logo_kinozal.png"><img src="/posters/1234.jpg">`
+	if got, want := tr.ParsePoster(bytes.NewBufferString(html), true), "https://kinozal.tv/posters/1234.jpg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

@@ -83,3 +83,15 @@ func New(tracker tracker.Tracker) *Tracker {
 		Tracker: tracker,
 	}
 }
+
+// постер лежит первой картинкой внутри таблицы описания: всё, что выше по
+// странице, это логотип и иконки шапки
+var rxPoster = regexp.MustCompile(`id="details"[\s\S]*?<img[^>]+src="([^"]+)"`)
+
+func (t *Tracker) ParsePoster(b *bytes.Buffer, encoded bool) (poster string) {
+	matches := rxPoster.FindStringSubmatch(b.String())
+	if len(matches) <= 1 {
+		return
+	}
+	return tracker.AbsoluteURL(t.GetHost(), html.UnescapeString(matches[1]))
+}

@@ -3,11 +3,14 @@ package tracker
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
+	"trackerr/internal/helper"
 	"trackerr/internal/model/proxy"
 )
 
@@ -143,4 +146,44 @@ func (t *Tracker) ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID str
 
 func (t *Tracker) ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string) {
 	return
+}
+
+// разметка TorrentPier (rutracker, nnm, teamhd) помечает картинки поста
+// классом postImg: прижатая к правому краю это постер релиза, остальные в теле
+// поста это скриншоты. Ссылка лежит в title у <var> и в src у уже отрисованного
+// <img>, поэтому берём оба варианта
+var (
+	rxPostImg    = regexp.MustCompile(`<(?:var|img)[^>]*postImg[^>]*>`)
+	rxPostImgURL = regexp.MustCompile(`[\s"](?:title|src)="(https?://[^"]+)"`)
+)
+
+func (t *Tracker) ParsePoster(b *bytes.Buffer, encoded bool) (poster string) {
+	for _, tag := range rxPostImg.FindAllString(helper.PageText(b, encoded), -1) {
+		matches := rxPostImgURL.FindStringSubmatch(tag)
+		if len(matches) <= 1 {
+			continue
+		}
+		link := html.UnescapeString(matches[1])
+		if strings.Contains(tag, "postImgAligned") {
+			return link
+		}
+		if poster == "" {
+			poster = link
+		}
+	}
+	return
+}
+
+// в разметке трекеров адрес картинки бывает и относительным, и без схемы, а
+// Telegram скачивает постер сам и понимает только абсолютную ссылку
+func AbsoluteURL(host, src string) string {
+	switch {
+	case src == "", strings.HasPrefix(src, "http"):
+		return src
+	case strings.HasPrefix(src, "//"):
+		return "https:" + src
+	case strings.HasPrefix(src, "/"):
+		return strings.TrimSuffix(host, "/") + src
+	}
+	return strings.TrimSuffix(host, "/") + "/" + src
 }

@@ -2,8 +2,10 @@ package kinozal
 
 import (
 	"bytes"
+	"html"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"trackerr/internal/helper"
@@ -58,4 +60,18 @@ func New(tracker tracker.Tracker) *Tracker {
 	return &Tracker{
 		Tracker: tracker,
 	}
+}
+
+var rxImgSrc = regexp.MustCompile(`<img[^>]+src="([^"]+)"`)
+
+// у kinozal нет отдельного класса у постера, зато весь интерфейс лежит в /pic/,
+// поэтому постером считается первая картинка вне этого каталога
+func (t *Tracker) ParsePoster(b *bytes.Buffer, encoded bool) (poster string) {
+	for _, m := range rxImgSrc.FindAllStringSubmatch(helper.PageText(b, encoded), -1) {
+		if strings.HasPrefix(m[1], "/pic/") {
+			continue
+		}
+		return tracker.AbsoluteURL(t.GetHost(), html.UnescapeString(m[1]))
+	}
+	return
 }

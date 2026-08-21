@@ -49,6 +49,7 @@ type ITracker interface {
 	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
 	ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string)
 	ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string)
+	ParsePoster(b *bytes.Buffer, encoded bool) (poster string)
 }
 
 type IClient interface {

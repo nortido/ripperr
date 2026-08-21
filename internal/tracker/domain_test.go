@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"testing"
@@ -107,3 +108,28 @@ func TestDomainOverrideForwardsLoginAuth(t *testing.T) {
 }
 
 var _ client.ITracker = (*stubTracker)(nil)
+
+type posterTracker struct {
+	client.ITracker
+	domain string
+	poster string
+}
+
+func (p *posterTracker) GetDomain() string                      { return p.domain }
+func (p *posterTracker) ParsePoster(*bytes.Buffer, bool) string { return p.poster }
+
+func TestDomainOverrideParsePosterFollowsMirror(t *testing.T) {
+	base := &posterTracker{domain: "kinozal.tv", poster: "https://kinozal.tv/i/poster/1.jpg"}
+	d := &domainOverride{ITracker: base, domain: "kinozal.guru"}
+	if got, want := d.ParsePoster(nil, false), "https://kinozal.guru/i/poster/1.jpg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDomainOverrideParsePosterKeepsForeignHost(t *testing.T) {
+	base := &posterTracker{domain: "kinozal.tv", poster: "https://s.kinozal.tv/i/poster/1.jpg"}
+	d := &domainOverride{ITracker: base, domain: "kinozal.guru"}
+	if got, want := d.ParsePoster(nil, false), "https://s.kinozal.tv/i/poster/1.jpg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
