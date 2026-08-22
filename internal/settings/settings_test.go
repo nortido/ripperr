@@ -37,8 +37,7 @@ func TestApplyOverridesPartial(t *testing.T) {
 		}{Host: "qbit-env", Username: "u", Password: "p"}},
 		Flaresolverr: config.Flaresolverr{Host: "flare-env", MaxTimeout: 300000},
 	}
-	cfg.Tracker.Rutracker.Domain = "rutracker.org"
-	cfg.Tracker.Rutracker.Enabled = true
+	cfg.Tracker["rutracker"] = &config.TrackerItem{Name: "rutracker", Domain: "rutracker.org", Enabled: true}
 
 	db := &fakeSettingsDB{data: map[string]json.RawMessage{
 		"schedule":     json.RawMessage(`{"start_hour":9,"list_refresh_per_day":4}`),
@@ -58,10 +57,10 @@ func TestApplyOverridesPartial(t *testing.T) {
 	if cfg.Runner.MonthThresholdDays != 1 {
 		t.Errorf("MonthThresholdDays should stay from env, got %d", cfg.Runner.MonthThresholdDays)
 	}
-	if cfg.Tracker.Rutracker.Domain != "custom.org" {
-		t.Errorf("domain = %q", cfg.Tracker.Rutracker.Domain)
+	if cfg.Tracker["rutracker"].Domain != "custom.org" {
+		t.Errorf("domain = %q", cfg.Tracker["rutracker"].Domain)
 	}
-	if cfg.Tracker.Rutracker.Enabled {
+	if cfg.Tracker["rutracker"].Enabled {
 		t.Error("rutracker should be disabled from overlay")
 	}
 	if cfg.Manager.QbitTorrent.Host != "http://qbit-db" {
@@ -500,5 +499,30 @@ func TestSchedulePatchWatchTagsRejectsComma(t *testing.T) {
 	}`))
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+// config.App копируется по значению, но Tracker это набор по ключу: без
+// собственной копии оверлей из БД писал бы в базовый конфиг навсегда
+func TestApplyOverridesDoesNotMutateBaseTrackers(t *testing.T) {
+	base := config.App{Tracker: config.Tracker{
+		"rutracker": &config.TrackerItem{Name: "rutracker", Domain: "rutracker.org", Enabled: true},
+	}}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"trackers": json.RawMessage(`{"rutracker":{"domain":"custom.org","enabled":false}}`),
+	}}
+
+	cfg := base
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tracker["rutracker"].Domain != "custom.org" {
+		t.Fatalf("overlay domain = %q, want custom.org", cfg.Tracker["rutracker"].Domain)
+	}
+	if base.Tracker["rutracker"].Domain != "rutracker.org" {
+		t.Fatalf("base domain = %q, want untouched rutracker.org", base.Tracker["rutracker"].Domain)
+	}
+	if !base.Tracker["rutracker"].Enabled {
+		t.Fatal("base Enabled flipped to false")
 	}
 }

@@ -15,24 +15,12 @@ import (
 	"trackerr/internal/proxy"
 	"trackerr/internal/system/logger"
 	"trackerr/internal/tracker/client"
-	"trackerr/internal/tracker/client/kinozal"
-	"trackerr/internal/tracker/client/nnm"
-	"trackerr/internal/tracker/client/rutor"
-	"trackerr/internal/tracker/client/rutracker"
-	"trackerr/internal/tracker/client/teamhd"
+	_ "trackerr/internal/tracker/registry/all"
 )
 
 const TTL = time.Hour
 
 const maxStaleUses = 3
-
-const (
-	RutrackerID = 1
-	KinozalID   = 2
-	RutorID     = 3
-	TeamhdID    = 5
-	NnmID       = 6
-)
 
 type db interface {
 	GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error)
@@ -404,24 +392,7 @@ func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLo
 	return
 }
 
-func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf *tracker.TrackerConfig, alerts *breakeralerts.Registry) *service {
-	handlerRegistry := make(map[int]client.ITracker)
-	if conf.Rutracker.Enabled {
-		handlerRegistry[RutrackerID] = rutracker.New(conf.Rutracker)
-	}
-	if conf.Kinozal.Enabled {
-		handlerRegistry[KinozalID] = kinozal.New(conf.Kinozal)
-	}
-	if conf.Rutor.Enabled {
-		handlerRegistry[RutorID] = rutor.New(conf.Rutor)
-	}
-	}
-	if conf.TeamHD.Enabled {
-		handlerRegistry[TeamhdID] = teamhd.New(conf.TeamHD)
-	}
-	if conf.NNM.Enabled {
-		handlerRegistry[NnmID] = nnm.New(conf.NNM)
-	}
+func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf tracker.TrackerConfig, alerts *breakeralerts.Registry) *service {
 	return &service{
 		hc:                 hc,
 		downloadHC:         downloadHC,
@@ -429,7 +400,7 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, c
 		db:                 db,
 		cbCfg:              cbCfg,
 		alerts:             alerts,
-		handlerRegistry:    handlerRegistry,
+		handlerRegistry:    buildHandlerRegistry(conf),
 		clientIndex:        make(map[int]*CachedTracker),
 		flareTimeoutCounts: make(map[int]int),
 		staleUseCounts:     make(map[int]int),

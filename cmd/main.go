@@ -23,6 +23,8 @@ import (
 	"trackerr/internal/settings"
 	"trackerr/internal/storage"
 	"trackerr/internal/system/logger"
+	"trackerr/internal/tracker/registry"
+	_ "trackerr/internal/tracker/registry/all"
 	webpkg "trackerr/internal/web"
 )
 
@@ -33,7 +35,15 @@ func main() {
 	defer stop()
 
 	baseCfg := config.DefaultApp()
+	// набор трекеров приходит из реестра: значения по умолчанию объявляет сам
+	// пакет трекера, а env накладывается отдельным проходом, потому что ключи
+	// известны только в рантайме
+	baseCfg.Tracker = registry.ConfigDefaults()
 	if err := envconfig.Process(ctx, &baseCfg); err != nil {
+		logger.Error(err.Error())
+		return
+	}
+	if err := config.ApplyTrackerEnv(ctx, baseCfg.Tracker, envconfig.OsLookuper()); err != nil {
 		logger.Error(err.Error())
 		return
 	}
@@ -182,7 +192,10 @@ func connectDB(ctx context.Context, cfg config.App) (*sql.DB, *storage.Service, 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, nil, err
 	}
-	dsn := path + "?_pragma=journal_mode(DELETE)&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)"
+	// _txlock=immediate: пишущая блокировка берётся на BEGIN, а не на первой записи.
+	// Приложение однопоточно по БД (SetMaxOpenConns(1)), внутри процесса это ничего не
+	// стоит, но накат миграций перестаёт зависеть от гонки с чужим процессом на том же файле
+	dsn := path + "?_pragma=journal_mode(DELETE)&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)&_txlock=immediate"
 	dbConn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, nil, err

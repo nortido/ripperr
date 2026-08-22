@@ -14,7 +14,7 @@ import (
 
 func newTestClient(t *testing.T) *Client {
 	t.Helper()
-	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	dsn := filepath.Join(t.TempDir(), "test.db") + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("open: %v", err)

@@ -77,6 +77,9 @@ type integrationsOverlay struct {
 }
 
 func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
+	// вызывающий передаёт копию App, но набор трекеров это map: без своей копии
+	// патч из БД ушёл бы в базовый конфиг и пережил бы удаление настройки
+	cfg.Tracker = cfg.Tracker.Clone()
 	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingSchedule); err != nil {
 		return err
 	} else if ok {
@@ -326,11 +329,9 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 }
 
 func TrackersEffective(ctx context.Context, cfg *config.App, db settingsDB) (map[string]config.TrackerItem, error) {
-	m := make(map[string]config.TrackerItem, len(config.TrackerKeys))
-	for _, key := range config.TrackerKeys {
-		if it := cfg.Tracker.ByKey(key); it != nil {
-			m[key] = *it
-		}
+	m := make(map[string]config.TrackerItem, len(cfg.Tracker))
+	for key, it := range cfg.Tracker {
+		m[key] = *it
 	}
 	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingTrackers); err != nil {
 		return nil, err

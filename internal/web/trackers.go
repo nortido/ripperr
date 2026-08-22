@@ -5,31 +5,16 @@ import (
 
 	"trackerr/internal/config"
 	"trackerr/internal/settings"
-	"trackerr/internal/tracker"
-)
-
-var (
-	trackerKeyByID = map[int]string{
-		tracker.RutrackerID: "rutracker",
-		tracker.KinozalID:   "kinozal",
-		tracker.RutorID:     "rutor",
-		tracker.TeamhdID:    "teamhd",
-		tracker.NnmID:       "nnm",
-	}
-	trackerIDByKey = map[string]int{
-		"rutracker": tracker.RutrackerID,
-		"kinozal":   tracker.KinozalID,
-		"rutor":     tracker.RutorID,
-		"teamhd":    tracker.TeamhdID,
-		"nnm":       tracker.NnmID,
-	}
+	"trackerr/internal/tracker/registry"
 )
 
 func trackerName(id int) string {
-	if k, ok := trackerKeyByID[id]; ok {
-		return k
-	}
-	return ""
+	return registry.Key(id)
+}
+
+func trackerKnown(key string) bool {
+	_, ok := registry.ByKey(key)
+	return ok
 }
 
 func trackerProxyType(cfg config.App, key string) int {

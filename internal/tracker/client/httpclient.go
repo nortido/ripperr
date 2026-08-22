@@ -31,26 +31,7 @@ func ReadLimited(dst *bytes.Buffer, r io.Reader, limit int64) error {
 	return err
 }
 
-type ITracker interface {
-	GetName() (name string)
-	GetDomain() (host string)
-	GetHost() (host string)
-	GetProxyType() (proxyType proxyModel.ProxyType)
-	GetPublicity() (publicity string)
-	GetHourLimit() (limit int)
-	GetCookies() (cookies []*http.Cookie)
-	GetCredentials() (credentials string)
-	GetMirrors() []string
-	LoginLink() (url string)
-	DownloadLink(topicID string) (url string)
-	TopicLink(topicID string) (url string)
-	Detect(url string) bool
-	Headers() (header *http.Header)
-	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
-	ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string)
-	ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string)
-	ParsePoster(b *bytes.Buffer, encoded bool) (poster string)
-}
+type ITracker = tracker.ITracker
 
 type IClient interface {
 	ITracker

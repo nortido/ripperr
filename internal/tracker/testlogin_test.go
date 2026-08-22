@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"trackerr/internal/config"
 	"trackerr/internal/helper"
 	proxyModel "trackerr/internal/model/proxy"
 	trackerModel "trackerr/internal/model/tracker"
@@ -100,5 +102,41 @@ func TestLoginAuthHintOnlyKinozal(t *testing.T) {
 	tr := kinozal.New(trackerModel.Tracker{})
 	if tr.LoginAuthHint() == "" {
 		t.Fatal("expected kinozal credentials hint")
+	}
+}
+
+type nopLoginDB struct{}
+
+func (nopLoginDB) GetTracker(context.Context, int) (*trackerModel.Tracker, error) {
+	return &trackerModel.Tracker{}, nil
+}
+
+// TestLogin принимает config.App по значению, но Tracker это map: без своей копии
+// разовый патч "проверить с этими данными" уходил бы в конфиг вызывающего
+func TestTestLoginDoesNotMutateCallerConfig(t *testing.T) {
+	cfg := config.App{Tracker: config.Tracker{
+		"kinozal": &config.TrackerItem{Name: "kinozal", Domain: "kinozal.tv", Credentials: "real", Enabled: true},
+	}}
+	// enabled=false в патче даёт ранний выход до сети: до него ApplyTrackerKey уже отработал
+	patch := json.RawMessage(`{"enabled":false,"credentials":"probe"}`)
+	if err := TestLogin(context.Background(), cfg, nopLoginDB{}, "kinozal", patch); err == nil {
+		t.Fatal("want disabled error, got nil")
+	}
+	if got := cfg.Tracker["kinozal"]; got.Credentials != "real" || !got.Enabled {
+		t.Fatalf("caller config mutated: credentials=%q enabled=%v", got.Credentials, got.Enabled)
+	}
+}
+
+func TestTrackerIDsResolved(t *testing.T) {
+	ids := map[string]int{"rutracker": RutrackerID, "kinozal": KinozalID, "rutor": RutorID}
+	seen := make(map[int]string, len(ids))
+	for key, id := range ids {
+		if id == 0 {
+			t.Fatalf("%s id = 0: реестр пуст, blank-импорт registry/all потерялся", key)
+		}
+		if prev, dup := seen[id]; dup {
+			t.Fatalf("%s и %s делят id %d", prev, key, id)
+		}
+		seen[id] = key
 	}
 }

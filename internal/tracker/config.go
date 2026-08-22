@@ -16,12 +16,10 @@ func trackerFromItem(it config.TrackerItem) trackerModel.Tracker {
 	}
 }
 
-func ConfigFromApp(cfg config.App) *trackerModel.TrackerConfig {
-	return &trackerModel.TrackerConfig{
-		Rutracker: trackerFromItem(cfg.Tracker.Rutracker),
-		Kinozal:   trackerFromItem(cfg.Tracker.Kinozal),
-		Rutor:     trackerFromItem(cfg.Tracker.Rutor),
-		TeamHD:    trackerFromItem(cfg.Tracker.TeamHD),
-		NNM:       trackerFromItem(cfg.Tracker.NNM),
+func ConfigFromApp(cfg config.App) trackerModel.TrackerConfig {
+	out := make(trackerModel.TrackerConfig, len(cfg.Tracker))
+	for key, it := range cfg.Tracker {
+		out[key] = trackerFromItem(*it)
 	}
+	return out
 }

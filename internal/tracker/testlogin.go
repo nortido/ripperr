@@ -17,25 +17,13 @@ import (
 	"trackerr/internal/proxy"
 	"trackerr/internal/settings"
 	"trackerr/internal/tracker/client"
-	"trackerr/internal/tracker/client/kinozal"
-	"trackerr/internal/tracker/client/nnm"
-	"trackerr/internal/tracker/client/rutor"
-	"trackerr/internal/tracker/client/rutracker"
-	"trackerr/internal/tracker/client/teamhd"
+	"trackerr/internal/tracker/registry"
 )
 
 var (
 	// ErrUnknownTracker возвращается, когда ключа трекера нет в реестре.
 	ErrUnknownTracker = errors.New("unknown tracker key")
 )
-
-var trackerIDByKey = map[string]int{
-	"rutracker": RutrackerID,
-	"kinozal":   KinozalID,
-	"rutor":     RutorID,
-	"teamhd":    TeamhdID,
-	"nnm":       NnmID,
-}
 
 type loginDB interface {
 	GetTracker(ctx context.Context, trackerID int) (*trackerModel.Tracker, error)
@@ -45,10 +33,13 @@ type loginDB interface {
 // Необязательный configPatch подмешивает поля трекера (той же формы, что элемент GET /api/trackers) без сохранения.
 // Он не трогает боевой кеш клиентов и реестр оповещений предохранителя.
 func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, configPatch json.RawMessage) error {
-	tid, ok := trackerIDByKey[key]
-	if !ok {
+	tid := registry.ID(key)
+	if tid == 0 {
 		return ErrUnknownTracker
 	}
+	// cfg пришёл по значению, но набор трекеров это map: без своей копии разовый
+	// патч из формы ушёл бы в конфиг вызывающего, вопреки "без сохранения" выше
+	cfg.Tracker = cfg.Tracker.Clone()
 	if len(configPatch) > 0 && string(configPatch) != "null" {
 		overlay, err := settings.TrackerPatchFromJSON(configPatch)
 		if err != nil {
@@ -132,23 +123,14 @@ func testLoginAttrs(cfg config.App, key string, tid int, dbAttrs *trackerModel.T
 	return attrs
 }
 
-func buildHandlerRegistry(conf *trackerModel.TrackerConfig) map[int]client.ITracker {
-	handlerRegistry := make(map[int]client.ITracker)
-	if conf.Rutracker.Enabled {
-		handlerRegistry[RutrackerID] = rutracker.New(conf.Rutracker)
-	}
-	if conf.Kinozal.Enabled {
-		handlerRegistry[KinozalID] = kinozal.New(conf.Kinozal)
-	}
-	if conf.Rutor.Enabled {
-		handlerRegistry[RutorID] = rutor.New(conf.Rutor)
-	}
-	}
-	if conf.TeamHD.Enabled {
-		handlerRegistry[TeamhdID] = teamhd.New(conf.TeamHD)
-	}
-	if conf.NNM.Enabled {
-		handlerRegistry[NnmID] = nnm.New(conf.NNM)
+func buildHandlerRegistry(conf trackerModel.TrackerConfig) map[int]client.ITracker {
+	handlerRegistry := make(map[int]client.ITracker, len(conf))
+	for _, d := range registry.All() {
+		t, ok := conf[d.Key]
+		if !ok || !t.Enabled {
+			continue
+		}
+		handlerRegistry[d.ID] = d.New(t)
 	}
 	return handlerRegistry
 }

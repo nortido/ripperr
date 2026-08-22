@@ -1,8 +1,12 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/sethvargo/go-envconfig"
 )
 
 // NormalizeClient приводит значение MANAGER_CLIENT (env, .env, БД настроек) к
@@ -41,10 +45,10 @@ type Manager struct {
 }
 
 // TrackerItem это настройки одного трекера. Имена переменных окружения на трекер
-// берутся из префикса на каждом поле Tracker; значения по умолчанию лежат в DefaultApp,
-// потому что общий тип не может нести разный `default=` на экземпляр. `overwrite` даёт
-// переменной окружения победить предзаполненное значение (иначе go-envconfig пропускает
-// поле, которое уже не нулевое).
+// собирает ApplyTrackerEnv из ключа (TRACKER_<KEY>_*); значения по умолчанию объявляет
+// сам пакет трекера в registry.Def, потому что общий тип не может нести разный
+// `default=` на экземпляр. `overwrite` даёт переменной окружения победить
+// предзаполненное значение (иначе go-envconfig пропускает поле, которое уже не нулевое).
 type TrackerItem struct {
 	Name         string   `json:"name" env:"NAME, overwrite"`
 	Domain       string   `json:"domain" env:"DOMAIN, overwrite"`
@@ -60,28 +64,50 @@ type TrackerItem struct {
 	Enabled      bool     `json:"enabled" env:"ENABLED, overwrite"`
 }
 
-type Tracker struct {
-	Rutracker TrackerItem `env:", prefix=TRACKER_RUTRACKER_"`
-	Kinozal   TrackerItem `env:", prefix=TRACKER_KINOZAL_"`
-	Rutor     TrackerItem `env:", prefix=TRACKER_RUTOR_"`
-	NNM       TrackerItem `env:", prefix=TRACKER_NNM_"`
-	TeamHD    TrackerItem `env:", prefix=TRACKER_TEAMHD_"`
+// Tracker это набор настроек по ключу трекера. Состав набора задаёт реестр
+// (internal/tracker/registry), config о конкретных трекерах не знает: новый
+// трекер регистрирует себя сам и появляется здесь без правки этого файла.
+type Tracker map[string]*TrackerItem
+
+func (t Tracker) ByKey(key string) *TrackerItem {
+	return t[key]
 }
 
-var TrackerKeys = []string{"rutracker", "kinozal", "rutor", "teamhd", "nnm"}
+// Clone нужен там, где App копируется по значению: набор это map, и без
+// собственной копии оверлей из БД писал бы в базовый конфиг навсегда.
+func (t Tracker) Clone() Tracker {
+	out := make(Tracker, len(t))
+	for key, it := range t {
+		item := *it
+		item.Mirrors = append([]string(nil), it.Mirrors...)
+		out[key] = &item
+	}
+	return out
+}
 
-func (t *Tracker) ByKey(key string) *TrackerItem {
-	switch key {
-	case "rutracker":
-		return &t.Rutracker
-	case "kinozal":
-		return &t.Kinozal
-	case "rutor":
-		return &t.Rutor
-	case "teamhd":
-		return &t.TeamHD
-	case "nnm":
-		return &t.NNM
+// Keys отдаёт ключи в алфавитном порядке. Порядок для показа в UI задаёт реестр
+// (по id), здесь важна только повторяемость обхода.
+func (t Tracker) Keys() []string {
+	out := make([]string, 0, len(t))
+	for k := range t {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ApplyTrackerEnv накладывает переменные окружения на каждый трекер набора.
+// Отдельным проходом, а не тегом prefix на поле: имена ключей известны только в
+// рантайме, envconfig.Process сам такой набор не обойдёт.
+func ApplyTrackerEnv(ctx context.Context, t Tracker, l envconfig.Lookuper) error {
+	for _, key := range t.Keys() {
+		prefix := "TRACKER_" + strings.ToUpper(key) + "_"
+		if err := envconfig.ProcessWith(ctx, &envconfig.Config{
+			Target:   t[key],
+			Lookuper: envconfig.PrefixLookuper(prefix, l),
+		}); err != nil {
+			return fmt.Errorf("tracker %s: %w", key, err)
+		}
 	}
 	return nil
 }

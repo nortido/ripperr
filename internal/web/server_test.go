@@ -1300,7 +1300,7 @@ func TestGetHistoryIgnoredOnly(t *testing.T) {
 
 func TestTrackerTestProxyTimeoutFromConfig(t *testing.T) {
 	cfg := testEffective()
-	cfg.Tracker.Kinozal.ProxyType = 0
+	cfg.Tracker["kinozal"] = &config.TrackerItem{Name: "kinozal", ProxyType: 0}
 	patch := json.RawMessage(`{"proxy_type":1}`)
 	if got := effectiveTrackerProxyType(cfg, "kinozal", patch); got != 1 {
 		t.Fatalf("proxy_type = %d, want 1", got)

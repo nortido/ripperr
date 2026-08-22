@@ -18,12 +18,32 @@ const (
 	PublicityPublic = "public"
 )
 
-type TrackerConfig struct {
-	Rutracker Tracker
-	Kinozal   Tracker
-	Rutor     Tracker
-	TeamHD    Tracker
-	NNM       Tracker
+// TrackerConfig это настройки трекеров по ключу реестра; состав набора задаёт
+// реестр, а не этот тип, поэтому новый трекер тут ничего не меняет.
+type TrackerConfig map[string]Tracker
+
+// ITracker это всё, что ядро спрашивает у трекера. Интерфейс живёт здесь, а не в
+// tracker/client: реестр обязан знать его, а пакеты трекеров импортируют реестр,
+// и объявление в client замкнуло бы импорты в кольцо.
+type ITracker interface {
+	GetName() (name string)
+	GetDomain() (host string)
+	GetHost() (host string)
+	GetProxyType() (proxyType proxy.ProxyType)
+	GetPublicity() (publicity string)
+	GetHourLimit() (limit int)
+	GetCookies() (cookies []*http.Cookie)
+	GetCredentials() (credentials string)
+	GetMirrors() []string
+	LoginLink() (url string)
+	DownloadLink(topicID string) (url string)
+	TopicLink(topicID string) (url string)
+	Detect(url string) bool
+	Headers() (header *http.Header)
+	ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time)
+	ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string)
+	ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string)
+	ParsePoster(b *bytes.Buffer, encoded bool) (poster string)
 }
 
 type Tracker struct {

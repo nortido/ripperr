@@ -1,0 +1,25 @@
+package kinozal
+
+import (
+	"trackerr/internal/config"
+	trackerModel "trackerr/internal/model/tracker"
+	"trackerr/internal/tracker/registry"
+)
+
+func init() {
+	registry.Register(registry.Def{
+		ID:  2,
+		Key: "kinozal",
+		Defaults: config.TrackerItem{
+			Name:        "kinozal",
+			Domain:      "kinozal.tv",
+			Publicity:   "private",
+			LoginURL:    "https://kinozal.tv/takelogin.php",
+			DownloadURL: "https://kinozal.tv/download.php?id=",
+			HourLimit:   30,
+			ProxyType:   1,
+			Enabled:     true,
+		},
+		New: func(t trackerModel.Tracker) trackerModel.ITracker { return New(t) },
+	})
+}

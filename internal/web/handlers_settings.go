@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"trackerr/internal/config"
 	"trackerr/internal/settings"
 	trackerPkg "trackerr/internal/tracker"
+	"trackerr/internal/tracker/registry"
 )
 
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
@@ -39,20 +39,21 @@ func (s *Server) handleGetTrackers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out := make([]trackerResp, 0, len(config.TrackerKeys))
-	for _, key := range config.TrackerKeys {
+	keys := registry.Keys()
+	out := make([]trackerResp, 0, len(keys))
+	for _, key := range keys {
 		it, ok := items[key]
 		if !ok {
 			continue
 		}
-		out = append(out, trackerResp{ID: trackerIDByKey[key], Key: key, TrackerItem: it})
+		out = append(out, trackerResp{ID: registry.ID(key), Key: key, TrackerItem: it})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handlePutTracker(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	if _, ok := trackerIDByKey[key]; !ok {
+	if !trackerKnown(key) {
 		writeError(w, http.StatusNotFound, "unknown tracker key")
 		return
 	}
@@ -71,7 +72,7 @@ func (s *Server) handlePutTracker(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTestTracker(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
-	if _, ok := trackerIDByKey[key]; !ok {
+	if !trackerKnown(key) {
 		writeError(w, http.StatusNotFound, "unknown tracker key")
 		return
 	}

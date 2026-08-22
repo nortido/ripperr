@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -22,49 +21,6 @@ const (
 
 type Client struct {
 	db *sql.DB
-}
-
-func (c *Client) Bootstrap(ctx context.Context) error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS check_log (
-    id INTEGER PRIMARY KEY,
-    checked_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    url_hash TEXT NOT NULL,
-    item_name TEXT NOT NULL DEFAULT '',
-    item_url TEXT NOT NULL DEFAULT '',
-    tracker_type_id INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL,
-    error TEXT NOT NULL DEFAULT '',
-    error_streak INTEGER NOT NULL DEFAULT 0
-)`,
-		`CREATE TABLE IF NOT EXISTS "ignore" (url_hash TEXT PRIMARY KEY, item_name TEXT NOT NULL DEFAULT '', item_url TEXT NOT NULL DEFAULT '', added_at INTEGER NOT NULL DEFAULT (unixepoch()))`,
-		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL DEFAULT (unixepoch()))`,
-		`CREATE TABLE IF NOT EXISTS trackers (tracker_type_id INTEGER PRIMARY KEY, tracker_name TEXT, domain_name TEXT, login_url TEXT, download_url TEXT, credentials TEXT, cookies TEXT, publicity TEXT, updated_at INTEGER)`,
-		`CREATE TABLE IF NOT EXISTS history (url_hash TEXT PRIMARY KEY, tracker_type_id INTEGER, topic_id TEXT, category_name TEXT, item_tag TEXT, item_name TEXT, item_url TEXT, created_at INTEGER, recheck_at INTEGER, force_check INTEGER NOT NULL DEFAULT 0)`,
-		`CREATE INDEX IF NOT EXISTS check_log_checked_at_idx ON check_log (checked_at DESC)`,
-		`DELETE FROM check_log
-WHERE id IN (
-    SELECT id FROM (
-        SELECT id, ROW_NUMBER() OVER (PARTITION BY url_hash ORDER BY checked_at DESC, id DESC) AS rn
-        FROM check_log
-    ) dedup WHERE rn > 1
-)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS check_log_url_hash_uidx ON check_log (url_hash)`,
-		`DELETE FROM check_log
-WHERE id IN (
-    SELECT id FROM (
-        SELECT id, ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(item_name)) ORDER BY checked_at DESC, id DESC) AS rn
-        FROM check_log
-    ) dedup_name WHERE rn > 1
-)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS check_log_item_name_uidx ON check_log (LOWER(TRIM(item_name))) WHERE TRIM(item_name) <> ''`,
-	}
-	for i, stmt := range stmts {
-		if _, err := c.db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("bootstrap statement %d: %w", i, err)
-		}
-	}
-	return nil
 }
 
 func (c *Client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error) {
