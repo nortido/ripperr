@@ -32,7 +32,7 @@ export async function loadSchedule() {
   try {
     await ensureQbitCategories();
     const sch = await fetchJSON('/api/schedule');
-    renderSchedule(el, sch, qbitCategoriesCache || [], qbitCategoriesUnavailable, timezoneEntries());
+    renderSchedule(el, sch, qbitCategoriesCache || [], qbitCategoriesUnavailable, timezoneEntries(sch.timezone || ''));
   } catch (err) {
     el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
     showToast(err.message, 'error');

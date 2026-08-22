@@ -164,8 +164,8 @@ export function getHistFilterOptions() {
     { v: 'unchanged', icon: 'minus', label: t('dash.filter.unchanged'), activeClass: 'active-muted' },
     { v: 'unknown', icon: 'help', label: t('dash.filter.unknown'), activeClass: 'active-warning' },
     { v: 'error', icon: 'xCircle', label: t('dash.filter.error'), activeClass: 'active-danger' },
-    { v: 'broken', icon: 'warning', label: t('dash.filter.broken'), activeClass: 'active-warning' },
-    { v: 'ignored', icon: 'eyeHidden', label: t('dash.inIgnore'), activeClass: 'active-ignored', isIgnored: true },
+    { v: 'broken', icon: 'warning', label: t('dash.filter.broken'), activeClass: 'active-broken' },
+    { v: 'ignored', icon: 'eyeHidden', label: t('dash.inIgnore'), activeClass: 'active-neutral', isIgnored: true },
   ];
 }
 

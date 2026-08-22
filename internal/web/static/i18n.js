@@ -256,6 +256,7 @@ const MESSAGES = {
     'logs.lastUpdated': 'Обновлено {time}',
     'integrations.title': 'Интеграции',
     'integrations.client': 'Клиент загрузок',
+    'integrations.clientType': 'Тип клиента',
     'integrations.clientHint': 'Активен один клиент. Учётные данные хранятся отдельно на каждый тип, переключение показывает поля выбранного.',
     'integrations.qbit': 'qBittorrent',
     'integrations.transmission': 'Transmission',
@@ -478,6 +479,7 @@ const MESSAGES = {
     'logs.lastUpdated': 'Updated {time}',
     'integrations.title': 'Integrations',
     'integrations.client': 'Download client',
+    'integrations.clientType': 'Client type',
     'integrations.clientHint': 'Only one client is active. Credentials are stored per type, switching shows the fields of the selected one.',
     'integrations.qbit': 'qBittorrent',
     'integrations.transmission': 'Transmission',
@@ -569,7 +571,9 @@ function timezoneCityName(id) {
 }
 
 function formatTimezoneLabel(entry) {
-  const offset = entry.offset ? entry.offset.replace(/^([+-])/, 'UTC$1') : 'UTC+00:00';
+  // "UTC" в каждой строке ничего не добавляет: в списке по одному городу на
+  // смещение, и читается он как выбор пояса, а не города
+  const offset = entry.offset || '+00:00';
   return timezoneCityName(entry.id) + ' (' + offset + ')';
 }
 
@@ -582,9 +586,30 @@ function timezoneOffset(id) {
   return name === 'GMT' ? '+00:00' : name.slice(3);
 }
 
-function timezoneEntries() {
-  return Object.keys(TZ_CITIES_RU).map(function (id) {
-    return { id: id, offset: timezoneOffset(id) };
+function timezoneOffsetMinutes(offset) {
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(offset || '');
+  if (!m) return 0;
+  return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+}
+
+function timezoneEntries(preferredId) {
+  // выбирается пояс, а не город, поэтому держим по одному городу на смещение:
+  // иначе список это десятки строк с повторяющимся "+03:00". Уже сохранённая
+  // зона всегда побеждает как представитель своего смещения, иначе она
+  // пропала бы из списка и первое же сохранение формы сбросило бы её на
+  // серверную. По той же причине пункт "UTC" убран, но переживает выбор
+  const byOffset = new Map();
+  Object.keys(TZ_CITIES_RU).forEach(function (id) {
+    if (id === 'UTC' && id !== preferredId) return;
+    const offset = timezoneOffset(id);
+    if (!byOffset.has(offset) || id === preferredId) byOffset.set(offset, id);
+  });
+  const list = [];
+  byOffset.forEach(function (id, offset) {
+    list.push({ id: id, offset: offset });
+  });
+  return list.sort(function (a, b) {
+    return timezoneOffsetMinutes(b.offset) - timezoneOffsetMinutes(a.offset);
   });
 }
 

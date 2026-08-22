@@ -251,7 +251,8 @@
 }
 
 .table-dash-releases tr.release-row-broken .col-name {
-  box-shadow: inset 2px 0 0 var(--warning);
+  /* тот же цвет, что у фильтра "битые": амбер занят значком "не определено" */
+  box-shadow: inset 2px 0 0 var(--hue-violet);
 }
 
 .dash-alerts {

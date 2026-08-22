@@ -290,12 +290,22 @@ export function refreshOptions(selected) {
 }
 
 export function timezoneOptions(timezones, selected) {
-  const out = (timezones || []).map(function (tz) {
+  const list = timezones || [];
+  const out = list.map(function (tz) {
     const id = typeof tz === 'string' ? tz : tz.id;
     const label = typeof tz === 'string' ? tz : formatTimezoneLabel(tz);
     return html`<option value="${id}"${id === selected ? ' selected' : ''}>${label}</option>`;
   });
-  return html`<option value="">${t('settings.timezoneDefault')}</option>${out}`;
+  // зона из БД может не встретиться в списке (задана вручную или её город
+  // выпал при схлопывании по смещению): без своей строки браузер выбрал бы
+  // первый пункт, и сохранение формы молча сбросило бы зону на серверную
+  const known = list.some(function (tz) {
+    return (typeof tz === 'string' ? tz : tz.id) === selected;
+  });
+  const extra = selected && !known
+    ? html`<option value="${selected}" selected>${selected}</option>`
+    : '';
+  return html`<option value="">${t('settings.timezoneDefault')}</option>${extra}${out}`;
 }
 
 export function updateRefreshedAt(id, key) {

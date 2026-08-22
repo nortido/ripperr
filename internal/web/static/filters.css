@@ -58,10 +58,12 @@
   background: var(--danger-bg);
 }
 
-.hist-filter-trigger.active-ignored {
-  color: var(--hue-amber);
-  border-color: var(--hue-amber);
-  background: var(--tint-amber);
+/* битые отделены от "не определено": --warning это тот же --hue-amber, поэтому
+   раньше оба фильтра красили кнопку одинаково и различить их было нечем */
+.hist-filter-trigger.active-broken {
+  color: var(--hue-violet);
+  border-color: var(--hue-violet);
+  background: var(--tint-violet);
 }
 
 .hist-filter-panel {
@@ -401,7 +403,7 @@ html.mobile-layout .hist-filter-select.is-closing .hist-filter-panel {
 }
 
 .hist-filter-option-icon-broken {
-  color: var(--warning);
+  color: var(--hue-violet);
 }
 
 .hist-filter-option-icon-ignored {
