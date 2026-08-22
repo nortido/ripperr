@@ -675,10 +675,9 @@ func TestIncomingHashSameAs(t *testing.T) {
 	}
 }
 
-// TestIncomingHashSameAs_NilBufferWithMagnet: manager.SubmitMagnet вызывает
-// IncomingHashSameAs с buf == nil на каждом магнитном сабмите; без guard на nil
-// это паника на горячем пути.
 func TestIncomingHashSameAs_NilBufferWithMagnet(t *testing.T) {
+	// manager.SubmitMagnet вызывает IncomingHashSameAs с buf == nil на каждом
+	// магнитном сабмите: без guard на nil это паника на горячем пути
 	stub := newStubServer(t, "/downloads")
 	c := newTestClient(t, stub, model.ManagerConfig{})
 

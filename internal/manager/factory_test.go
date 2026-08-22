@@ -59,9 +59,9 @@ func TestNormalizeClient(t *testing.T) {
 	}
 }
 
-// TestNewClientMixedCaseKind: MANAGER_CLIENT=Transmission (регистр и пробелы из
-// env) обязан уйти в ветку transmission, а не в ErrUnknownClient.
 func TestNewClientMixedCaseKind(t *testing.T) {
+	// MANAGER_CLIENT=Transmission с чужим регистром и пробелами из env обязан
+	// уйти в ветку transmission, а не в ErrUnknownClient
 	_, err := NewClient(" Transmission ", model.ManagerConfig{Host: "http://127.0.0.1:1"})
 	if err == nil {
 		t.Fatal("expected connection error for unreachable host")

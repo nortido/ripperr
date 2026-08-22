@@ -63,7 +63,17 @@ type sweepStubServer struct {
 	mu              sync.Mutex
 	present         map[string]bool
 	metadataTorrent []byte
-	server          *httptest.Server
+	// lastAddedFile и lastAddedURL это последний вызов torrents/add: файлом
+	// (metainfo) или по магнит-URL - только AddFromMagnet-тестам нужно видеть,
+	// каким путём в итоге ушло добавление
+	lastAddedFile []byte
+	lastAddedURL  string
+	// fetchMetadataForeverPending моделирует рой, мёртвый и для собственной
+	// добычи, и для qbit: fetchMetadata вечно отвечает 202 (метаданные ещё не
+	// готовы), а не 200 с результатом - единственный способ дойти до ветки
+	// errMetadataFetchTimeout в waitForMetadata
+	fetchMetadataForeverPending bool
+	server                      *httptest.Server
 }
 
 func newSweepStubServer(t *testing.T) *sweepStubServer {
@@ -90,24 +100,41 @@ func newSweepStubServer(t *testing.T) *sweepStubServer {
 		_ = json.NewEncoder(w).Encode(list)
 	})
 	mux.HandleFunc("/api/v2/torrents/add", func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			file, _, err := r.FormFile("torrents")
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			defer func() { _ = file.Close() }()
+			data, _ := io.ReadAll(file)
+			hash, err := torrentmeta.InfoHash(data)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			s.mu.Lock()
+			s.lastAddedFile = data
+			s.present[strings.ToLower(hash)] = true
+			s.mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		file, _, err := r.FormFile("torrents")
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		defer func() { _ = file.Close() }()
-		data, _ := io.ReadAll(file)
-		hash, err := torrentmeta.InfoHash(data)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+		magnetURL := r.FormValue("urls")
+		hash, ok := torrentmeta.BtihFromMagnet(magnetURL)
 		s.mu.Lock()
-		s.present[strings.ToLower(hash)] = true
+		s.lastAddedURL = magnetURL
+		if ok {
+			s.present[strings.ToLower(hash)] = true
+		}
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
@@ -116,6 +143,13 @@ func newSweepStubServer(t *testing.T) *sweepStubServer {
 	// в бою выставлен всегда (URL темы), значит именно этим путём и идёт
 	// повторное добавление магнита.
 	mux.HandleFunc("/api/v2/torrents/fetchMetadata", func(w http.ResponseWriter, _ *http.Request) {
+		s.mu.Lock()
+		pending := s.fetchMetadataForeverPending
+		s.mu.Unlock()
+		if pending {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		_, _ = w.Write([]byte(`{"info":{}}`))
 	})
 	mux.HandleFunc("/api/v2/torrents/saveMetadata", func(w http.ResponseWriter, _ *http.Request) {

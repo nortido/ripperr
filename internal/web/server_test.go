@@ -1668,11 +1668,11 @@ func TestHandleRedownloadTransmissionUnsupportedReturns501(t *testing.T) {
 	}
 }
 
-// TestHandleRedownloadTransmissionSkipsSemaphore проверяет, что 501 для
-// Transmission отдаётся до попытки занять redownloadSlot: если бы клиент
-// проверялся после взятия семафора (как раньше), вызов заблокировался бы на
-// уже занятом слоте вплоть до 5-минутного контекста запроса вместо мгновенного ответа.
 func TestHandleRedownloadTransmissionSkipsSemaphore(t *testing.T) {
+	// 501 для Transmission обязан отдаваться до попытки занять redownloadSlot:
+	// если бы вид клиента проверялся после взятия семафора, как было раньше,
+	// вызов заблокировался бы на уже занятом слоте вплоть до пятиминутного
+	// контекста запроса вместо мгновенного ответа
 	redownloadSlot <- struct{}{}
 	defer func() { <-redownloadSlot }()
 

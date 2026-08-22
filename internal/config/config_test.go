@@ -45,6 +45,26 @@ func TestTrackerEnvOverridesDefaults(t *testing.T) {
 	}
 }
 
+func TestRunnerValidateMagnetTimeoutBounds(t *testing.T) {
+	base := DefaultApp().Runner
+	// 0 - это "не задано" (пустое присваивание переменной окружения даёт
+	// found=true, val=""), а не мусор: runner сам клампит его до минуты
+	for _, v := range []int64{0, 5, 60, 600} {
+		r := base
+		r.MagnetTimeout = v
+		if err := r.Validate(); err != nil {
+			t.Errorf("MagnetTimeout=%d: unexpected error: %v", v, err)
+		}
+	}
+	for _, v := range []int64{1, 4, 601} {
+		r := base
+		r.MagnetTimeout = v
+		if err := r.Validate(); err == nil {
+			t.Errorf("MagnetTimeout=%d: expected error", v)
+		}
+	}
+}
+
 func TestBlackholeDirPath(t *testing.T) {
 	def := App{ConfigDir: "/config"}
 	if got := def.BlackholeDirPath(); got != "/config/blackhole" {

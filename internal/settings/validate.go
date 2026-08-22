@@ -52,7 +52,10 @@ func ValidateSchedule(s *Schedule) error {
 	if s.ErrorStreakThreshold != 0 && s.ErrorStreakThreshold < 1 {
 		return fmt.Errorf("error_streak_threshold must be >= 1")
 	}
-	if s.MagnetTimeout != 0 && (s.MagnetTimeout < 5 || s.MagnetTimeout > 600) {
+	// границы совпадают с ValidateSchedulePatch: 0 больше не особый случай
+	// "не задано", там это уже разрешено на уровне отсутствия ключа в патче
+	// (magnetTimeout по умолчанию 60 до вызова этой функции)
+	if s.MagnetTimeout < 5 || s.MagnetTimeout > 600 {
 		return fmt.Errorf("magnet_timeout must be 5..600")
 	}
 	s.MonitoredCategories = normalizeStringList(s.MonitoredCategories)

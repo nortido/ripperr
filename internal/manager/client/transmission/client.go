@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"trackerr/internal/helper/magnetmeta"
 	"trackerr/internal/helper/torrentmeta"
 	"trackerr/internal/manager/blackhole"
 	"trackerr/internal/model"
@@ -21,6 +22,23 @@ import (
 )
 
 var idRegexp = regexp.MustCompile(`(\d+)`)
+
+// magnetFetch добывает метаданные по магниту сам, без участия Transmission
+// (у его RPC вообще нет способа задать комментарий на добавлении по магниту);
+// переменная пакета, а не прямой вызов magnetmeta.Fetch, чтобы тесты могли
+// подменить добычу, тем же приёмом, что presenceCheckAttempts/presenceCheckDelay
+// ниже и SettleDelay у blackhole
+var magnetFetch = magnetmeta.Fetch
+
+// magnetFetchTimeout ограничивает magnetFetch внутри AddFromMagnet своим
+// подконтекстом. Единственный источник этого вызова - подметальщик
+// blackhole, и весь AddFromMagnet целиком идёт в одном контексте с общим
+// потолком blackhole.AddTimeout (6 минут); без отдельного потолка мёртвый рой
+// (валидный tr, но пиров нет) выжирает весь этот бюджет, и запасному пути
+// (addMagnetVerified) достаётся уже истёкший контекст. Заметно меньше
+// AddTimeout, чтобы запасной путь успел отработать. Переменная, а не const,
+// чтобы тесты могли ужать
+var magnetFetchTimeout = time.Minute
 
 var ErrRedownloadUnsupported = errors.New("force redownload is not supported for transmission: its RPC cannot restore the torrent comment, so the tracker link would be lost")
 
@@ -508,6 +526,25 @@ func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 }
 
 func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error {
+	if opts.Comment != "" {
+		// старая magnet-пара blackhole здесь без своей добычи метаданных
+		// невидима навсегда: у RPC Transmission нет способа задать комментарий
+		// при добавлении по магниту (см. предупреждение ниже в addMagnetVerified).
+		// Пробуем собрать .torrent сами и добавить файлом с уже вшитым
+		// комментарием; неудача не фатальна, остаётся прежнее поведение
+		// (добавление магнитом с предупреждением о потере ссылки на тему).
+		// Свой подконтекст (см. magnetFetchTimeout) - иначе мёртвый рой съедает
+		// весь ctx целиком, и запасному пути ниже нечем воспользоваться
+		fctx, cancel := context.WithTimeout(ctx, magnetFetchTimeout)
+		data, ferr := magnetFetch(fctx, magnet)
+		cancel()
+		if ferr == nil {
+			if data, ferr = torrentmeta.SetComment(data, opts.Comment); ferr == nil {
+				return c.addTorrentVerified(ctx, data, opts)
+			}
+		}
+		logger.Warn(fmt.Sprintf("transmission: own magnet metadata fetch for %s failed: %v, falling back to magnet add", opts.Name, ferr))
+	}
 	return c.addMagnetVerified(ctx, magnet, opts)
 }
 

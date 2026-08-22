@@ -14,6 +14,8 @@ import (
 	qbt "github.com/autobrr/go-qbittorrent"
 	"golang.org/x/sync/errgroup"
 
+	"trackerr/internal/helper/magnetmeta"
+	"trackerr/internal/helper/torrentmeta"
 	"trackerr/internal/manager/blackhole"
 	"trackerr/internal/model"
 	"trackerr/internal/system/logger"
@@ -21,6 +23,20 @@ import (
 
 var (
 	idRegexp = regexp.MustCompile(`(\d+)`)
+	// magnetFetch добывает метаданные по магниту сам, без участия qbit;
+	// переменная пакета, а не прямой вызов magnetmeta.Fetch, чтобы тесты могли
+	// подменить добычу, тем же приёмом, что presenceCheckAttempts/presenceCheckDelay
+	// у transmission и SettleDelay у blackhole
+	magnetFetch = magnetmeta.Fetch
+	// magnetFetchTimeout ограничивает magnetFetch внутри AddFromMagnet своим
+	// подконтекстом. Единственный источник этого вызова - подметальщик
+	// blackhole, и весь AddFromMagnet целиком идёт в одном контексте с общим
+	// потолком blackhole.AddTimeout (6 минут); без отдельного потолка мёртвый
+	// рой (валидный tr, но пиров нет) выжирает весь этот бюджет, и запасному
+	// пути (addMagnetWithComment) достаётся уже истёкший контекст. Заметно
+	// меньше AddTimeout, чтобы запасной путь успел отработать. Переменная, а
+	// не const, чтобы тесты могли ужать
+	magnetFetchTimeout = time.Minute
 )
 
 type Client struct {
@@ -79,6 +95,23 @@ func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 
 func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
 	if opts.Comment != "" {
+		// старая magnet-пара blackhole без своей добычи метаданных уходит либо в
+		// torrents/fetchMetadata (нет в части сборок qbit) с отказом без
+		// комментария, либо была бы невидимой навсегда - ровно то, от чего ушли
+		// в основном пути runner.submit. Пробуем собрать .torrent сами и
+		// добавить файлом с уже вшитым комментарием; неудача не фатальна,
+		// остаётся прежнее поведение (fetchMetadata и затем без комментария).
+		// Свой подконтекст (см. magnetFetchTimeout) - иначе мёртвый рой съедает
+		// весь ctx целиком, и запасному пути ниже нечем воспользоваться
+		fctx, cancel := context.WithTimeout(ctx, magnetFetchTimeout)
+		data, ferr := magnetFetch(fctx, magnet)
+		cancel()
+		if ferr == nil {
+			if data, ferr = torrentmeta.SetComment(data, opts.Comment); ferr == nil {
+				return c.addTorrentVerified(ctx, data, opts)
+			}
+		}
+		logger.Warn(fmt.Sprintf("qbit: own magnet metadata fetch for %s failed: %v, falling back to qbit fetchMetadata", opts.Name, ferr))
 		return c.addMagnetWithComment(ctx, magnet, opts)
 	}
 	return c.addMagnetURLVerified(ctx, magnet, opts)
@@ -93,6 +126,10 @@ func torrentAddOptions(opts model.ManagerAddFileOptions) *qbt.TorrentAddOptions 
 		LimitSeedTime: opts.MaxSeedingTime,
 		Rename:        opts.Name,
 	}
+	// opts.SavePath сознательно игнорируется: у qbit путём распоряжается
+	// AutoTMM по категории, а не явный путь, и подстановка могла бы изменить
+	// уже настроенное поведение. Поле нужно клиентам без категорий
+	// (transmission), там и заполняется
 	return op
 }
 

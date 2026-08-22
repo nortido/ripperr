@@ -15,9 +15,16 @@ import (
 	"trackerr/internal/system/logger"
 )
 
-const metadataFetchTimeout = 5 * time.Minute
-
 var (
+	// metadataFetchTimeout и metadataFetchPollInterval это var, а не const:
+	// blackhole.AddTimeout обязан покрывать сумму этого таймаута и
+	// magnetFetchTimeout из client.go (см. комментарий там и тест-страж
+	// metadata_timeout_test.go), а тесту на мёртвый рой нужно ужать оба
+	// значения и интервал опроса, иначе проверка идёт реальные минуты вместо
+	// миллисекунд
+	metadataFetchTimeout      = 5 * time.Minute
+	metadataFetchPollInterval = 2 * time.Second
+
 	errFetchMetadataUnsupported = errors.New("torrents/fetchMetadata not supported")
 	errMetadataFetchTimeout     = errors.New("metadata fetch timeout")
 )
@@ -60,7 +67,7 @@ func (c *Client) waitForMetadata(ctx context.Context, source string) (err error)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(2 * time.Second):
+		case <-time.After(metadataFetchPollInterval):
 		}
 	}
 }

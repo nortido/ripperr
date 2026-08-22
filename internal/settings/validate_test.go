@@ -142,6 +142,26 @@ func TestSchedulePatchMagnetTimeoutBounds(t *testing.T) {
 	}
 }
 
+func TestValidateScheduleMagnetTimeoutBounds(t *testing.T) {
+	// границы совпадают с ValidateSchedulePatch (5..600), 0 больше не особый
+	// случай "не задано" - это разошлось бы с реальным RUNNER_MAGNET_TIMEOUT=0
+	base := Schedule{StartHour: 7, ListRefreshPerDay: 2, ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1}
+	for _, v := range []int64{5, 60, 600} {
+		s := base
+		s.MagnetTimeout = v
+		if err := ValidateSchedule(&s); err != nil {
+			t.Errorf("magnet_timeout=%d: unexpected error: %v", v, err)
+		}
+	}
+	for _, v := range []int64{0, 4, 601} {
+		s := base
+		s.MagnetTimeout = v
+		if err := ValidateSchedule(&s); err == nil {
+			t.Errorf("magnet_timeout=%d: expected error", v)
+		}
+	}
+}
+
 func TestSchedulePatchMagnetTimeoutAbsentAllowed(t *testing.T) {
 	o, err := SchedulePatchFromJSON(json.RawMessage(`{
 		"start_hour":7,"list_refresh_per_day":2,

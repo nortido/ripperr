@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // NormalizeClient приводит значение MANAGER_CLIENT (env, .env, БД настроек) к
 // одному каноническому виду в одном месте: env-переменные и старые записи
@@ -101,6 +104,28 @@ type Runner struct {
 	AllowedCategories     []string `env:"RUNNER_ALLOWED_CATEGORIES, default="`
 	MagnetTimeout         int64    `env:"RUNNER_MAGNET_TIMEOUT, default=60"`
 	Timezone              string   // переопределение только из БД; empty = process local
+}
+
+// Validate проверяет значения Runner, которые envconfig.Process берёт из
+// окружения как есть, без собственных границ (в отличие от того же поля из
+// БД: там ValidateSchedulePatch/ValidateSchedule режут 5..600). Битый
+// RUNNER_MAGNET_TIMEOUT (например, "1") иначе молча жжёт слот часового
+// лимита трекера на каждой записи без единой ошибки в логе; валим старт, как
+// главная функция уже поступает с ошибкой envconfig.Process, а не тихо
+// подгоняем значение к границе - неверный .env лучше увидеть сразу.
+// 0 не валим: go-envconfig подставляет default=60 только когда переменной нет
+// вовсе, а пустое присваивание (RUNNER_MAGNET_TIMEOUT= или ссылка на
+// незаданную переменную в compose) даёт found=true, val="" - то есть 0, и это
+// "не задано", а не мусор. handler.buildTorrentFromMagnet сам клампит такой
+// 0 до минуты, как и раньше
+func (r Runner) Validate() error {
+	if r.MagnetTimeout == 0 {
+		return nil
+	}
+	if r.MagnetTimeout < 5 || r.MagnetTimeout > 600 {
+		return fmt.Errorf("RUNNER_MAGNET_TIMEOUT=%d must be 5..600", r.MagnetTimeout)
+	}
+	return nil
 }
 
 type Flaresolverr struct {

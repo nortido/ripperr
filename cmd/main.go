@@ -37,6 +37,10 @@ func main() {
 		logger.Error(err.Error())
 		return
 	}
+	if err := baseCfg.Runner.Validate(); err != nil {
+		logger.Error(err.Error())
+		return
+	}
 	baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
 	logger.SetLevel(baseCfg.Log.Level)
 

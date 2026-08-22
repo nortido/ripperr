@@ -126,6 +126,7 @@ func TestValidateScheduleCategories(t *testing.T) {
 		ThresholdMonth:        1,
 		ThresholdHalfYear:     1,
 		ThresholdYear:         1,
+		MagnetTimeout:         60,
 		MonitoredCategories:   []string{" a ", "", "b"},
 		DeleteFilesCategories: []string{"  ", "tv"},
 	}
@@ -230,11 +231,11 @@ func TestApplyOverridesOldJSONWithoutClientKeepsQbit(t *testing.T) {
 	}
 }
 
-// TestApplyOverridesEnvMixedCaseClientNormalized: MANAGER_CLIENT=Transmission из
-// env (регистр, случайные пробелы) обязан дойти до cfg.Manager.Client в
-// каноническом виде без всякого оверлея из БД настроек, иначе он молча ушёл бы
-// в ветку qbit за учётными данными где-то дальше по коду.
 func TestApplyOverridesEnvMixedCaseClientNormalized(t *testing.T) {
+	// MANAGER_CLIENT=Transmission из env (регистр, случайные пробелы) обязан
+	// дойти до cfg.Manager.Client в каноническом виде без всякого оверлея из БД
+	// настроек, иначе он молча ушёл бы в ветку qbit за учётными данными
+	// где-то дальше по коду
 	cfg := config.App{
 		Log:          config.Log{Level: "info"},
 		Runner:       config.Runner{StartHour: 7},
@@ -250,10 +251,10 @@ func TestApplyOverridesEnvMixedCaseClientNormalized(t *testing.T) {
 	}
 }
 
-// TestApplyOverridesPatchMixedCaseClientApplied: патч со значением "Transmission"
-// (как прислал бы UI без принудительного lower-case) обязан пройти валидацию и
-// применить транссмишн, а не молча остаться на qbit.
 func TestApplyOverridesPatchMixedCaseClientApplied(t *testing.T) {
+	// патч со значением "Transmission" (как прислал бы UI без принудительного
+	// приведения к нижнему регистру) обязан пройти валидацию и применить
+	// transmission, а не молча остаться на qbit
 	cfg := config.App{
 		Log:          config.Log{Level: "info"},
 		Runner:       config.Runner{StartHour: 7},
@@ -298,11 +299,11 @@ func TestIntegrationsJSONIncludesClientAndTransmission(t *testing.T) {
 	}
 }
 
-// TestIntegrationsJSONNormalizesRawEnvCasing: cfg.Manager.Client как его кладёт
-// env-парсер из MANAGER_CLIENT=Transmission (без похода через ApplyOverrides),
-// GET /api/integrations обязан отдать "transmission", а не сырое "Transmission",
-// иначе ни один вариант селекта в UI не выбран.
 func TestIntegrationsJSONNormalizesRawEnvCasing(t *testing.T) {
+	// cfg.Manager.Client тут такой, каким его кладёт env-парсер из
+	// MANAGER_CLIENT=Transmission, без похода через ApplyOverrides. GET
+	// /api/integrations обязан отдать "transmission", а не сырое
+	// "Transmission", иначе ни один вариант селекта в UI не выбран
 	cfg := &config.App{
 		Manager: config.Manager{Client: "Transmission"},
 	}

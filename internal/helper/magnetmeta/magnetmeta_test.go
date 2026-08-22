@@ -77,9 +77,106 @@ func TestFetch_EmptyMagnet(t *testing.T) {
 }
 
 func TestFetch_GarbageMagnet(t *testing.T) {
-	_, err := Fetch(context.Background(), "not a magnet")
+	// с tr, иначе мусорную строку отсекает hasAnnounceURL раньше, чем она
+	// доходит до cl.AddMagnet, и тест перестаёт проверять то, для чего
+	// написан - отказ библиотеки на мусорном URI (схема не "magnet",
+	// а разбирается net/url без ошибки, поэтому guard её пропускает)
+	_, err := Fetch(context.Background(), "garbage://not-a-real-magnet?tr=http://tracker.example/announce")
 	if err == nil {
 		t.Fatal("ожидалась ошибка для мусорной строки")
+	}
+}
+
+func TestHasAnnounceURL_WithTracker(t *testing.T) {
+	magnet := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=http://tracker.example/announce"
+	if !hasAnnounceURL(magnet) {
+		t.Fatal("магнит с tr не должен отсекаться этой проверкой")
+	}
+}
+
+func TestHasAnnounceURL_WithoutTracker(t *testing.T) {
+	magnet := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+	if hasAnnounceURL(magnet) {
+		t.Fatal("магнит без tr не должен считаться имеющим анонсер")
+	}
+}
+
+func TestHasAnnounceURL_EmptyTrackerValue(t *testing.T) {
+	// tr= с пустым значением (или только из пробелов) это тот же случай, что и
+	// отсутствие параметра вовсе - разбирать такую "ссылку" клиенту нечем
+	magnet := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=%20"
+	if hasAnnounceURL(magnet) {
+		t.Fatal("пустой tr не должен считаться анонсером")
+	}
+}
+
+func TestFetch_NoAnnounce_FastFailWithoutClient(t *testing.T) {
+	// проверка каталога ПОСЛЕ возврата Fetch ничего не доказывает: defer
+	// os.RemoveAll(dir) убирает временный каталог клиента в любом случае,
+	// независимо от того, где по коду стоит guard. Считаем реальные вызовы
+	// mkdirTemp через подменяемую переменную пакета - только так видно, что
+	// клиент вообще не создаётся, а не просто убирается за собой
+	var calls int
+	orig := mkdirTemp
+	mkdirTemp = func(dir, pattern string) (string, error) {
+		calls++
+		return orig(dir, pattern)
+	}
+	t.Cleanup(func() { mkdirTemp = orig })
+
+	magnet := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+	_, err := Fetch(context.Background(), magnet)
+	if err == nil {
+		t.Fatal("ожидалась ошибка для магнита без tr при выключенном DHT")
+	}
+	if !strings.Contains(err.Error(), "анонсера") {
+		t.Errorf("текст ошибки %q не поясняет причину (нет анонсера)", err.Error())
+	}
+	if calls != 0 {
+		t.Errorf("клиент torrent не должен подниматься вовсе: mkdirTemp вызван %d раз(а)", calls)
+	}
+}
+
+func TestFillAnnounce_SetsFirstNonEmptyFromAnnounceList(t *testing.T) {
+	mi := &metainfo.MetaInfo{AnnounceList: metainfo.AnnounceList{{"", "http://a.example/announce"}, {"http://b.example/announce"}}}
+	fillAnnounce(mi)
+	if mi.Announce != "http://a.example/announce" {
+		t.Errorf("Announce = %q, want http://a.example/announce", mi.Announce)
+	}
+}
+
+func TestFillAnnounce_DoesNotOverwriteExisting(t *testing.T) {
+	mi := &metainfo.MetaInfo{Announce: "http://existing.example/announce", AnnounceList: metainfo.AnnounceList{{"http://other.example/announce"}}}
+	fillAnnounce(mi)
+	if mi.Announce != "http://existing.example/announce" {
+		t.Errorf("Announce = %q, want untouched http://existing.example/announce", mi.Announce)
+	}
+}
+
+func TestFillAnnounce_RoundTripPreservesInfoHash(t *testing.T) {
+	info := metainfo.Info{PieceLength: 16384, Pieces: make([]byte, 20), Name: "test.txt", Length: 0}
+	infoBytes, err := bencode.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	mi := &metainfo.MetaInfo{InfoBytes: infoBytes, AnnounceList: metainfo.AnnounceList{{"http://a.example/announce"}}}
+	hashBefore := mi.HashInfoBytes().HexString()
+
+	fillAnnounce(mi)
+
+	var buf bytes.Buffer
+	if err = mi.Write(&buf); err != nil {
+		t.Fatalf("write metainfo: %v", err)
+	}
+	loaded, err := metainfo.Load(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("load metainfo: %v", err)
+	}
+	if loaded.Announce != "http://a.example/announce" {
+		t.Errorf("Announce = %q, want http://a.example/announce", loaded.Announce)
+	}
+	if hashAfter := loaded.HashInfoBytes().HexString(); hashAfter != hashBefore {
+		t.Errorf("infohash changed: before=%s after=%s (announce лежит вне словаря info)", hashBefore, hashAfter)
 	}
 }
 
@@ -92,7 +189,10 @@ func TestFetch_CanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	const validMagnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+	// с tr, иначе новая проверка hasAnnounceURL отсекает магнит раньше, чем
+	// поднимается клиент, и тест перестаёт проверять то, для чего он написан -
+	// уборку временного каталога клиента библиотеки через defer
+	const validMagnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=http://tracker.example/announce"
 
 	_, err := Fetch(ctx, validMagnet)
 	if err == nil {
@@ -120,7 +220,9 @@ func TestFetch_NoGoroutineLeak(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	const validMagnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+	// с tr, чтобы реально пройти до создания клиента (без tr магнит теперь
+	// отсекается hasAnnounceURL раньше, и тест не проверял бы горутины клиента)
+	const validMagnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=http://tracker.example/announce"
 	for i := 0; i < 5; i++ {
 		_, _ = Fetch(ctx, validMagnet)
 	}
