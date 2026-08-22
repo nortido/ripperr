@@ -710,6 +710,13 @@
   margin-top: 18px;
 }
 
+/* внутри .stack расстояние уже задаёт gap сетки, и собственный отступ ряда
+   складывался с ним: кнопка отходила от последней карточки заметно дальше,
+   чем карточки друг от друга */
+.stack > .form-submit-row {
+  margin-top: 0;
+}
+
 .card-body > .btn-group,
 .card-body > .btn-primary {
   margin-top: 18px;
@@ -721,6 +728,12 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 20px;
+}
+
+/* у самого ряда нет нижнего отступа, а у групп внутри он снят, поэтому два
+   ряда подряд слипаются: подписи второго упираются в поля первого */
+.form-row + .form-row {
+  margin-top: 18px;
 }
 
 .form-group {
