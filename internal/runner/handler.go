@@ -538,6 +538,21 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 			return nil
 		}
+		if errors.Is(err, model.ErrHashUnchanged) {
+			// инфохеш не поменялся, торрент уже раздаётся: перезаливка не
+			// нужна, но дату обязательно фиксируем в истории, иначе на
+			// следующем прогоне снова увидим изменившуюся дату темы и
+			// снова упрёмся в этот же исход по кругу
+			logger.Info(fmt.Sprint("hash unchanged, torrent kept: ", e.Name))
+			if rep == nil {
+				if saveErr := h.saveHistory(ctx, ttid, e, pc.date); saveErr != nil {
+					h.logCheck(ctx, e, ttid, "error", saveErr.Error(), rep)
+					return saveErr
+				}
+			}
+			h.logCheck(ctx, e, ttid, "updated", "", rep)
+			return nil
+		}
 		err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
 		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 		return

@@ -1008,6 +1008,53 @@ func TestWorkerUnchangedOnAlreadyAdded(t *testing.T) {
 	}
 }
 
+type errHashUnchangedManager struct {
+	fakeManager
+}
+
+func (m *errHashUnchangedManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
+	return fmt.Errorf("%w: test", model.ErrHashUnchanged)
+}
+
+func TestWorkerSavesHistoryOnHashUnchangedWithoutErrorStreak(t *testing.T) {
+	// сентинел ErrHashUnchanged из Submit это нормальный исход, а не ошибка:
+	// история обязана сохраниться с новой датой, иначе следующий прогон снова
+	// увидит изменившуюся дату темы и снова упрётся в тот же исход по кругу
+	page := bytes.NewBufferString(strings.Repeat("x", 60))
+	store := &loggingStorage{}
+	old := time.Now().Add(-48 * time.Hour)
+	h := &handler{
+		config:  model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage: store,
+		manager: &errHashUnchangedManager{},
+		trackerService: &updatingPageTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
+		},
+		mx: helper.KeyedMutex{},
+	}
+	e := &model.Entry{
+		URL:       "https://example.com/t/1",
+		Name:      "test",
+		URLHash:   "abc",
+		Timestamp: &old,
+	}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 {
+		t.Fatalf("logs = %d, want 1", len(store.logs))
+	}
+	if store.logs[0].Status != "updated" {
+		t.Fatalf("status = %q, want updated", store.logs[0].Status)
+	}
+	if store.logs[0].Error != "" {
+		t.Fatalf("error = %q, want empty (not counted as an error)", store.logs[0].Error)
+	}
+	if len(store.saved) != 1 {
+		t.Fatalf("saved history items = %d, want 1 (new date must be recorded)", len(store.saved))
+	}
+}
+
 type fixedDatePageClient struct {
 	mockPageClient
 	date time.Time

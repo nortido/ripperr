@@ -3,8 +3,9 @@ package model
 import "errors"
 
 var (
-	ErrAlreadyAdded = errors.New("torrent already added")
-	ErrPartialList  = errors.New("partial torrent list")
+	ErrAlreadyAdded  = errors.New("torrent already added")
+	ErrPartialList   = errors.New("partial torrent list")
+	ErrHashUnchanged = errors.New("torrent hash unchanged, existing torrent kept as is")
 )
 
 type FilterOptions struct{}

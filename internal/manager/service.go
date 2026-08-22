@@ -11,6 +11,7 @@ type client interface {
 	List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error)
 	IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (same bool, known bool)
+	Exists(ctx context.Context, hash string) (bool, error)
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	Delete(ctx context.Context, opts model.ManagerDeleteOptions) (err error)
@@ -64,6 +65,22 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 	}
 	same, known := m.client.IncomingHashSameAs(buf, magnet, opts.Hash)
 	if known && same {
+		// содержимое побайтно то же, что уже раздаётся: если торрент правда
+		// в клиенте, перезаливка (delete+add) не даёт ничего, кроме полной
+		// перепроверки файлов на диске, поэтому просто выходим. Если
+		// проверка не смогла ответить точно, безопаснее считать, что торрента
+		// нет, и идти прежним защищённым путём
+		if exists, existsErr := m.client.Exists(ctx, opts.Hash); existsErr == nil && exists {
+			// осознанный размен: opts на этой ветке уже мог набрать
+			// Category/SavePath/Tag/MaxRatio/MaxSeedingTime/Comment по свежим
+			// данным с трекера, но раз мы не удаляем и не добавляем торрент
+			// заново, донести их до клиента нечем - никакого API "обновить
+			// настройки без перезаливки" тут нет. Значит в клиенте останутся
+			// старые значения (например прежняя категория или домен в
+			// комментарии) до следующей смены инфохеша, когда защищённый путь
+			// ниже отработает как обычно и добавит торрент с opts целиком
+			return model.ErrHashUnchanged
+		}
 		var data []byte
 		if buf != nil {
 			data = buf.Bytes()

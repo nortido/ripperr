@@ -441,10 +441,7 @@ func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxyModel
 	case proxyModel.TypeNone:
 		res, err = doer.Do(req)
 	case proxyModel.TypeFlare:
-		res, err = c.px.Send(req, opts, proxyType)
-		if err == nil {
-			c.absorbFlareCookies(res)
-		}
+		res, err = c.sendViaFlare(ctx, req, opts, proxyType)
 	default:
 		err = fmt.Errorf("proxy is not set: %d", proxyType)
 	}
@@ -452,6 +449,65 @@ func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxyModel
 		err = c.checkResponse(req, res, download)
 	}
 	return
+}
+
+func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *proxyModel.Options, proxyType proxyModel.ProxyType) (res *http.Response, err error) {
+	// лечит самый частый разовый сбой интеропа с FlareSolverr: живая сессия
+	// Selenium осталась на чужой странице, и кука без домена (см.
+	// cookiesForFlare) не может быть привязана к текущему URL, add_cookie
+	// падает с invalid cookie domain. Сброс сессии и один повтор поднимают
+	// чистый браузер, в котором такой проблемы нет. Таймауты разгадывания
+	// (helper.IsFlareTimeout) сюда намеренно не входят: это не разовый сбой
+	// интеропа, а исчерпание отведённого времени, у него своя семантика через
+	// shouldReloginAfterFlare, и на нём повтор с уничтожением сессии только
+	// удвоил бы стоимость каждого таймаута
+	res, err = c.px.Send(req, opts, proxyType)
+	if err == nil {
+		c.absorbFlareCookies(res)
+		return
+	}
+	if !isFlareChallengeSolveFailure(err) {
+		return
+	}
+	sessionID, hasSession := c.flareSessionID()
+	if !hasSession || sessionID == "" {
+		// сессии не было вовсе, повторять с чистого листа нечего
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if req.Body != nil {
+		if req.GetBody == nil {
+			// тело нечем перечитать: безопаснее отдать исходную ошибку, чем
+			// отправить обрезанное или пустое тело на повторе
+			return
+		}
+		var body io.ReadCloser
+		if body, err = req.GetBody(); err != nil {
+			return
+		}
+		req.Body = body
+	}
+	logger.Warn(fmt.Sprintf("%s: flare challenge solve failed, resetting session and retrying request once: %s", c.GetName(), err))
+	c.resetFlareSession()
+	res, err = c.px.Send(req, opts, proxyType)
+	if err != nil {
+		return
+	}
+	c.absorbFlareCookies(res)
+	return
+}
+
+func isFlareChallengeSolveFailure(err error) bool {
+	// узкий предикат специально под invalid cookie domain и подобные сбои
+	// именно разгадывания челленджа: helper.IsFlareTimeout шире (ловит ещё и
+	// таймауты по отведённому времени), и вешать на неё повтор с уничтожением
+	// сессии значило бы удваивать стоимость каждого таймаута
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "Error solving the challenge")
 }
 
 func (c *client) checkResponse(req *http.Request, res *http.Response, download bool) (err error) {
