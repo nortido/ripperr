@@ -741,10 +741,6 @@
   margin-bottom: 18px;
 }
 
-.form-group:last-child {
-  margin-bottom: 0;
-}
-
 .form-group-full {
   grid-column: 1 / -1;
 }
