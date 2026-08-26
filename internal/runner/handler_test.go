@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	runnerModel "trackerr/internal/model/runner"
 	storageModel "trackerr/internal/model/storage"
 	"trackerr/internal/model/tracker"
+	"trackerr/internal/notify"
 	storagePkg "trackerr/internal/storage"
 	"trackerr/internal/tracker/client"
 )
@@ -1595,5 +1598,65 @@ func TestWorkerSavesHistoryOnAlreadyAdded(t *testing.T) {
 	}
 	if store.saved[0].RecheckAt == nil || !store.saved[0].RecheckAt.After(time.Now()) {
 		t.Fatalf("recheck_at = %v, want a future time", store.saved[0].RecheckAt)
+	}
+}
+
+// notifyProbe ловит вебхук вместо телеграма: транспорт не важен, важно, ушло
+// уведомление или нет
+func notifyProbe(t *testing.T) (*notify.Notifier, <-chan struct{}) {
+	t.Helper()
+	hits := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		hits <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return notify.New(notify.Config{WebhookURL: srv.URL, Enabled: true}), hits
+}
+
+func hashUnchangedHandler(t *testing.T, mgr manager, n *notify.Notifier) (*handler, *model.Entry) {
+	t.Helper()
+	old := time.Now().Add(-48 * time.Hour)
+	h := &handler{
+		config:   model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:  &loggingStorage{},
+		manager:  mgr,
+		notifier: n,
+		trackerService: &updatingPageTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: bytes.NewBufferString(strings.Repeat("x", 60))},
+		},
+		mx: helper.KeyedMutex{},
+	}
+	return h, &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc", Timestamp: &old}
+}
+
+// инфохеш не поменялся, торрент оставили на месте: перезаливки не было, значит
+// и сообщать пользователю не о чем, хотя в check_log исход и пишется как updated
+func TestWorkerHashUnchangedDoesNotNotify(t *testing.T) {
+	n, hits := notifyProbe(t)
+	h, e := hashUnchangedHandler(t, &errHashUnchangedManager{}, n)
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-hits:
+		t.Fatal("уведомление ушло, хотя торрент не перезаливался")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// контрольная половина: та же связка с настоящей перезаливкой обязана уведомить,
+// иначе первый тест зелёный просто потому, что транспорт не работает
+func TestWorkerRealUpdateNotifies(t *testing.T) {
+	n, hits := notifyProbe(t)
+	h, e := hashUnchangedHandler(t, &fakeManager{}, n)
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-hits:
+	case <-time.After(5 * time.Second):
+		t.Fatal("уведомление о перезаливке не ушло")
 	}
 }

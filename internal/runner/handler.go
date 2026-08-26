@@ -565,6 +565,10 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 	}
 	if rep == nil {
 		logger.Info(fmt.Sprint("updated: ", e.Name))
+		// уведомление привязано к состоявшейся перезаливке, а не к статусу в
+		// check_log: исход ErrHashUnchanged тоже пишется как updated, но там
+		// торрент остался на месте и сообщать пользователю не о чем
+		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL, e.Poster))
 	}
 	h.logCheck(ctx, e, ttid, "updated", "", rep)
 
@@ -597,18 +601,13 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 		logger.Error(fmt.Sprintf("check_log write failed: %v", logErr))
 		return
 	}
-	switch status {
-	case "error":
-		if h.config.ErrorStreakThreshold >= 1 && streak >= h.config.ErrorStreakThreshold {
-			if ignoreErr := h.storage.AddIgnore(ctx, e.URLHash, e.Name, e.URL); ignoreErr != nil {
-				logger.Error(fmt.Sprintf("auto-ignore failed for %s: %v", e.Name, ignoreErr))
-			} else {
-				logger.Warn(fmt.Sprintf("%s: %d errors in a row, sent to ignore", e.Name, streak))
-				h.notifier.Notify(notify.BrokenEvent(e.Name, e.URL, streak))
-			}
+	if status == "error" && h.config.ErrorStreakThreshold >= 1 && streak >= h.config.ErrorStreakThreshold {
+		if ignoreErr := h.storage.AddIgnore(ctx, e.URLHash, e.Name, e.URL); ignoreErr != nil {
+			logger.Error(fmt.Sprintf("auto-ignore failed for %s: %v", e.Name, ignoreErr))
+		} else {
+			logger.Warn(fmt.Sprintf("%s: %d errors in a row, sent to ignore", e.Name, streak))
+			h.notifier.Notify(notify.BrokenEvent(e.Name, e.URL, streak))
 		}
-	case "updated":
-		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL, e.Poster))
 	}
 }
 
