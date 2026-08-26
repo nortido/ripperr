@@ -5,6 +5,11 @@ import "trackerr/internal/config"
 type trackerResp struct {
 	ID  int    `json:"id"`
 	Key string `json:"key"`
+	// логин и пароль вынуты из строки credentials, чтобы форма не заставляла
+	// пользователя редактировать тело POST-запроса ради смены пароля
+	Login         string `json:"login"`
+	Password      string `json:"password"`
+	SupportsLogin bool   `json:"supports_login"`
 	config.TrackerItem
 }
 

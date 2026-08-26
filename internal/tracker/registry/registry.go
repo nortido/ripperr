@@ -15,7 +15,20 @@ type Def struct {
 	ID       int
 	Key      string
 	Defaults config.TrackerItem
+	Login    *LoginForm
 	New      func(t trackerModel.Tracker) trackerModel.ITracker
+}
+
+// LoginForm описывает, какие поля в теле формы логина отвечают за имя и пароль.
+// Заполняют его только трекеры, где вход идёт обычным POST формы: nnm и teamhd
+// пускают по кукам, у них форма не нужна и поле остаётся nil.
+type LoginForm struct {
+	UserField string
+	PassField string
+	// Template это скелет тела на первую настройку, со служебными полями
+	// трекера и пустыми логином с паролем. Нужен потому, что подставлять
+	// логин в пустую строку некуда, а без служебных полей вход не сработает.
+	Template string
 }
 
 var (
@@ -34,6 +47,8 @@ func Register(d Def) {
 		panic(fmt.Sprintf("registry: tracker id %d has empty key", d.ID))
 	case d.New == nil:
 		panic(fmt.Sprintf("registry: tracker %q has no constructor", d.Key))
+	case d.Login != nil && (d.Login.UserField == "" || d.Login.PassField == ""):
+		panic(fmt.Sprintf("registry: tracker %q has an incomplete login form", d.Key))
 	}
 	if prev, ok := defs[d.ID]; ok {
 		panic(fmt.Sprintf("registry: id %d taken by %q, cannot register %q", d.ID, prev.Key, d.Key))

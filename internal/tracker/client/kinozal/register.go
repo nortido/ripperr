@@ -20,6 +20,11 @@ func init() {
 			ProxyType:   1,
 			Enabled:     true,
 		},
+		Login: &registry.LoginForm{
+			UserField: "username",
+			PassField: "password",
+			Template:  "username=&password=&to=%2F",
+		},
 		New: func(t trackerModel.Tracker) trackerModel.ITracker { return New(t) },
 	})
 }

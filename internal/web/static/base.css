@@ -68,6 +68,10 @@
   --btn-icon-md: 18px;
   --btn-icon-sm: 16px;
   --btn-border-w: 1px;
+  /* отступ подсказки от своего поля: один на все формы, поэтому и вынесенная
+     в отдельную ячейку ряда подсказка гасит row-gap до этого же значения */
+  --form-hint-gap: 8px;
+  --form-row-gap: 20px;
   --btn-gap: 8px;
   --row-actions-gap: 4px;
   --row-actions-w: calc((var(--btn-h-sm) * 3) + (var(--row-actions-gap) * 2));

@@ -50,11 +50,21 @@ export function trackerConfigFromApi(tracker) {
     login_url: tracker.login_url || '',
     download_url: tracker.download_url || '',
     credentials: tracker.credentials || '',
+    ...(tracker.supports_login ? { login: tracker.login || '', password: tracker.password || '' } : {}),
     cookies: tracker.cookies || '',
     publicity: tracker.publicity || 'public',
     mirrors: (tracker.mirrors || []).slice(),
     active_domain: tracker.active_domain || '',
   };
+}
+
+// поля логина есть не у всех трекеров: у входящих по кукам их нет, и слать
+// пустые значения нельзя, иначе сохранение затирало бы чужую строку входа
+function trackerLoginValues(item) {
+  const login = item.querySelector('.tr-login');
+  const pass = item.querySelector('[data-field="password"]');
+  if (!login || !pass) return {};
+  return { login: login.value, password: pass.value };
 }
 
 export function gatherTrackerConfig(item, mirrorValues) {
@@ -65,7 +75,8 @@ export function gatherTrackerConfig(item, mirrorValues) {
     proxy_type: parseInt(item.querySelector('.tr-proxy-type').value, 10),
     login_url: item.querySelector('.tr-login-url').value,
     download_url: item.querySelector('.tr-download-url').value,
-    credentials: item.querySelector('.input-password-wrap .input').value,
+    credentials: item.querySelector('[data-field="credentials"]').value,
+    ...trackerLoginValues(item),
     cookies: item.querySelector('.tr-cookies').value,
     publicity: item.querySelector('.tr-publicity').value,
     mirrors: (mirrorValues || []).slice(),
@@ -93,6 +104,49 @@ export function hasUnsavedTrackers() {
   return false;
 }
 
+// логин с паролем показываем только тем трекерам, у кого вход идёт формой:
+// nnm и teamhd пускают по кукам, подставлять там некуда
+// карточка собрана из рядов по два поля, а не одной общей сеткой: ряд целиком
+// либо основной, либо расширенный, поэтому переключатель расширенных не
+// оставляет дыр в строках и связанные поля стоят рядом
+function trackerRow(inner, cls) {
+  return html`<div class="form-row form-row-pair${cls ? ' ' + cls : ''}">${inner}</div>`;
+}
+
+function trackerFieldHtml(key, name, label, value, extraCls) {
+  return html`<div class="form-group"><label class="form-label" for="tr-${name}-${key}">${label}</label><input type="text" id="tr-${name}-${key}" class="input tr-${extraCls || name}" autocomplete="off" name="${randomFieldName('tr-' + name)}" value="${value || ''}"></div>`;
+}
+
+function loginFieldsHtml(tracker, key) {
+  if (!tracker.supports_login) return '';
+  return trackerRow(html`<div class="form-group"><label class="form-label" for="tr-login-${key}">${t('trackers.login')}</label><input type="text" id="tr-login-${key}" class="input tr-login" autocomplete="off" name="${randomFieldName('tr-user')}" value="${tracker.login || ''}"></div><div class="form-group"><label class="form-label" for="tr-pass-${key}">${t('trackers.password')}</label><div class="input-password-wrap"><input id="tr-pass-${key}" data-field="password"${secureInputAttrs('tr-pass')} value="${tracker.password || ''}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showPassword')}"><span data-icon="eyeHidden"></span></button></div></div>`);
+}
+
+function trackerFormHtml(tracker, key, pub, mirrors) {
+  // подсказка активного домена вынесена из своей группы в отдельную ячейку на
+  // всю ширину ряда: внутри группы она добавляла ей высоты, и соседнее поле
+  // вставало выше по вертикали
+  const address = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-domain-${key}">${t('trackers.domain')}</label><input type="text" id="tr-domain-${key}" class="input tr-domain" autocomplete="off" name="${randomFieldName('tr-domain')}" value="${tracker.domain}"></div><div class="form-group"><label class="form-label" for="tr-active-domain-${key}">${t('trackers.activeDomain')}</label><select class="select tr-active-domain" id="tr-active-domain-${key}">${activeDomainOptionsHtml(tracker.domain, mirrors, tracker.active_domain || '')}</select></div><p class="form-hint form-row-hint">${t('trackers.activeDomainHint')}</p>`);
+
+  const mirrorsRow = html`<div class="form-group form-group-full tracker-advanced"><label class="form-label" for="tr-mirrors-${key}">${t('trackers.mirrors')}</label><div class="chip-input tr-mirrors"><div class="chip-input-chips"></div><input type="text" id="tr-mirrors-${key}" class="chip-input-field" autocomplete="off" name="${randomFieldName('tr-mirror')}" placeholder="${t('trackers.mirrorsPlaceholder')}"></div></div>`;
+
+  const limits = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-hour-limit-${key}">${t('trackers.hourLimit')}</label><input type="number" id="tr-hour-limit-${key}" class="input tr-hour-limit" min="1" value="${tracker.hour_limit}"></div><div class="form-group"><label class="form-label" for="tr-proxy-type-${key}">${t('trackers.proxy')}</label><select id="tr-proxy-type-${key}" class="select tr-proxy-type"><option value="0"${tracker.proxy_type === 0 ? ' selected' : ''}>${t('trackers.proxyDirect')}</option><option value="1"${tracker.proxy_type === 1 ? ' selected' : ''}>${t('trackers.proxyFlare')}</option></select></div>`);
+
+  const access = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-publicity-${key}">${t('trackers.publicity')}</label><select id="tr-publicity-${key}" class="select tr-publicity"><option value="public"${pub === 'public' ? ' selected' : ''}>${t('trackers.public')}</option><option value="private"${pub === 'private' ? ' selected' : ''}>${t('trackers.private')}</option></select></div>${trackerFieldHtml(key, 'login-url', t('trackers.loginUrl'), tracker.login_url, 'login-url')}`, 'tracker-advanced');
+
+  const downloadURL = html`<div class="form-group form-group-full tracker-advanced"><label class="form-label" for="tr-download-url-${key}">${t('trackers.downloadUrl')}</label><input type="text" id="tr-download-url-${key}" class="input tr-download-url" autocomplete="off" name="${randomFieldName('tr-dl')}" value="${tracker.download_url}"></div>`;
+
+  // приватному трекеру без формы входа (nnm, teamhd) сырая строка это
+  // единственный способ настроить вход, поэтому она стоит в основных полях,
+  // а не за переключателем расширенных
+  const rawOnly = !tracker.supports_login && pub === 'private';
+  const rawCls = rawOnly ? '' : ' tracker-advanced';
+  const raw = html`<div class="form-group form-group-full${rawCls}"><label class="form-label" for="tr-cred-${key}">${t('trackers.credentials')}</label><div class="input-password-wrap"><input id="tr-cred-${key}" data-field="credentials"${secureInputAttrs('tr-cred')} value="${tracker.credentials}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eyeHidden"></span></button></div><p class="form-hint">${t(rawOnly ? 'trackers.credentialsHintRaw' : 'trackers.credentialsHint')}</p></div><div class="form-group form-group-full${rawCls}"><label class="form-label" for="tr-cookies-${key}">${t('trackers.cookies')}</label><input type="text" id="tr-cookies-${key}" class="input tr-cookies" autocomplete="off" name="${randomFieldName('tr-cookie')}" value="${tracker.cookies}"></div>`;
+
+
+  return html`<div class="tracker-form">${address}${mirrorsRow}${limits}${loginFieldsHtml(tracker, key)}${access}${downloadURL}${raw}</div>`;
+}
+
 export function trackerItemHtml(tracker) {
   const pub = tracker.publicity || 'public';
   const key = tracker.key;
@@ -100,7 +154,8 @@ export function trackerItemHtml(tracker) {
   const isOpen = openTrackerKey === key;
   const disabledCls = tracker.enabled ? '' : ' tracker-item-disabled';
   const domain = trackerDisplayDomain(tracker);
-  return html`<div class="tracker-item${disabledCls}${isOpen ? ' is-open' : ''}" data-key="${key}"><div class="tracker-row" role="button" tabindex="0" aria-expanded="${isOpen ? 'true' : 'false'}"><label class="form-switch tracker-row-toggle" title="${t('trackers.enabled')}"><input class="tr-enabled" type="checkbox"${tracker.enabled ? ' checked' : ''}><span class="sr-only">${t('trackers.enabled')}</span></label><button type="button" class="btn btn-ghost btn-icon-only btn-test-tracker" data-key="${key}" title="${t('trackers.test')}" aria-label="${t('trackers.test')}"><span data-icon="activity"></span></button><div class="tracker-row-main"><span class="tracker-row-name">${tracker.name || key}</span>${domain ? html`<span class="tracker-row-domain">${domain}</span>` : ''}</div><span class="tracker-chevron" data-icon="chevron"></span></div><div class="tracker-panel"><div class="tracker-panel-inner"><div class="tracker-form form-row"><div class="form-group"><label class="form-label" for="tr-domain-${key}">${t('trackers.domain')}</label><input type="text" id="tr-domain-${key}" class="input tr-domain" autocomplete="off" name="${randomFieldName('tr-domain')}" value="${tracker.domain}"></div><div class="form-group"><label class="form-label" for="tr-hour-limit-${key}">${t('trackers.hourLimit')}</label><input type="number" id="tr-hour-limit-${key}" class="input tr-hour-limit" min="1" value="${tracker.hour_limit}"></div><div class="form-group"><label class="form-label" for="tr-proxy-type-${key}">${t('trackers.proxy')}</label><select id="tr-proxy-type-${key}" class="select tr-proxy-type"><option value="0"${tracker.proxy_type === 0 ? ' selected' : ''}>${t('trackers.proxyDirect')}</option><option value="1"${tracker.proxy_type === 1 ? ' selected' : ''}>${t('trackers.proxyFlare')}</option></select></div><div class="form-group"><label class="form-label" for="tr-publicity-${key}">${t('trackers.publicity')}</label><select id="tr-publicity-${key}" class="select tr-publicity"><option value="public"${pub === 'public' ? ' selected' : ''}>${t('trackers.public')}</option><option value="private"${pub === 'private' ? ' selected' : ''}>${t('trackers.private')}</option></select></div><div class="form-group form-group-full"><label class="form-label" for="tr-mirrors-${key}">${t('trackers.mirrors')}</label><div class="chip-input tr-mirrors"><div class="chip-input-chips"></div><input type="text" id="tr-mirrors-${key}" class="chip-input-field" autocomplete="off" name="${randomFieldName('tr-mirror')}" placeholder="${t('trackers.mirrorsPlaceholder')}"></div></div><div class="form-group form-group-full"><label class="form-label" for="tr-active-domain-${key}">${t('trackers.activeDomain')}</label><select class="select tr-active-domain" id="tr-active-domain-${key}">${activeDomainOptionsHtml(tracker.domain, mirrors, tracker.active_domain || '')}</select><p class="form-hint">${t('trackers.activeDomainHint')}</p></div><div class="form-group form-group-full"><label class="form-label" for="tr-login-url-${key}">${t('trackers.loginUrl')}</label><input type="text" id="tr-login-url-${key}" class="input tr-login-url" autocomplete="off" name="${randomFieldName('tr-login')}" value="${tracker.login_url}"></div><div class="form-group form-group-full"><label class="form-label" for="tr-download-url-${key}">${t('trackers.downloadUrl')}</label><input type="text" id="tr-download-url-${key}" class="input tr-download-url" autocomplete="off" name="${randomFieldName('tr-dl')}" value="${tracker.download_url}"></div><div class="form-group form-group-full"><label class="form-label" for="tr-cred-${key}">${t('trackers.credentials')}</label><div class="input-password-wrap"><input id="tr-cred-${key}"${secureInputAttrs('tr-cred')} value="${tracker.credentials}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eyeHidden"></span></button></div></div><div class="form-group form-group-full"><label class="form-label" for="tr-cookies-${key}">${t('trackers.cookies')}</label><input type="text" id="tr-cookies-${key}" class="input tr-cookies" autocomplete="off" name="${randomFieldName('tr-cookie')}" value="${tracker.cookies}"></div></div><div class="form-submit-row tracker-save-row"><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div></div></div>`;
+  return html`<div class="tracker-item${disabledCls}${isOpen ? ' is-open' : ''}" data-key="${key}"><div class="tracker-row" role="button" tabindex="0" aria-expanded="${isOpen ? 'true' : 'false'}"><label class="form-switch tracker-row-toggle" title="${t('trackers.enabled')}"><input class="tr-enabled" type="checkbox"${tracker.enabled ? ' checked' : ''}><span class="sr-only">${t('trackers.enabled')}</span></label><button type="button" class="btn btn-ghost btn-icon-only btn-test-tracker" data-key="${key}" title="${t('trackers.test')}" aria-label="${t('trackers.test')}"><span data-icon="activity"></span></button><div class="tracker-row-main"><span class="tracker-row-name">${tracker.name || key}</span>${domain ? html`<span class="tracker-row-domain">${domain}</span>` : ''}</div><span class="tracker-chevron" data-icon="chevron"></span></div><div class="tracker-panel"><div class="tracker-panel-inner">${trackerFormHtml(tracker, key, pub, mirrors)}
+<div class="form-submit-row tracker-save-row"><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div></div></div>`;
 }
 
 
@@ -290,7 +345,8 @@ export function renderTrackers(el, trackers) {
         proxy_type: parseInt(item.querySelector('.tr-proxy-type').value, 10),
         login_url: item.querySelector('.tr-login-url').value,
         download_url: item.querySelector('.tr-download-url').value,
-        credentials: item.querySelector('.input-password-wrap .input').value,
+        credentials: item.querySelector('[data-field="credentials"]').value,
+        ...trackerLoginValues(item),
         cookies: item.querySelector('.tr-cookies').value,
         publicity: item.querySelector('.tr-publicity').value,
         mirrors: mirrorInputs[key].getValues(),

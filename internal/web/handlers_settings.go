@@ -46,7 +46,12 @@ func (s *Server) handleGetTrackers(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		out = append(out, trackerResp{ID: registry.ID(key), Key: key, TrackerItem: it})
+		login, password, supported := trackerLoginFields(key, it.Credentials)
+		out = append(out, trackerResp{
+			ID: registry.ID(key), Key: key,
+			Login: login, Password: password, SupportsLogin: supported,
+			TrackerItem: it,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -59,6 +64,11 @@ func (s *Server) handlePutTracker(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfg := s.effective()
+	if body, err = applyTrackerLogin(cfg, key, body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -83,6 +93,16 @@ func (s *Server) handleTestTracker(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 	cfg := s.effective()
+	// форма шлёт логин с паролем отдельными полями, а проверка логина понимает
+	// только credentials: без подстановки она молча проверяла бы старый пароль
+	if len(req.Config) > 0 {
+		patched, err := applyTrackerLogin(cfg, key, req.Config)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.Config = patched
+	}
 	timeout := 30 * time.Second
 	if effectiveTrackerProxyType(cfg, key, req.Config) == 1 {
 		timeout = time.Duration(cfg.Flaresolverr.MaxTimeout) * time.Millisecond

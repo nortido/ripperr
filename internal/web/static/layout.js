@@ -13,6 +13,31 @@ export const PAGE_SCALE_MAX = 1;
 export const MOBILE_LAYOUT_MAX = 900;
 export let layoutWasMobile = false;
 
+export const ADVANCED_KEY = 'trackerr-advanced';
+
+// признак висит на корне документа, а не в состоянии карточек: расширенные
+// поля прячет CSS, поэтому переключатель не требует перерисовки трекеров и не
+// мешает несохранённым правкам в скрытых полях
+export function applyAdvanced(on) {
+  if (on) document.documentElement.setAttribute('data-advanced', '1');
+  else document.documentElement.removeAttribute('data-advanced');
+  try {
+    localStorage.setItem(ADVANCED_KEY, on ? '1' : '0');
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+}
+
+export function advancedEnabled() {
+  return document.documentElement.getAttribute('data-advanced') === '1';
+}
+
+export function initAdvanced() {
+  let on = false;
+  try {
+    on = localStorage.getItem(ADVANCED_KEY) === '1';
+  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  if (on) document.documentElement.setAttribute('data-advanced', '1');
+}
+
 export function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', t);

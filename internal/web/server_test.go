@@ -24,6 +24,8 @@ import (
 	"trackerr/internal/settings"
 	storagePkg "trackerr/internal/storage"
 	"trackerr/internal/system/logger"
+	"trackerr/internal/tracker/registry"
+	_ "trackerr/internal/tracker/registry/all"
 )
 
 type fakeStore struct {
@@ -1880,5 +1882,232 @@ func TestPostPlanForceAllClearQueuesNothing(t *testing.T) {
 	}
 	if queued := srv.runnerState.DrainForce(); len(queued) != 0 {
 		t.Fatalf("queued = %v, want nothing on clear", queued)
+	}
+}
+
+func TestGetTrackersSplitsLoginAndPassword(t *testing.T) {
+	store := &fakeStore{settings: map[string]json.RawMessage{
+		"trackers": json.RawMessage(`{"rutracker":{"credentials":"login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=s3cret&login_username=vasya"}}`),
+	}}
+	srv := New(store, func() {}, func() config.App {
+		cfg := testEffective()
+		cfg.Tracker = registry.ConfigDefaults()
+		return cfg
+	}, ":0", runner.NewState(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/trackers", nil)
+	w := httptest.NewRecorder()
+	srv.handleGetTrackers(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp []struct {
+		Key           string `json:"key"`
+		Login         string `json:"login"`
+		Password      string `json:"password"`
+		Credentials   string `json:"credentials"`
+		SupportsLogin bool   `json:"supports_login"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	var rut, nnm = -1, -1
+	for i, item := range resp {
+		switch item.Key {
+		case "rutracker":
+			rut = i
+		case "nnm":
+			nnm = i
+		}
+	}
+	if rut < 0 || nnm < 0 {
+		t.Fatalf("rutracker or nnm missing from %v", resp)
+	}
+	if !resp[rut].SupportsLogin {
+		t.Error("rutracker must report supports_login")
+	}
+	if resp[rut].Login != "vasya" || resp[rut].Password != "s3cret" {
+		t.Errorf("login/password = %q/%q, want vasya/s3cret", resp[rut].Login, resp[rut].Password)
+	}
+	if resp[rut].Credentials == "" {
+		t.Error("raw credentials must stay available for the advanced form")
+	}
+	// у nnm вход только по кукам, поэтому дружелюбных полей быть не должно
+	if resp[nnm].SupportsLogin || resp[nnm].Login != "" || resp[nnm].Password != "" {
+		t.Errorf("nnm = %+v, want no login form", resp[nnm])
+	}
+}
+
+func TestPutTrackerLoginKeepsOtherCredentialFields(t *testing.T) {
+	store := &fakeStore{settings: map[string]json.RawMessage{
+		"trackers": json.RawMessage(`{"rutracker":{"credentials":"login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=old&login_username=old"}}`),
+	}}
+	srv := newTrackerTestServer(store, "rutracker", "login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=old&login_username=old")
+
+	body := []byte(`{"login":"vasya","password":"new pass"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/trackers/rutracker", bytes.NewReader(body))
+	req.SetPathValue("key", "rutracker")
+	w := httptest.NewRecorder()
+	srv.handlePutTracker(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	var saved map[string]map[string]any
+	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := saved["rutracker"]["credentials"].(string)
+	want := "login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=new+pass&login_username=vasya"
+	if got != want {
+		t.Fatalf("credentials =\n %q\nwant\n %q", got, want)
+	}
+	if _, ok := saved["rutracker"]["login"]; ok {
+		t.Error("login must not leak into the stored overlay")
+	}
+}
+
+func TestPutTrackerLoginOnEmptyCredentialsUsesTemplate(t *testing.T) {
+	store := &fakeStore{}
+	srv := newTestServer(store)
+
+	body := []byte(`{"login":"vasya","password":"pw"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/trackers/kinozal", bytes.NewReader(body))
+	req.SetPathValue("key", "kinozal")
+	w := httptest.NewRecorder()
+	srv.handlePutTracker(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	var saved map[string]map[string]any
+	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := saved["kinozal"]["credentials"].(string)
+	if got != "username=vasya&password=pw&to=%2F" {
+		t.Fatalf("credentials = %q", got)
+	}
+}
+
+// правка сырой строки в расширенных настройках это последнее слово: логин с
+// паролем ложатся поверх пришедшей строки, а не поверх сохранённой
+func TestPutTrackerRawCredentialsAreTheBaseForLogin(t *testing.T) {
+	store := &fakeStore{settings: map[string]json.RawMessage{
+		"trackers": json.RawMessage(`{"rutracker":{"credentials":"login_username=old&login_password=old"}}`),
+	}}
+	srv := newTrackerTestServer(store, "rutracker", "login_username=old&login_password=old")
+
+	body := []byte(`{"credentials":"login_username=&login_password=&extra=1","login":"vasya","password":"pw"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/trackers/rutracker", bytes.NewReader(body))
+	req.SetPathValue("key", "rutracker")
+	w := httptest.NewRecorder()
+	srv.handlePutTracker(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	var saved map[string]map[string]any
+	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := saved["rutracker"]["credentials"].(string)
+	if got != "login_username=vasya&login_password=pw&extra=1" {
+		t.Fatalf("credentials = %q", got)
+	}
+}
+
+func TestPutTrackerWithoutLoginFieldsLeavesCredentialsAlone(t *testing.T) {
+	store := &fakeStore{settings: map[string]json.RawMessage{
+		"trackers": json.RawMessage(`{"rutracker":{"credentials":"login_username=vasya&login_password=pw"}}`),
+	}}
+	srv := newTrackerTestServer(store, "rutracker", "login_username=vasya&login_password=pw")
+
+	body := []byte(`{"enabled":false}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/trackers/rutracker", bytes.NewReader(body))
+	req.SetPathValue("key", "rutracker")
+	w := httptest.NewRecorder()
+	srv.handlePutTracker(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	var saved map[string]map[string]any
+	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := saved["rutracker"]["credentials"].(string); got != "login_username=vasya&login_password=pw" {
+		t.Fatalf("credentials = %q, want untouched", got)
+	}
+}
+
+// у трекера без формы логина эти поля игнорируются: подставлять их некуда
+func TestPutTrackerLoginIgnoredWhenTrackerHasNoForm(t *testing.T) {
+	store := &fakeStore{}
+	srv := newTestServer(store)
+
+	body := []byte(`{"login":"vasya","password":"pw"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/trackers/nnm", bytes.NewReader(body))
+	req.SetPathValue("key", "nnm")
+	w := httptest.NewRecorder()
+	srv.handlePutTracker(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	var saved map[string]map[string]any
+	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := saved["nnm"]["credentials"]; ok {
+		t.Errorf("credentials must stay unset, got %v", saved["nnm"]["credentials"])
+	}
+}
+
+// effective() в бою отдаёт конфиг с уже наложенным оверлеем из БД, поэтому
+// тестам, где важна текущая строка credentials, мало положить её в fakeStore
+func newTrackerTestServer(store *fakeStore, key, credentials string) *Server {
+	return New(store, func() {}, func() config.App {
+		cfg := testEffective()
+		cfg.Tracker = registry.ConfigDefaults()
+		if it := cfg.Tracker.ByKey(key); it != nil {
+			it.Credentials = credentials
+		}
+		return cfg
+	}, ":0", runner.NewState(), nil)
+}
+
+// JSON null это "поля нет", а не "пустая строка": без отдельной проверки
+// json.Unmarshal молча отдал бы "" и затёр сохранённый пароль
+func TestApplyTrackerLoginIgnoresJSONNull(t *testing.T) {
+	cfg := testEffective()
+	cfg.Tracker = registry.ConfigDefaults()
+	cfg.Tracker.ByKey("rutracker").Credentials = "login_username=vasya&login_password=pw"
+
+	out, err := applyTrackerLogin(cfg, "rutracker", json.RawMessage(`{"login":null,"password":null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(out, &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body["credentials"]; ok {
+		t.Fatalf("credentials must stay untouched, got %v", body["credentials"])
+	}
+	if _, ok := body["login"]; ok {
+		t.Error("login must be stripped from the patch")
+	}
+}
+
+func TestApplyTrackerLoginAcceptsEmptyStringAsErase(t *testing.T) {
+	cfg := testEffective()
+	cfg.Tracker = registry.ConfigDefaults()
+	cfg.Tracker.ByKey("rutracker").Credentials = "login_username=vasya&login_password=pw"
+
+	out, err := applyTrackerLogin(cfg, "rutracker", json.RawMessage(`{"password":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(out, &body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["credentials"].(string); got != "login_username=vasya&login_password=" {
+		t.Fatalf("credentials = %q, want the password cleared", got)
 	}
 }

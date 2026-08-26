@@ -420,10 +420,6 @@
   margin-bottom: 4px;
 }
 
-.tracker-form .form-hint {
-  margin-top: 4px;
-}
-
 .tracker-save-row {
   margin-top: 18px;
 }
@@ -728,7 +724,7 @@
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 20px;
+  gap: var(--form-row-gap);
 }
 
 /* у самого ряда нет нижнего отступа, а у групп внутри он снят, поэтому два
@@ -971,7 +967,7 @@
 .form-hint {
   font-size: 13px;
   color: var(--text-empty);
-  margin-top: 8px;
+  margin-top: var(--form-hint-gap);
 }
 
 .form-divider {
@@ -1285,4 +1281,40 @@
   font-size: 13px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* расширенные настройки трекера прячет CSS, а не перерисовка карточки: поля
+   остаются в DOM, поэтому несохранённые правки в них не теряются */
+:root:not([data-advanced]) .tracker-advanced {
+  display: none;
+}
+
+
+/* логин с паролем стоят своим рядом на две колонки: в общей сетке карточки они
+   занимали по трети ширины, а подсказка соседа рвала выравнивание */
+.form-row-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* подсказка ряда занимает всю его ширину отдельной ячейкой: внутри группы она
+   добавляла ей высоты, и соседние поля вставали выше по вертикали */
+.form-row > .form-row-hint {
+  grid-column: 1 / -1;
+  /* ячейка грида отбита от полей всем row-gap ряда, поэтому подсказка стояла
+     втрое дальше от своего поля, чем подсказки внутри групп: гасим gap и
+     оставляем тот же отступ, что у них */
+  margin-top: calc(var(--form-hint-gap) - var(--form-row-gap));
+}
+
+/* поля расписания стоят по три в ряд: ряд из двух полей оставляет место
+   справа, а не растягивает их на всю ширину карточки. auto-fit этого не умеет,
+   он схлопывает пустые треки и делит ширину между тем, что есть */
+#view-schedule .form-row:not(.form-row-pair) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  #view-schedule .form-row:not(.form-row-pair) {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
 }
