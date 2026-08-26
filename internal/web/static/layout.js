@@ -16,21 +16,10 @@ export let layoutWasMobile = false;
 export function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', t);
-  document.querySelectorAll('.theme-toggle').forEach(function (btn) {
-    btn.setAttribute('aria-pressed', t === 'dark' ? 'true' : 'false');
-  });
   try {
     localStorage.setItem(THEME_KEY, t);
   } catch (_) { /* ponytail: localStorage может быть недоступен */ }
 }
-
-export function initTheme() {
-  const theme = document.documentElement.getAttribute('data-theme');
-  document.querySelectorAll('.theme-toggle').forEach(function (btn) {
-    btn.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
-  });
-}
-
 
 export function loadSidebarCollapsedPref() {
   try {
@@ -247,12 +236,6 @@ export function initLayout() {
     });
   });
 
-  document.querySelectorAll('.theme-toggle').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      const current = document.documentElement.getAttribute('data-theme');
-      applyTheme(current === 'dark' ? 'light' : 'dark');
-    });
-  });
   const mobileMenuBtn = document.getElementById('mobile-menu-btn');
   if (mobileMenuBtn) {
     mobileMenuBtn.addEventListener('click', function () {

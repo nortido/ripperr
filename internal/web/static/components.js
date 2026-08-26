@@ -245,8 +245,8 @@ export function initPasswordToggles(root) {
         (!input.classList.contains('input-secure') && input.type === 'text');
       const iconEl = btn.querySelector('[data-icon]');
       if (iconEl) {
-        iconEl.setAttribute('data-icon', nowVisible ? 'eyeOff' : 'eye');
-        iconEl.innerHTML = ICONS[nowVisible ? 'eyeOff' : 'eye'];
+        iconEl.setAttribute('data-icon', nowVisible ? 'eye' : 'eyeHidden');
+        iconEl.innerHTML = ICONS[nowVisible ? 'eye' : 'eyeHidden'];
       }
       btn.setAttribute('aria-label', t(nowVisible ? 'trackers.hideCredentials' : 'trackers.showCredentials'));
     });

@@ -310,11 +310,6 @@ body:has(.app.page-scaled) {
   padding: 10px;
 }
 
-.app.sidebar-collapsed .theme-toggle .theme-icon-light,
-.app.sidebar-collapsed .theme-toggle .theme-icon-dark {
-  margin: 0;
-}
-
 .app.sidebar-collapsed .main {
   margin-left: var(--sidebar-w-collapsed);
 }
@@ -442,11 +437,6 @@ body:has(.app.page-scaled) {
 
   .nav-link:not(.active):hover .nav-icon[data-icon="logs"] {
     color: var(--hue-cyan);
-  }
-
-  .nav-link:not(.active):hover .nav-icon[data-icon="sun"],
-  .nav-link:not(.active):hover .nav-icon[data-icon="moon"] {
-    color: var(--hue-teal);
   }
 }
 

@@ -1206,20 +1206,6 @@
   color: var(--hue-pink);
 }
 
-/* переключатель темы */
-
-.theme-toggle .theme-icon-dark {
-  display: none;
-}
-
-[data-theme="dark"] .theme-toggle .theme-icon-dark {
-  display: inline-flex;
-}
-
-[data-theme="dark"] .theme-toggle .theme-icon-light {
-  display: none;
-}
-
 /* разное */
 
 .text-muted {
