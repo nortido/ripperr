@@ -177,3 +177,105 @@ func TestStateStoppingClearedByReset(t *testing.T) {
 		t.Fatal("Reset must clear stopping")
 	}
 }
+
+func TestStateItemQueueAndCurrent(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Begin(gen)
+	s.Begin(gen)
+	s.Enqueue(gen, "aaa")
+	s.Enqueue(gen, "bbb")
+
+	queued, total := s.QueuedItems(10)
+	if total != 2 || len(queued) != 2 {
+		t.Fatalf("queued=%v total=%d, want 2 hashes", queued, total)
+	}
+
+	s.StartItem(gen, 1, "aaa")
+	queued, total = s.QueuedItems(10)
+	if total != 1 || len(queued) != 1 || queued[0] != "bbb" {
+		t.Fatalf("queued=%v total=%d, want only bbb", queued, total)
+	}
+	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "aaa" {
+		t.Fatalf("checking=%v, want [aaa]", cur)
+	}
+
+	// запись остаётся подсвеченной, пока воркер трекера не возьмёт следующую:
+	// между записями он спит паузу лимита, и гасить подсветку там не за что
+	s.End(gen)
+	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "aaa" {
+		t.Fatalf("checking=%v after End, want [aaa]", cur)
+	}
+
+	s.StartItem(gen, 1, "bbb")
+	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "bbb" {
+		t.Fatalf("checking=%v, want [bbb]", cur)
+	}
+}
+
+func TestStateItemsClearedWhenRunFinishes(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Begin(gen)
+	s.Enqueue(gen, "aaa")
+	s.StartItem(gen, 2, "aaa")
+
+	s.End(gen)
+	if cur := s.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking=%v after run finished, want empty", cur)
+	}
+	if _, total := s.QueuedItems(10); total != 0 {
+		t.Fatalf("queued total=%d after run finished, want 0", total)
+	}
+}
+
+func TestStateQueuedItemsCap(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	for _, h := range []string{"a", "b", "c"} {
+		s.Enqueue(gen, h)
+	}
+	queued, total := s.QueuedItems(2)
+	if total != 3 || len(queued) != 2 {
+		t.Fatalf("queued=%v total=%d, want 2 of 3", queued, total)
+	}
+}
+
+func TestStateUnqueueDropsPending(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Enqueue(gen, "aaa")
+	s.Unqueue(gen, "aaa")
+	if _, total := s.QueuedItems(10); total != 0 {
+		t.Fatalf("queued total=%d, want 0", total)
+	}
+}
+
+func TestStateItemsClearedByReset(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Begin(gen)
+	s.Enqueue(gen, "aaa")
+	s.StartItem(gen, 1, "aaa")
+	s.Reset()
+	if cur := s.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking=%v after Reset, want empty", cur)
+	}
+	if _, total := s.QueuedItems(10); total != 0 {
+		t.Fatalf("queued total=%d after Reset, want 0", total)
+	}
+}
+
+func TestStateStartItemIgnoresStaleGeneration(t *testing.T) {
+	s := NewState()
+	stale := s.Reset()
+	s.Reset()
+	s.StartItem(stale, 1, "aaa")
+	s.Enqueue(stale, "bbb")
+	if cur := s.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking=%v after stale StartItem, want empty", cur)
+	}
+	if _, total := s.QueuedItems(10); total != 0 {
+		t.Fatalf("queued total=%d after stale Enqueue, want 0", total)
+	}
+}

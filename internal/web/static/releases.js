@@ -8,6 +8,27 @@ import { formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, st
 export let planForceLocal = Object.create(null);
 export let ignoreHashesCache = null;
 
+let checkingHashes = new Set();
+let queuedHashes = new Set();
+
+// подсветка идёт от опроса статуса, а таблица перерисовывается своим циклом,
+// поэтому набор хранится тут и накладывается обоими путями
+export function setCheckProgress(checking, queued) {
+  checkingHashes = new Set(checking || []);
+  queuedHashes = new Set(queued || []);
+  applyCheckProgress();
+}
+
+function applyCheckProgress(root) {
+  const scope = root || document.getElementById('view-dashboard');
+  if (!scope) return;
+  scope.querySelectorAll('tr[data-release-hash]').forEach(function (row) {
+    const hash = row.getAttribute('data-release-hash') || '';
+    row.classList.toggle('release-row-checking', checkingHashes.has(hash));
+    row.classList.toggle('release-row-queued', !checkingHashes.has(hash) && queuedHashes.has(hash));
+  });
+}
+
 export function setIgnoreHashesCache(items) {
   ignoreHashesCache = new Set((items || []).map(function (i) { return i.url_hash; }));
 }
@@ -173,6 +194,8 @@ export function buildReleaseRows(histItems) {
     let rowClsValue = '';
     if (forced) rowClsValue = 'plan-row-force';
     if (item.broken) rowClsValue = rowClsValue ? rowClsValue + ' release-row-broken' : 'release-row-broken';
+    if (checkingHashes.has(urlHash)) rowClsValue += ' release-row-checking';
+    else if (queuedHashes.has(urlHash)) rowClsValue += ' release-row-queued';
     const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
     rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadButtonHtml(urlHash)}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);

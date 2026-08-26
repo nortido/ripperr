@@ -1047,8 +1047,8 @@ func TestWorkerSavesHistoryOnHashUnchangedWithoutErrorStreak(t *testing.T) {
 	if len(store.logs) != 1 {
 		t.Fatalf("logs = %d, want 1", len(store.logs))
 	}
-	if store.logs[0].Status != "updated" {
-		t.Fatalf("status = %q, want updated", store.logs[0].Status)
+	if store.logs[0].Status != "unchanged" {
+		t.Fatalf("status = %q, want unchanged: торрент остался на месте", store.logs[0].Status)
 	}
 	if store.logs[0].Error != "" {
 		t.Fatalf("error = %q, want empty (not counted as an error)", store.logs[0].Error)

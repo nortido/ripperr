@@ -32,13 +32,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	for i, t := range slots {
 		strSlots[i] = t.Format(time.RFC3339)
 	}
+	// хеши очереди нужны только для подсветки видимых строк, поэтому режем по
+	// пределу, а длину прохода отдаём отдельным числом
+	queued, queuedTotal := s.runnerState.QueuedItems(queuedHashLimit)
 	writeJSON(w, http.StatusOK, statusResp{
-		Now:      now.Format(time.RFC3339),
-		NextRuns: strSlots,
-		Running:  s.runnerState != nil && s.runnerState.Running(),
-		DryRun:   s.runnerState != nil && s.runnerState.DryRunning(),
-		Stopping: s.runnerState != nil && s.runnerState.Stopping(),
-		Alerts:   statusAlerts(s.alerts),
+		Now:         now.Format(time.RFC3339),
+		NextRuns:    strSlots,
+		Running:     s.runnerState != nil && s.runnerState.Running(),
+		DryRun:      s.runnerState != nil && s.runnerState.DryRunning(),
+		Stopping:    s.runnerState != nil && s.runnerState.Stopping(),
+		Checking:    emptyIfNil(s.runnerState.CheckingItems()),
+		Queued:      emptyIfNil(queued),
+		QueuedTotal: queuedTotal,
+		Alerts:      statusAlerts(s.alerts),
 	})
 }
 
@@ -131,4 +137,15 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, runResp{Started: true})
+}
+
+// queuedHashLimit ограничивает список хешей очереди в ответе: подсветить нужно
+// только строки открытой страницы, а полный проход это тысячи записей.
+const queuedHashLimit = 500
+
+func emptyIfNil(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }

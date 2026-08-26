@@ -188,6 +188,7 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 			return
 		}
 		e := tk.entry
+		h.state.StartItem(h.gen, ttid, e.URLHash)
 		var err error
 		func() {
 			defer h.state.End(h.gen)
@@ -383,9 +384,11 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 			break
 		}
 		h.state.Begin(h.gen)
+		h.state.Enqueue(h.gen, entries[i].URLHash)
 		p.rep.add()
 		select {
 		case <-ctx.Done():
+			h.state.Unqueue(h.gen, entries[i].URLHash)
 			h.state.End(h.gen)
 			p.rep.done()
 			return nil
@@ -550,7 +553,9 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 					return saveErr
 				}
 			}
-			h.logCheck(ctx, e, ttid, "updated", "", rep)
+			// статус тот же, что у обычного unchanged: перезаливки не было,
+			// и в списке обновлённых такой записи делать нечего
+			h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 			return nil
 		}
 		err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
@@ -565,9 +570,6 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 	}
 	if rep == nil {
 		logger.Info(fmt.Sprint("updated: ", e.Name))
-		// уведомление привязано к состоявшейся перезаливке, а не к статусу в
-		// check_log: исход ErrHashUnchanged тоже пишется как updated, но там
-		// торрент остался на месте и сообщать пользователю не о чем
 		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL, e.Poster))
 	}
 	h.logCheck(ctx, e, ttid, "updated", "", rep)

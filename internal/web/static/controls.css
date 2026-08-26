@@ -1252,3 +1252,37 @@
   height: 16px;
 }
 
+
+/* строка, которую воркер трекера взял в работу прямо сейчас: пульсирующая
+   полоса слева, тем же приёмом, что и у битых, чтобы не спорить с их окантовкой */
+.table-dash-releases tr.release-row-checking .col-name {
+  box-shadow: inset 2px 0 0 var(--success);
+  animation: release-row-checking-pulse 1.5s ease-in-out infinite;
+}
+
+.table-dash-releases tr.release-row-checking {
+  background: var(--success-bg);
+}
+
+@keyframes release-row-checking-pulse {
+  0%, 100% { box-shadow: inset 2px 0 0 var(--success); }
+  50% { box-shadow: inset 2px 0 0 transparent; }
+}
+
+/* запись стоит в очереди этого прохода: полоса приглушённая и без движения,
+   иначе десятки строк мигали бы разом */
+.table-dash-releases tr.release-row-queued .col-name {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table-dash-releases tr.release-row-checking .col-name {
+    animation: none;
+  }
+}
+
+.run-status-left {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

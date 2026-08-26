@@ -6,7 +6,7 @@ import { hydrateIcons } from './icons.js';
 import { refreshLogs } from './logs.js';
 import { bindMobileNameSearch, bindNameFilter, buildMobileNameSearchSlot, buildNameColumnHeader, openNameFilterWrap } from './namefilter.js';
 import { createPoller } from './poller.js';
-import { bindDashboardReleaseRows, buildReleaseRows, buildTimeColumnHeader, isUrlIgnored, planItemForced, setIgnoreHashesCache, syncPlanForceLocal, updateDashboardTable } from './releases.js';
+import { bindDashboardReleaseRows, buildReleaseRows, buildTimeColumnHeader, isUrlIgnored, planItemForced, setCheckProgress, setIgnoreHashesCache, syncPlanForceLocal, updateDashboardTable } from './releases.js';
 import { applyDashboardFilter, currentView } from './router.js';
 import { openCustomSelect } from './select.js';
 import { historyState } from './state.js';
@@ -27,6 +27,7 @@ export let runPendingTimer = null;
 export let dashboardRunning = false;
 export let dashboardServerRunning = false;
 export let dashboardDryRun = false;
+let dashboardQueuedTotal = 0;
 
 export let dashboardFetchGen = 0;
 // импортированные привязки только на чтение, поэтому другие модули двигают поколение через это
@@ -107,7 +108,7 @@ export function updateRunStatusUI(running) {
   const runBtn = document.getElementById('dash-run-btn');
   const stopBtn = document.getElementById('dash-stop-btn');
   if (statusEl) {
-    statusEl.innerHTML = html`<span class="run-status-dot${running ? ' run-status-dot-active' : ''}"></span><span class="run-status-label">${running ? (dashboardDryRun ? t('dash.statusDryRunning') : t('dash.statusRunning')) : t('dash.statusIdle')}</span>`;
+    statusEl.innerHTML = html`<span class="run-status-dot${running ? ' run-status-dot-active' : ''}"></span><span class="run-status-label">${running ? (dashboardDryRun ? t('dash.statusDryRunning') : t('dash.statusRunning')) : t('dash.statusIdle')}</span>${running && dashboardQueuedTotal > 0 ? html`<span class="run-status-left">${t('dash.statusLeft', { count: dashboardQueuedTotal })}</span>` : ''}`;
   }
   if (runBtn) {
     if (stopPending) {
@@ -170,6 +171,8 @@ export async function pollDashboardStatus() {
     if (status.running) setRunPending(false);
     setStopPending(!!status.stopping);
     dashboardDryRun = !!status.dry_run;
+    dashboardQueuedTotal = status.queued_total || 0;
+    setCheckProgress(status.checking, status.queued);
     applyRunStatus(effectiveRunning(status.running));
     updateNextRunCard(status.next_runs || []);
     updateDashboardAlerts(status.alerts || []);
@@ -411,6 +414,8 @@ export function renderDashboard(el, status, history, stats) {
   dashboardServerRunning = !!status.running;
   setStopPending(!!status.stopping);
   dashboardDryRun = !!status.dry_run;
+  dashboardQueuedTotal = status.queued_total || 0;
+  setCheckProgress(status.checking, status.queued);
   updateRunStatusUI(effectiveRunning(status.running));
   setDashboardAlerts(status.alerts || []);
 

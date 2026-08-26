@@ -24,12 +24,15 @@ type alertResp struct {
 }
 
 type statusResp struct {
-	Now      string      `json:"now"`
-	NextRuns []string    `json:"next_runs"`
-	Running  bool        `json:"running"`
-	DryRun   bool        `json:"dry_run"`
-	Stopping bool        `json:"stopping"`
-	Alerts   []alertResp `json:"alerts"`
+	Now         string      `json:"now"`
+	NextRuns    []string    `json:"next_runs"`
+	Running     bool        `json:"running"`
+	DryRun      bool        `json:"dry_run"`
+	Stopping    bool        `json:"stopping"`
+	Checking    []string    `json:"checking"`
+	Queued      []string    `json:"queued"`
+	QueuedTotal int         `json:"queued_total"`
+	Alerts      []alertResp `json:"alerts"`
 }
 
 type logEntryResp struct {
