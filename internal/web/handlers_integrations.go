@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"trackerr/internal/config"
+	"trackerr/internal/helper"
 	"trackerr/internal/manager"
 	"trackerr/internal/manager/client/qbittorrent"
 	"trackerr/internal/manager/client/transmission"
@@ -28,8 +28,8 @@ func (s *Server) handleGetIntegrations(w http.ResponseWriter, r *http.Request) {
 // ponytail: переменные пакета, чтобы тесты подменяли Telegram без реального вызова, тот же приём, что и managerClientFactory
 var telegramChatIDResolver = notify.ResolveChatID
 
-var sendNotification = func(ctx context.Context, cfg notify.Config, ev notify.Event) error {
-	return notify.New(cfg).Send(ctx, ev)
+var sendNotification = func(ctx context.Context, cfg notify.Config, proxyURL string, ev notify.Event) error {
+	return notify.New(cfg, proxyURL).Send(ctx, ev)
 }
 
 func (s *Server) handlePutIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +76,7 @@ func (s *Server) resolveTelegramChatID(ctx context.Context, body json.RawMessage
 	if *token == cfg.Notify.TelegramToken && cfg.Notify.TelegramChatID != "" {
 		return body, nil
 	}
-	chatID, err := telegramChatIDResolver(ctx, *token)
+	chatID, err := telegramChatIDResolver(ctx, *token, cfg.Runner.DownloadProxy)
 	if err != nil {
 		return nil, err
 	}
@@ -160,14 +160,14 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 		if cfg.Notify.TelegramToken != "" && cfg.Notify.TelegramChatID == "" {
-			chatID, err := telegramChatIDResolver(ctx, cfg.Notify.TelegramToken)
+			chatID, err := telegramChatIDResolver(ctx, cfg.Notify.TelegramToken, cfg.Runner.DownloadProxy)
 			if err != nil {
 				s.testResult(w, err)
 				return
 			}
 			cfg.Notify.TelegramChatID = chatID
 		}
-		s.testResult(w, sendNotification(ctx, notify.Config(cfg.Notify), notify.Event{Kind: notify.KindTest, Text: "trackerr: connectivity test"}))
+		s.testResult(w, sendNotification(ctx, notify.Config(cfg.Notify), cfg.Runner.DownloadProxy, notify.Event{Kind: notify.KindTest, Text: "trackerr: connectivity test"}))
 	default:
 		writeError(w, http.StatusBadRequest, "kind must be qbit, transmission, flaresolverr, proxy, or notify")
 	}
@@ -341,7 +341,7 @@ func testFlaresolverr(cfg config.App) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: helper.DirectTransport()}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -361,13 +361,9 @@ func testProxy(cfg config.App) error {
 	if err := settings.ValidateDownloadProxy(proxyURL); err != nil {
 		return err
 	}
-	u, err := url.Parse(proxyURL)
-	if err != nil {
-		return err
-	}
 	client := &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: &http.Transport{Proxy: http.ProxyURL(u)},
+		Transport: helper.ProxyTransport(proxyURL),
 	}
 	resp, err := client.Get("https://example.com")
 	if err != nil {

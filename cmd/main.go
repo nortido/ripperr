@@ -52,6 +52,12 @@ func main() {
 		return
 	}
 	baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
+	// из БД адрес режет ValidateDownloadProxy при сохранении, а из env он приходит
+	// как есть: без схемы ProxyTransport молча вернул бы прямое соединение
+	if err := settings.ValidateDownloadProxy(baseCfg.Runner.DownloadProxy); err != nil {
+		logger.Error("RUNNER_DOWNLOAD_PROXY: " + err.Error())
+		return
+	}
 	logger.SetLevel(baseCfg.Log.Level)
 
 	dbConn, db, err := connectDB(ctx, baseCfg)
@@ -89,7 +95,8 @@ func main() {
 	// вызов берёт свежий конфиг через effective(), чтобы подхватить настройки,
 	// сохранённые уже после старта
 	breakerAlerts.SetHook(func(open bool, tracker, errMsg string) {
-		n := notify.New(notify.Config(effective().Notify))
+		ecfg := effective()
+		n := notify.New(notify.Config(ecfg.Notify), ecfg.Runner.DownloadProxy)
 		if open {
 			n.Notify(notify.TrackerDownEvent(tracker, errMsg))
 		} else {

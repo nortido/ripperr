@@ -56,16 +56,16 @@ func TestTrackerDownEventCarriesErrorText(t *testing.T) {
 }
 
 func TestHasTransport(t *testing.T) {
-	if New(Config{}).HasTransport() {
+	if New(Config{}, "").HasTransport() {
 		t.Error("empty config should have no transport")
 	}
-	if New(Config{TelegramToken: "tok"}).HasTransport() {
+	if New(Config{TelegramToken: "tok"}, "").HasTransport() {
 		t.Error("token without chat id should have no transport")
 	}
-	if !New(Config{TelegramToken: "tok", TelegramChatID: "1"}).HasTransport() {
+	if !New(Config{TelegramToken: "tok", TelegramChatID: "1"}, "").HasTransport() {
 		t.Error("token+chat id should have a transport")
 	}
-	if !New(Config{WebhookURL: "http://example.com"}).HasTransport() {
+	if !New(Config{WebhookURL: "http://example.com"}, "").HasTransport() {
 		t.Error("webhook url should have a transport")
 	}
 }
@@ -86,7 +86,7 @@ func TestSendWebhookBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n := New(Config{WebhookURL: srv.URL, Enabled: true}, "")
 	ev := Event{Kind: KindUpdated, Text: "some release", URL: "https://example.com/x"}
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestSendTelegramWhenTokenAndChatIDSet(t *testing.T) {
 	defer srv.Close()
 	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	if err := n.Send(context.Background(), Event{Kind: KindUpdated, Text: "hi"}); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestNotifySkipsWhenDisabled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(Config{WebhookURL: srv.URL, Enabled: false})
+	n := New(Config{WebhookURL: srv.URL, Enabled: false}, "")
 	n.Notify(Event{Kind: KindUpdated, Text: "should not send"})
 
 	// wants() проверяется синхронно ещё до того, как Notify запустит горутину
@@ -158,7 +158,7 @@ func TestNotifyDeliversAsync(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n := New(Config{WebhookURL: srv.URL, Enabled: true}, "")
 	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
 
 	select {
@@ -182,7 +182,7 @@ func TestResolveChatIDPicksLastMessage(t *testing.T) {
 	defer srv.Close()
 	telegramGetUpdatesURL = srv.URL + "/bot%s/getUpdates"
 
-	got, err := ResolveChatID(context.Background(), "tok")
+	got, err := ResolveChatID(context.Background(), "tok", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestResolveChatIDEmptyResultHintsAtStart(t *testing.T) {
 	defer srv.Close()
 	telegramGetUpdatesURL = srv.URL + "/bot%s/getUpdates"
 
-	_, err := ResolveChatID(context.Background(), "tok")
+	_, err := ResolveChatID(context.Background(), "tok", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -221,7 +221,7 @@ func TestResolveChatIDOKFalseReturnsDescription(t *testing.T) {
 	defer srv.Close()
 	telegramGetUpdatesURL = srv.URL + "/bot%s/getUpdates"
 
-	_, err := ResolveChatID(context.Background(), "tok")
+	_, err := ResolveChatID(context.Background(), "tok", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -241,7 +241,7 @@ func TestResolveChatIDConflictStatusVisibleInError(t *testing.T) {
 	defer srv.Close()
 	telegramGetUpdatesURL = srv.URL + "/bot%s/getUpdates"
 
-	_, err := ResolveChatID(context.Background(), "tok")
+	_, err := ResolveChatID(context.Background(), "tok", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -257,7 +257,7 @@ func TestSendErrorOn4xxIncludesBodySnippet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n := New(Config{WebhookURL: srv.URL, Enabled: true}, "")
 	err := n.Send(context.Background(), Event{Kind: KindUpdated, Text: "x"})
 	if err == nil {
 		t.Fatal("expected error")
@@ -288,7 +288,7 @@ func TestNotifyRetriesWebhookOn5xxThenSucceeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n := New(Config{WebhookURL: srv.URL, Enabled: true}, "")
 	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
 
 	select {
@@ -313,7 +313,7 @@ func TestNotifyDoesNotRetryWebhookOn4xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n := New(Config{WebhookURL: srv.URL, Enabled: true}, "")
 	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
 
 	select {
@@ -372,7 +372,7 @@ func TestNotifyRetriesOnlyTheFailingTransport(t *testing.T) {
 		TelegramChatID: "1",
 		WebhookURL:     "http://" + ln.Addr().String(),
 		Enabled:        true,
-	})
+	}, "")
 	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
 
 	for i := 0; i < 2; i++ {
@@ -410,7 +410,7 @@ func TestSendDoesNotRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(Config{WebhookURL: srv.URL, Enabled: true})
+	n := New(Config{WebhookURL: srv.URL, Enabled: true}, "")
 	if err := n.Send(context.Background(), Event{Kind: KindUpdated, Text: "hi"}); err == nil {
 		t.Fatal("expected error")
 	}
@@ -437,7 +437,7 @@ func TestSendTelegramUsesPhotoWhenImageSet(t *testing.T) {
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := UpdatedEvent("Some.Release", "https://example.com/t1", "http://127.0.0.1:1/poster.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -477,7 +477,7 @@ func TestSendTelegramFallsBackToMessageWhenPhotoRejected(t *testing.T) {
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := UpdatedEvent("Some.Release", "https://example.com/t1", "http://127.0.0.1:1/dead.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatalf("photo failure must not fail the whole send: %v", err)
@@ -507,7 +507,7 @@ func TestTelegramCaptionTruncatedToLimit(t *testing.T) {
 	defer srv.Close()
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := Event{Kind: KindUpdated, Text: strings.Repeat("я", 2000), ImageURL: "http://127.0.0.1:1/poster.jpg"}
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -551,7 +551,7 @@ func TestSendTelegramUploadsImageBytes(t *testing.T) {
 	defer srv.Close()
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := UpdatedEvent("Some.Release", "https://example.com/t1", img.URL+"/poster.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -589,7 +589,7 @@ func TestSendTelegramFallsBackToURLWhenImageNotFetchable(t *testing.T) {
 	defer srv.Close()
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := UpdatedEvent("Some.Release", "https://example.com/t1", img.URL+"/poster.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -614,7 +614,7 @@ func TestTelegramMessageLinksSubjectInsteadOfBareURL(t *testing.T) {
 	defer srv.Close()
 	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := UpdatedEvent("Some.Release.2026", "https://example.com/forum/viewtopic.php?t=1", "")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -645,7 +645,7 @@ func TestTelegramMessageEscapesNameForHTML(t *testing.T) {
 	defer srv.Close()
 	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := UpdatedEvent("Release <b> & (2026) [x_264]", "https://example.com/t?a=1&b=2", "")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -676,7 +676,7 @@ func TestTelegramEventsWithoutSubjectStayPlain(t *testing.T) {
 	defer srv.Close()
 	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	if err := n.Send(context.Background(), TrackerDownEvent("rutracker", "connection refused")); err != nil {
 		t.Fatal(err)
 	}
@@ -713,7 +713,7 @@ func TestTelegramCaptionTrimsNameNotMarkup(t *testing.T) {
 	defer srv.Close()
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true})
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
 	ev := UpdatedEvent(strings.Repeat("я", 2000), "https://example.com/t1", img.URL+"/poster.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)

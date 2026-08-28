@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -225,6 +226,12 @@ func (c *Client) getClient() (err error) {
 		Username: c.config.Username,
 		Password: c.config.Password,
 	})
+	// qbt ставит своему транспорту http.ProxyFromEnvironment, а торрент-клиент стоит
+	// рядом и через прокси ходить не должен: имя хоста в docker-сети Go из прокси не
+	// исключает, в отличие от localhost
+	if tr, ok := c.client.GetHTTPClient().Transport.(*http.Transport); ok {
+		tr.Proxy = nil
+	}
 	err = c.client.Login()
 
 	return

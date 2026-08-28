@@ -90,6 +90,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		CheckRedirect: redirectPolicy,
 		Jar:           cj,
 		Timeout:       time.Duration(cfg.Runner.HttpTimeout) * time.Second,
+		Transport:     helper.ProxyTransport(cfg.Runner.DownloadProxy),
 	}
 	downloadHt, err = tlsclient.New(tlsclient.Config{
 		Timeout:  time.Duration(cfg.Runner.DownloadTimeout) * time.Second,
@@ -104,7 +105,8 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Timeout: time.Duration(cfg.Flaresolverr.MaxTimeout)*time.Millisecond + 30*time.Second,
+		Timeout:   time.Duration(cfg.Flaresolverr.MaxTimeout)*time.Millisecond + 30*time.Second,
+		Transport: helper.DirectTransport(),
 	}, &proxyModel.Config{
 		Flaresolverr: proxyModel.ItemConfig{
 			URL:        cfg.Flaresolverr.Host,
@@ -128,7 +130,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		return err
 	}
 
-	rn := runner.NewRunner(tr, manager.NewManager(mc), db, handlerCfg, runnerState, notify.New(notify.Config(cfg.Notify)))
+	rn := runner.NewRunner(tr, manager.NewManager(mc), db, handlerCfg, runnerState, notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy))
 
 	bhDone := make(chan struct{})
 	go func() {

@@ -62,8 +62,9 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Jar:     cj,
-		Timeout: time.Duration(cfg.Runner.HttpTimeout) * time.Second,
+		Jar:       cj,
+		Timeout:   time.Duration(cfg.Runner.HttpTimeout) * time.Second,
+		Transport: helper.ProxyTransport(cfg.Runner.DownloadProxy),
 	}
 	downloadHC, err := tlsclient.New(tlsclient.Config{
 		Timeout:  time.Duration(cfg.Runner.DownloadTimeout) * time.Second,
@@ -77,7 +78,8 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Timeout: time.Duration(cfg.Flaresolverr.MaxTimeout)*time.Millisecond + 30*time.Second,
+		Timeout:   time.Duration(cfg.Flaresolverr.MaxTimeout)*time.Millisecond + 30*time.Second,
+		Transport: helper.DirectTransport(),
 	}, &proxyModel.Config{
 		Flaresolverr: proxyModel.ItemConfig{
 			URL:        cfg.Flaresolverr.Host,
@@ -87,7 +89,7 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 
 	active := trackerActiveDomain(tr)
 	if active == "" {
-		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), defaultDomainAlive)
+		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), domainAliveWith(hc))
 	}
 	if active != tr.GetDomain() {
 		tr = withActiveDomain(tr, active)

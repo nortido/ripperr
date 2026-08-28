@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	trackerModel "trackerr/internal/model/tracker"
@@ -132,4 +135,41 @@ func TestDomainOverrideParsePosterKeepsForeignHost(t *testing.T) {
 	if got, want := d.ParsePoster(nil, false), "https://s.kinozal.tv/i/poster/1.jpg"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
+}
+
+func TestDomainAliveWithKeepsCookiesOutOfSessionJar(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "mirror", Value: "1", Path: "/"})
+	}))
+	defer srv.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc := &http.Client{Jar: jar}
+	// проба ходит по https://<domain>, поэтому подменяем транспорт на адрес сервера
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc.Transport = &redirectTransport{host: target.Host}
+
+	if !domainAliveWith(hc)(context.Background(), "mirror.example") {
+		t.Fatal("want domain alive")
+	}
+	if got := jar.Cookies(&url.URL{Scheme: "https", Host: "mirror.example"}); len(got) != 0 {
+		t.Fatalf("want empty session jar, got %v", got)
+	}
+}
+
+type redirectTransport struct {
+	host string
+}
+
+func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.URL.Scheme = "http"
+	req.URL.Host = r.host
+	return http.DefaultTransport.RoundTrip(req)
 }

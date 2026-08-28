@@ -110,8 +110,14 @@ type Notifier struct {
 	hc  *http.Client
 }
 
-func New(cfg Config) *Notifier {
-	return &Notifier{cfg: cfg, hc: &http.Client{Timeout: sendTimeout}}
+func New(cfg Config, proxyURL string) *Notifier {
+	return &Notifier{cfg: cfg, hc: newHTTPClient(proxyURL)}
+}
+
+// api.telegram.org в РФ недоступен напрямую, поэтому уведомления ходят через тот же
+// прокси, что и трекеры; пустой адрес оставляет прямое соединение
+func newHTTPClient(proxyURL string) *http.Client {
+	return &http.Client{Timeout: sendTimeout, Transport: helper.ProxyTransport(proxyURL)}
 }
 
 func (n *Notifier) HasTransport() bool {
@@ -338,8 +344,8 @@ func (n *Notifier) postPhotoUpload(ctx context.Context, img []byte, caption, par
 	return n.postBody(ctx, fmt.Sprintf(telegramPhotoURL, n.cfg.TelegramToken), mw.FormDataContentType(), buf.Bytes())
 }
 
-func ResolveChatID(ctx context.Context, token string) (string, error) {
-	hc := &http.Client{Timeout: sendTimeout}
+func ResolveChatID(ctx context.Context, token, proxyURL string) (string, error) {
+	hc := newHTTPClient(proxyURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(telegramGetUpdatesURL, token), nil)
 	if err != nil {
 		return "", err

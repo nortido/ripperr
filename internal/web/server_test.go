@@ -674,7 +674,7 @@ func TestPutIntegrationsAutoResolvesChatID(t *testing.T) {
 	origResolver := telegramChatIDResolver
 	defer func() { telegramChatIDResolver = origResolver }()
 	var gotToken string
-	telegramChatIDResolver = func(_ context.Context, token string) (string, error) {
+	telegramChatIDResolver = func(_ context.Context, token, _ string) (string, error) {
 		gotToken = token
 		res, err := http.Get(fakeTelegram.URL)
 		if err != nil {
@@ -731,7 +731,7 @@ func TestPutIntegrationsAutoResolvesChatID(t *testing.T) {
 func TestPutIntegrationsChatIDResolveFailureNotSaved(t *testing.T) {
 	origResolver := telegramChatIDResolver
 	defer func() { telegramChatIDResolver = origResolver }()
-	telegramChatIDResolver = func(context.Context, string) (string, error) {
+	telegramChatIDResolver = func(context.Context, string, string) (string, error) {
 		return "", fmt.Errorf("бот не получил ни одного сообщения, напишите ему /start и повторите")
 	}
 
@@ -758,12 +758,12 @@ func TestPostIntegrationsTestNotifyReachesSendAfterResolvingChatID(t *testing.T)
 	}()
 
 	var resolvedToken string
-	telegramChatIDResolver = func(_ context.Context, token string) (string, error) {
+	telegramChatIDResolver = func(_ context.Context, token, _ string) (string, error) {
 		resolvedToken = token
 		return "555", nil
 	}
 	var sentChatID string
-	sendNotification = func(_ context.Context, cfg notify.Config, _ notify.Event) error {
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
 		sentChatID = cfg.TelegramChatID
 		return nil
 	}

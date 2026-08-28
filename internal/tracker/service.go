@@ -404,7 +404,7 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, c
 		clientIndex:        make(map[int]*CachedTracker),
 		flareTimeoutCounts: make(map[int]int),
 		staleUseCounts:     make(map[int]int),
-		domainAlive:        defaultDomainAlive,
+		domainAlive:        domainAliveWith(hc),
 	}
 }
 

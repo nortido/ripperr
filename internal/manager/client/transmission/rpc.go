@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"trackerr/internal/helper"
 )
 
 const (
@@ -40,7 +42,7 @@ type rpcClient struct {
 
 func newRPCClient(host, username, password string) *rpcClient {
 	return &rpcClient{
-		httpClient: &http.Client{Timeout: defaultTimeout},
+		httpClient: &http.Client{Timeout: defaultTimeout, Transport: helper.DirectTransport()},
 		url:        rpcURL(host),
 		username:   username,
 		password:   password,

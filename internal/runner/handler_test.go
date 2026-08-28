@@ -1612,7 +1612,7 @@ func notifyProbe(t *testing.T) (*notify.Notifier, <-chan struct{}) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	return notify.New(notify.Config{WebhookURL: srv.URL, Enabled: true}), hits
+	return notify.New(notify.Config{WebhookURL: srv.URL, Enabled: true}, ""), hits
 }
 
 func hashUnchangedHandler(t *testing.T, mgr manager, n *notify.Notifier) (*handler, *model.Entry) {

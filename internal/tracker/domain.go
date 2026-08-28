@@ -12,33 +12,36 @@ import (
 	"trackerr/internal/tracker/client"
 )
 
+const domainProbeTimeout = 5 * time.Second
+
 type domainAliveFunc func(ctx context.Context, domain string) bool
 
-func defaultDomainAlive(ctx context.Context, domain string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+domain, nil)
-	if err != nil {
-		return false
+// проба зеркал идёт тем же клиентом, что и страницы трекера: своим она пошла бы
+// мимо прокси и признала мёртвым домен, закрытый только для прямого доступа
+func domainAliveWith(hc *http.Client) domainAliveFunc {
+	// копия без банки кук: проба ходит по зеркалам, и Set-Cookie чужого домена не
+	// должен оседать там же, где живёт залогиненная сессия трекера
+	probe := *hc
+	probe.Jar = nil
+	return func(ctx context.Context, domain string) bool {
+		ctx, cancel := context.WithTimeout(ctx, domainProbeTimeout)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+domain, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := probe.Do(req)
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return true
 	}
-	hc := &http.Client{
-		Timeout: 5 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := hc.Do(req)
-	if err != nil {
-		return false
-	}
-	_ = resp.Body.Close()
-	return true
 }
 
 func selectActiveDomain(ctx context.Context, primary string, mirrors []string, alive domainAliveFunc) string {
 	if len(mirrors) == 0 {
 		return primary
-	}
-	if alive == nil {
-		alive = defaultDomainAlive
 	}
 	if alive(ctx, primary) {
 		return primary
