@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"trackerr/internal/helper"
+	proxyModel "trackerr/internal/model/proxy"
 	trackerModel "trackerr/internal/model/tracker"
 	"trackerr/internal/tracker/client"
 )
@@ -15,6 +17,8 @@ import (
 const domainProbeTimeout = 5 * time.Second
 
 type domainAliveFunc func(ctx context.Context, domain string) bool
+
+type domainProbe func(tr client.ITracker) domainAliveFunc
 
 // проба зеркал идёт тем же клиентом, что и страницы трекера: своим она пошла бы
 // мимо прокси и признала мёртвым домен, закрытый только для прямого доступа
@@ -36,6 +40,22 @@ func domainAliveWith(hc *http.Client) domainAliveFunc {
 		}
 		_ = resp.Body.Close()
 		return true
+	}
+}
+
+// у flare-трекера страницу тянет FlareSolverr со своим выходом в сеть, а не наш прокси:
+// пробу такого домена шлём напрямую, иначе прокси признаёт живым домен, на котором
+// FlareSolverr валится на каждом запросе, а до зеркал дело уже не доходит
+func domainProbeWith(hc *http.Client) domainProbe {
+	proxied := domainAliveWith(hc)
+	direct := *hc
+	direct.Transport = helper.DirectTransport()
+	viaFlare := domainAliveWith(&direct)
+	return func(tr client.ITracker) domainAliveFunc {
+		if tr.GetProxyType() == proxyModel.TypeFlare {
+			return viaFlare
+		}
+		return proxied
 	}
 }
 

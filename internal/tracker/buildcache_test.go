@@ -33,7 +33,7 @@ func newBuildCacheService(registry map[int]client.ITracker) *service {
 		clientIndex:        make(map[int]*CachedTracker),
 		flareTimeoutCounts: make(map[int]int),
 		staleUseCounts:     make(map[int]int),
-		domainAlive:        func(context.Context, string) bool { return true },
+		domainAlive:        func(client.ITracker) domainAliveFunc { return func(context.Context, string) bool { return true } },
 	}
 }
 

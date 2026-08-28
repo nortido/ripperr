@@ -744,3 +744,32 @@ func stripTags(s string) string {
 		s = s[:open] + s[open+closed+1:]
 	}
 }
+
+func TestErrorsHideTelegramToken(t *testing.T) {
+	const token = "123456:AAsecret-token"
+	orig := telegramGetUpdatesURL
+	defer func() { telegramGetUpdatesURL = orig }()
+	// закрытый сервер: *url.Error печатает URL целиком, вместе с токеном в пути
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	telegramGetUpdatesURL = srv.URL + "/bot%s/getUpdates"
+	srv.Close()
+
+	_, err := ResolveChatID(context.Background(), token, "")
+	if err == nil {
+		t.Fatal("want error from closed server")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("token leaked into error: %s", err)
+	}
+
+	n := New(Config{Enabled: true, TelegramToken: token, TelegramChatID: "1"}, "")
+	origAPI := telegramAPIURL
+	defer func() { telegramAPIURL = origAPI }()
+	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
+	if err = n.Send(context.Background(), Event{Kind: KindTest, Text: "x"}); err == nil {
+		t.Fatal("want error from closed server")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("token leaked into error: %s", err)
+	}
+}

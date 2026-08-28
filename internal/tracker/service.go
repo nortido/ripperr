@@ -46,7 +46,7 @@ type service struct {
 	handlerRegistry    map[int]client.ITracker
 	cbCfg              *helper.CircuitBreakerConfig
 	alerts             *breakeralerts.Registry
-	domainAlive        domainAliveFunc
+	domainAlive        domainProbe
 }
 
 func (s *service) GetID(link string) (id int) {
@@ -326,7 +326,7 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 	}
 	active := trackerActiveDomain(tr)
 	if active == "" {
-		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), s.domainAlive)
+		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), s.domainAlive(tr))
 	}
 	if active != tr.GetDomain() {
 		logger.Info(fmt.Sprintf("tracker %s: using mirror %s", tr.GetName(), active))
@@ -404,7 +404,7 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, c
 		clientIndex:        make(map[int]*CachedTracker),
 		flareTimeoutCounts: make(map[int]int),
 		staleUseCounts:     make(map[int]int),
-		domainAlive:        domainAliveWith(hc),
+		domainAlive:        domainProbeWith(hc),
 	}
 }
 

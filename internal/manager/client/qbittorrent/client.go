@@ -15,6 +15,7 @@ import (
 	qbt "github.com/autobrr/go-qbittorrent"
 	"golang.org/x/sync/errgroup"
 
+	"trackerr/internal/helper"
 	"trackerr/internal/helper/magnetmeta"
 	"trackerr/internal/helper/torrentmeta"
 	"trackerr/internal/manager/blackhole"
@@ -229,8 +230,13 @@ func (c *Client) getClient() (err error) {
 	// qbt ставит своему транспорту http.ProxyFromEnvironment, а торрент-клиент стоит
 	// рядом и через прокси ходить не должен: имя хоста в docker-сети Go из прокси не
 	// исключает, в отличие от localhost
-	if tr, ok := c.client.GetHTTPClient().Transport.(*http.Transport); ok {
+	hc := c.client.GetHTTPClient()
+	if tr, ok := hc.Transport.(*http.Transport); ok {
 		tr.Proxy = nil
+	} else {
+		// чужой тип транспорта оставил бы ProxyFromEnvironment, а с ним пароль от
+		// веб-морды ушёл бы в прокси, поэтому подменяем транспорт целиком
+		hc.Transport = helper.DirectTransport()
 	}
 	err = c.client.Login()
 

@@ -344,7 +344,8 @@ func (n *Notifier) postPhotoUpload(ctx context.Context, img []byte, caption, par
 	return n.postBody(ctx, fmt.Sprintf(telegramPhotoURL, n.cfg.TelegramToken), mw.FormDataContentType(), buf.Bytes())
 }
 
-func ResolveChatID(ctx context.Context, token, proxyURL string) (string, error) {
+func ResolveChatID(ctx context.Context, token, proxyURL string) (_ string, err error) {
+	defer func() { err = redactToken(err, token) }()
 	hc := newHTTPClient(proxyURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(telegramGetUpdatesURL, token), nil)
 	if err != nil {
@@ -411,7 +412,8 @@ func (n *Notifier) post(ctx context.Context, url string, body []byte) error {
 	return n.postBody(ctx, url, "application/json", body)
 }
 
-func (n *Notifier) postBody(ctx context.Context, url, contentType string, body []byte) error {
+func (n *Notifier) postBody(ctx context.Context, url, contentType string, body []byte) (err error) {
+	defer func() { err = redactToken(err, n.cfg.TelegramToken) }()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -437,4 +439,17 @@ type statusError struct {
 
 func (e *statusError) Error() string {
 	return fmt.Sprintf("status %d: %s", e.status, e.body)
+}
+
+// токен лежит в пути telegram-адреса, а *url.Error печатает URL целиком, поэтому
+// без вырезания он утекал в лог и в ответ POST /api/integrations/test
+func redactToken(err error, token string) error {
+	if err == nil || token == "" {
+		return err
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, token) {
+		return err
+	}
+	return errors.New(strings.ReplaceAll(msg, token, "***"))
 }

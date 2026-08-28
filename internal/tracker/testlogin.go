@@ -89,7 +89,7 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 
 	active := trackerActiveDomain(tr)
 	if active == "" {
-		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), domainAliveWith(hc))
+		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), domainProbeWith(hc)(tr))
 	}
 	if active != tr.GetDomain() {
 		tr = withActiveDomain(tr, active)

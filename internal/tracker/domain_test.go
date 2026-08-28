@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"testing"
 
+	proxyModel "trackerr/internal/model/proxy"
 	trackerModel "trackerr/internal/model/tracker"
 	"trackerr/internal/tracker/client"
 	"trackerr/internal/tracker/client/kinozal"
@@ -165,11 +166,39 @@ func TestDomainAliveWithKeepsCookiesOutOfSessionJar(t *testing.T) {
 
 type redirectTransport struct {
 	host string
+	hits int
 }
 
 func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.hits++
 	req = req.Clone(req.Context())
 	req.URL.Scheme = "http"
 	req.URL.Host = r.host
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestDomainProbeKeepsFlareTrackerOffTrackerProxy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &redirectTransport{host: target.Host}
+	probe := domainProbeWith(&http.Client{Transport: rt})
+
+	plain := &stubTracker{Tracker: trackerModel.Tracker{ProxyType: proxyModel.TypeNone}}
+	if !probe(plain)(context.Background(), "mirror.example") {
+		t.Fatal("want domain alive")
+	}
+	if rt.hits != 1 {
+		t.Fatalf("обычный трекер должен пробоваться клиентом трекера, hits=%d", rt.hits)
+	}
+
+	// у flare-трекера свой выход в сеть, проба через прокси трекера соврала бы
+	flare := &stubTracker{Tracker: trackerModel.Tracker{ProxyType: proxyModel.TypeFlare}}
+	_ = probe(flare)(context.Background(), "mirror.invalid")
+	if rt.hits != 1 {
+		t.Fatalf("проба flare-трекера ушла транспортом трекера, hits=%d", rt.hits)
+	}
 }

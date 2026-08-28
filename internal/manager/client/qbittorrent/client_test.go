@@ -224,3 +224,21 @@ func TestAddFromBuffer_WaitsForDeleteRace(t *testing.T) {
 		t.Fatalf("expected at least 3 info polls (wait for delete), got %d", infoCalls.Load())
 	}
 }
+
+func TestGetClientNeverProxiesTorrentClient(t *testing.T) {
+	// прокси из окружения увёл бы пароль от веб-морды оператору прокси, а сам
+	// торрент-клиент стоит рядом с приложением
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
+	srv := newStubServer(t, nil, func(http.ResponseWriter, *http.Request) {})
+
+	c := &Client{config: model.ManagerConfig{Host: srv.URL, Username: "u", Password: "p"}}
+	// ошибка логина здесь не важна, транспорт настраивается до неё
+	_ = c.getClient()
+	tr, ok := c.client.GetHTTPClient().Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("want *http.Transport, got %T", c.client.GetHTTPClient().Transport)
+	}
+	if tr.Proxy != nil {
+		t.Fatal("qbit client still resolves a proxy")
+	}
+}
