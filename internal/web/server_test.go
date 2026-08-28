@@ -2111,3 +2111,64 @@ func TestApplyTrackerLoginAcceptsEmptyStringAsErase(t *testing.T) {
 		t.Fatalf("credentials = %q, want the password cleared", got)
 	}
 }
+
+func TestPostIntegrationsTestNotifyKeepsSavedChatID(t *testing.T) {
+	origResolver := telegramChatIDResolver
+	origSend := sendNotification
+	defer func() {
+		telegramChatIDResolver = origResolver
+		sendNotification = origSend
+	}()
+
+	var resolved bool
+	telegramChatIDResolver = func(context.Context, string, string) (string, error) {
+		resolved = true
+		return "999", nil
+	}
+	var sentChatID string
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+		sentChatID = cfg.TelegramChatID
+		return nil
+	}
+
+	// форма шлёт только токен, поэтому сохранённый chat id должен пережить проверку,
+	// иначе getUpdates отвечает "бот не получил ни одного сообщения" на живом боте
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Notify.TelegramToken = "tok"
+		cfg.Notify.TelegramChatID = "180688465"
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+	body := []byte(`{"kind":"notify","config":{"telegram":{"bot_token":"tok"},"webhook":{"url":""},"enabled":true}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleTestIntegration(w, req)
+
+	var resp testResultResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("ok = false, error: %s", resp.Error)
+	}
+	if resolved {
+		t.Error("resolver called although chat id is already known")
+	}
+	if sentChatID != "180688465" {
+		t.Errorf("send reached with chat_id = %q, want the saved one", sentChatID)
+	}
+
+	// новый токен: старый chat id принадлежит другому боту, его надо вычислить заново
+	resolved = false
+	body = []byte(`{"kind":"notify","config":{"telegram":{"bot_token":"other"},"webhook":{"url":""},"enabled":true}}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader(body))
+	w = httptest.NewRecorder()
+	srv.handleTestIntegration(w, req)
+	if !resolved {
+		t.Error("resolver not called after the token changed")
+	}
+	if sentChatID != "999" {
+		t.Errorf("send reached with chat_id = %q, want 999", sentChatID)
+	}
+}

@@ -254,8 +254,15 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 		if err := json.Unmarshal(raw, &c); err != nil {
 			return cfg, err
 		}
+		// chat id вычисляет сервер, форма его не присылает: при том же токене берём
+		// сохранённый, при смене токена сбрасываем, чтобы он определился заново
+		if c.Telegram.BotToken != cfg.Notify.TelegramToken {
+			cfg.Notify.TelegramChatID = ""
+		}
+		if c.Telegram.ChatID != "" {
+			cfg.Notify.TelegramChatID = c.Telegram.ChatID
+		}
 		cfg.Notify.TelegramToken = c.Telegram.BotToken
-		cfg.Notify.TelegramChatID = c.Telegram.ChatID
 		cfg.Notify.WebhookURL = c.Webhook.URL
 		cfg.Notify.Enabled = c.Enabled
 	default:
