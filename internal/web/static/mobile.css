@@ -46,12 +46,20 @@ html.mobile-layout .table-dash-releases .release-title-wrap {
   overflow-wrap: anywhere;
 }
 
+/* чипы уехали в нижний ряд, к дате: название остаётся сплошным текстом */
 html.mobile-layout .table-dash-releases .release-foot {
-  display: inline;
+  display: none;
 }
 
-html.mobile-layout .table-dash-releases .release-foot .tracker-badge {
-  margin-left: 6px;
+html.mobile-layout .table-dash-releases .release-meta {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* чипы не жмём: обрезанное "rutra..." читается хуже, чем перенос на вторую строку */
+html.mobile-layout .table-dash-releases .release-meta .tracker-badge {
+  flex: 0 0 auto;
+  max-width: none;
 }
 
 /* col-time и plan-recheck-cell взаимоисключающи (режим сортировки выбирает одну),
@@ -62,7 +70,12 @@ html.mobile-layout .table-dash-releases .plan-recheck-cell {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
+  row-gap: 6px;
   padding: 0;
+  /* ширина колонки от десктопной таблицы, а в карточке ячейка занимает свой ряд */
+  width: auto;
+  max-width: none;
   height: auto;
   border: none;
   font-size: 13px;

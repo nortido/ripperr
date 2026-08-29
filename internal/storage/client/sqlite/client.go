@@ -166,7 +166,7 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 	join, clause, args := checkLogFilterClause(f)
 	countQ := "SELECT COUNT(*) FROM " + from + join
 	listQ := `SELECT c.id, c.checked_at, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
-	          h.recheck_at, COALESCE(h.force_check, 0)
+	          COALESCE(h.category_name, ''), h.recheck_at, COALESCE(h.force_check, 0)
 	          FROM ` + from + join
 	countQ += clause
 	listQ += clause
@@ -189,7 +189,7 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 		var e storage.CheckLogEntry
 		var checkedAt int64
 		var recheckAt sql.NullInt64
-		if err = rows.Scan(&e.ID, &checkedAt, &e.URLHash, &e.ItemName, &e.ItemURL, &e.TrackerTypeID, &e.Status, &e.Error, &e.ErrorStreak, &recheckAt, &e.ForceCheck); err != nil {
+		if err = rows.Scan(&e.ID, &checkedAt, &e.URLHash, &e.ItemName, &e.ItemURL, &e.TrackerTypeID, &e.Status, &e.Error, &e.ErrorStreak, &e.Category, &recheckAt, &e.ForceCheck); err != nil {
 			return nil, 0, err
 		}
 		e.CheckedAt = time.Unix(checkedAt, 0)
@@ -397,4 +397,37 @@ func New(db *sql.DB) *Client {
 	return &Client{
 		db: db,
 	}
+}
+
+// категорию выключили в настройках, значит её релизы больше не проверяются: без
+// чистки они висят в плане неотличимо от живых, а форс на них молча ничего не делает
+func (c *Client) PurgeCategoriesExcept(ctx context.Context, allowed []string) (int64, error) {
+	if len(allowed) == 0 {
+		return 0, nil
+	}
+	args := make([]any, 0, len(allowed))
+	for _, a := range allowed {
+		args = append(args, a)
+	}
+	// пустая категория остаётся: это не выключенная категория, а неизвестная
+	cond := `category_name IS NOT NULL AND category_name <> '' AND category_name NOT IN (` +
+		strings.TrimSuffix(strings.Repeat("?,", len(allowed)), ",") + `)`
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM check_log WHERE url_hash IN (SELECT url_hash FROM history WHERE `+cond+`)`, args...); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM history WHERE `+cond, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
 }

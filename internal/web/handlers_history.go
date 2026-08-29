@@ -94,6 +94,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			Status:      e.Status,
 			Error:       e.Error,
 			ErrorStreak: e.ErrorStreak,
+			Category:    e.Category,
 			// порог живёт в настройках расписания, поэтому флаг вычисляется
 			// здесь, а не выводится заново каждым клиентом
 			Broken:     f.BrokenStreak >= 1 && e.ErrorStreak >= f.BrokenStreak,

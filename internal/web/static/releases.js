@@ -139,7 +139,11 @@ export function updateReleaseRow(hash, force) {
   if (recheckCell) {
     const dateShort = recheckCell.getAttribute('data-recheck-short') || '';
     const dateFull = recheckCell.getAttribute('data-recheck-full') || '';
-    recheckCell.innerHTML = planRecheckSpanHtml(dateShort, dateFull, isUrlIgnored(hash));
+    // подменяем только текст даты: рядом в ячейке лежат чипы, и innerHTML стёр бы их
+    const textEl = recheckCell.querySelector('.plan-recheck-text');
+    const nextHtml = planRecheckSpanHtml(dateShort, dateFull, isUrlIgnored(hash));
+    if (textEl) textEl.outerHTML = nextHtml;
+    else recheckCell.innerHTML = nextHtml;
   }
   const btn = row.querySelector('.btn-plan-force');
   if (btn) updatePlanForceButton(btn, hash, forced);
@@ -164,15 +168,24 @@ function planRecheckSpanHtml(short, full, ignored) {
 }
 
 export function releaseTimeCellHtml(item) {
+  const meta = releaseMetaHtml(item);
   if (historyState.sort === 'recheck') {
     const recheckShort = formatTableTime(item.recheck_at);
     const recheckFull = formatDateTime(item.recheck_at);
     const ignored = isUrlIgnored(item.url_hash || '');
-    return html`<td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}">${planRecheckSpanHtml(recheckShort, recheckFull, ignored)}</td>`;
+    return html`<td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}">${planRecheckSpanHtml(recheckShort, recheckFull, ignored)}${meta}</td>`;
   }
   const timeShort = formatTableTime(item.checked_at);
   const timeFull = formatDateTime(item.checked_at);
-  return html`<td class="col-time" title="${timeFull}">${timeShort}</td>`;
+  return html`<td class="col-time"><span class="col-time-text" title="${timeFull}">${timeShort}</span>${meta}</td>`;
+}
+
+// чипы дублируются рядом с датой: в мобильной вёрстке колонка трекера скрыта, и
+// внизу карточки они встают в ряд с датой, а не разрывают название
+function releaseMetaHtml(item) {
+  const category = (item.category || '').trim();
+  const categoryBadge = category ? trackerBadgeHtml(category) : '';
+  return html`<span class="release-meta">${trackerBadgeHtml(item.tracker_name)}${categoryBadge}</span>`;
 }
 
 export function buildReleaseRows(histItems) {

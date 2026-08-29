@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -37,6 +38,8 @@ type fakeStore struct {
 	summary          storage.CheckLogSummary
 	resetStreakCalls []string
 	forceAllFilter   storage.CheckLogFilter
+	purgedCategories []string
+	purgedRows       int64
 }
 
 func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
@@ -206,6 +209,11 @@ func (f *fakeStore) CheckLogSummary(context.Context) (storage.CheckLogSummary, e
 
 func (f *fakeStore) GetTracker(context.Context, int) (*tracker.Tracker, error) {
 	return &tracker.Tracker{}, nil
+}
+
+func (f *fakeStore) PurgeCategoriesExcept(_ context.Context, allowed []string) (int64, error) {
+	f.purgedCategories = allowed
+	return f.purgedRows, nil
 }
 
 func (f *fakeStore) Ping(context.Context) error {
@@ -2170,5 +2178,27 @@ func TestPostIntegrationsTestNotifyKeepsSavedChatID(t *testing.T) {
 	}
 	if sentChatID != "999" {
 		t.Errorf("send reached with chat_id = %q, want 999", sentChatID)
+	}
+}
+
+func TestPutSchedulePurgesDisabledCategories(t *testing.T) {
+	store := &fakeStore{purgedRows: 3}
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Runner.AllowedCategories = []string{"radarr", "sonarr"}
+		return cfg
+	}
+	srv := New(store, func() {}, effective, ":0", runner.NewState(), nil)
+
+	body := []byte(`{"start_hour":8,"list_refresh_per_day":4,"threshold_month":1,"threshold_half_year":2,"threshold_year":3,"monitored_categories":["radarr","sonarr"]}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/schedule", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handlePutSchedule(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	// релизы выключенной категории иначе висят в плане, а форс на них молчит
+	if !slices.Equal(store.purgedCategories, []string{"radarr", "sonarr"}) {
+		t.Fatalf("purge called with %v, want the monitored categories", store.purgedCategories)
 	}
 }

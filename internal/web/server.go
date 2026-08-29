@@ -31,6 +31,7 @@ type store interface {
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 	ForceCheckAll(ctx context.Context, force bool, f storage.CheckLogFilter) (hashes []string, n int64, err error)
 	GetTracker(ctx context.Context, trackerID int) (*tracker.Tracker, error)
+	PurgeCategoriesExcept(ctx context.Context, allowed []string) (int64, error)
 }
 
 type Server struct {

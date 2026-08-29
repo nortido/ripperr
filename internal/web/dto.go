@@ -68,6 +68,7 @@ type historyItemResp struct {
 	Status      string `json:"status"`
 	Error       string `json:"error"`
 	ErrorStreak int    `json:"error_streak"`
+	Category    string `json:"category"`
 	Broken      bool   `json:"broken"`
 	RecheckAt   string `json:"recheck_at"`
 	ForceCheck  bool   `json:"force_check"`

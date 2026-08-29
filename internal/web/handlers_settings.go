@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"trackerr/internal/settings"
+	"trackerr/internal/system/logger"
 	trackerPkg "trackerr/internal/tracker"
 	"trackerr/internal/tracker/registry"
 )
@@ -27,6 +29,14 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 	if err = settings.MergeSchedule(r.Context(), s.db, body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// категории читаем из применённого конфига, а не из патча: список мог прийти
+	// и из env, и правило "проверяем только это" должно чистить план целиком
+	cfg := s.effective()
+	if n, err := s.db.PurgeCategoriesExcept(r.Context(), cfg.Runner.AllowedCategories); err != nil {
+		logger.Warn("purge disabled categories: " + err.Error())
+	} else if n > 0 {
+		logger.Info(fmt.Sprintf("purged %d releases of disabled categories", n))
 	}
 	s.reload()
 	w.WriteHeader(http.StatusNoContent)

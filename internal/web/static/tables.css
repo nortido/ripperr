@@ -104,7 +104,8 @@
   display: inline;
 }
 
-.table-dash-releases .release-foot {
+.table-dash-releases .release-foot,
+.table-dash-releases .release-meta {
   display: none;
 }
 

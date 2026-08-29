@@ -525,3 +525,52 @@ func TestForceCheckAllCountsOnlyChangedRows(t *testing.T) {
 		t.Fatalf("cleared rows = %d, want 2 (h2 was not forced)", n)
 	}
 }
+
+func TestPurgeCategoriesExcept(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	seed := []struct{ hash, name, category string }{
+		{"h1", "Movie A", "radarr"},
+		{"h2", "Show B", "sonarr"},
+		{"h3", "Album C", "lidarr"},
+		{"h4", "Unknown D", ""},
+	}
+	for _, s := range seed {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Category: s.category, Name: s.name}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: s.hash, ItemName: s.name, Status: "unchanged"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// пустой список это "категории не ограничены", чистить нечего
+	if n, err := c.PurgeCategoriesExcept(ctx, nil); err != nil || n != 0 {
+		t.Fatalf("empty allow list: n=%d err=%v, want 0 nil", n, err)
+	}
+
+	n, err := c.PurgeCategoriesExcept(ctx, []string{"radarr", "sonarr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("purged %d, want 1 (lidarr)", n)
+	}
+
+	entries, _, err := c.ListCheckLog(ctx, storage.CheckLogFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// h4 с пустой категорией остаётся: она не выключена, она неизвестна
+	if got, want := hashesOf(entries), []string{"h1", "h2", "h4"}; !slices.Equal(got, want) {
+		t.Fatalf("check_log = %v, want %v", got, want)
+	}
+	items, err := c.ListItems(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("history has %d rows, want 3", len(items))
+	}
+}
