@@ -1,6 +1,7 @@
 /* мобильные строки таблицы в столбик */
 
-html.mobile-layout .table-dash-releases .col-tracker {
+html.mobile-layout .table-dash-releases .col-tracker,
+html.mobile-layout .table-dash-releases .col-category {
   display: none;
 }
 

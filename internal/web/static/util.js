@@ -146,7 +146,8 @@ export function pageSizeQueryLimit(size) {
 export function trackerBadgeHtml(name) {
   const label = name || t('common.emDash');
   const idx = trackerNameHueIndex(label);
-  return html`<span class="tracker-badge tracker-badge-hue-${idx}">${label}</span>`;
+  // имя в title: в узкой колонке чип обрезается многоточием, и это единственный способ дочитать
+  return html`<span class="tracker-badge tracker-badge-hue-${idx}" title="${label}">${label}</span>`;
 }
 
 

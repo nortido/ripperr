@@ -202,10 +202,10 @@ td.plan-recheck-cell {
   }
 
   /* .table. как у базового правила выше, иначе оно перебивает эту ширину
-     своей более высокой специфичностью и колонка остаётся 84px */
+     своей более высокой специфичностью и колонка остаётся 48px */
   .table.table-dash-releases .col-status {
-    width: 100px;
-    max-width: 100px;
+    width: 76px;
+    max-width: 76px;
   }
 
   .table-dash-releases .col-time {

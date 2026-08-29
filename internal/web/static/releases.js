@@ -180,12 +180,15 @@ export function releaseTimeCellHtml(item) {
   return html`<td class="col-time"><span class="col-time-text" title="${timeFull}">${timeShort}</span>${meta}</td>`;
 }
 
+function categoryBadgeHtml(item) {
+  const category = (item.category || '').trim();
+  return category ? trackerBadgeHtml(category) : '';
+}
+
 // чипы дублируются рядом с датой: в мобильной вёрстке колонка трекера скрыта, и
 // внизу карточки они встают в ряд с датой, а не разрывают название
 function releaseMetaHtml(item) {
-  const category = (item.category || '').trim();
-  const categoryBadge = category ? trackerBadgeHtml(category) : '';
-  return html`<span class="release-meta">${trackerBadgeHtml(item.tracker_name)}${categoryBadge}</span>`;
+  return html`<span class="release-meta">${trackerBadgeHtml(item.tracker_name)}${categoryBadgeHtml(item)}</span>`;
 }
 
 export function buildReleaseRows(histItems) {
@@ -211,7 +214,7 @@ export function buildReleaseRows(histItems) {
     else if (queuedHashes.has(urlHash)) rowClsValue += ' release-row-queued';
     const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
-    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadButtonHtml(urlHash)}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
+    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadButtonHtml(urlHash)}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
   });
   return html`${rows}`;
 }

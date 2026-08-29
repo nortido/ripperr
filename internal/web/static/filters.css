@@ -1096,16 +1096,46 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   table-layout: fixed;
 }
 
+/* две колонки, но склеенные: ширина у каждой под своё содержимое, а не доля
+   таблицы, поэтому между чипами остаётся зазор в 12px, а не пустой хвост колонки.
+   Мерка это максимум из самого длинного значения и заголовка: у трекера длиннее
+   имя (rutracker), у категории заголовок */
 .table-dash-releases .col-tracker {
-  width: 128px;
-  max-width: 128px;
+  width: 92px;
+  max-width: 92px;
   vertical-align: middle;
   white-space: nowrap;
+  padding-left: 20px;
+  padding-right: 0;
 }
 
-.table-dash-releases .col-tracker .tracker-badge {
+.table-dash-releases .col-category {
+  width: 96px;
+  max-width: 96px;
+  vertical-align: middle;
+  white-space: nowrap;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.table-dash-releases td.col-name {
+  padding-right: 12px;
+}
+
+.table-dash-releases .col-status {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* время сразу за статусом: базовые 20px с обеих сторон складывались в провал */
+.table-dash-releases td.col-time,
+.table-dash-releases td.plan-recheck-cell {
+  padding-left: 8px;
+}
+
+.table-dash-releases .col-tracker .tracker-badge,
+.table-dash-releases .col-category .tracker-badge {
   margin-left: 0;
-  max-width: none;
 }
 
 .table-dash-releases .col-time {
@@ -1198,7 +1228,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 }
 
 @media (min-width: 561px) and (max-width: 900px) {
-  html:not(.mobile-layout) .table-dash-releases .col-tracker {
+  html:not(.mobile-layout) .table-dash-releases .col-tracker,
+  html:not(.mobile-layout) .table-dash-releases .col-category {
     display: none;
   }
 
@@ -1287,7 +1318,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   .table-dash-releases th.col-status,
   .table-dash-releases th.col-time,
   .table-dash-releases th.plan-recheck-cell,
-  .table-dash-releases th.col-tracker {
+  .table-dash-releases th.col-tracker,
+  .table-dash-releases th.col-category {
     font-size: 10px;
     letter-spacing: 0.01em;
     padding-left: 8px;
@@ -1297,8 +1329,15 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   /* паддинг задан и для td: выше он сужается только у th, и чип трекера
      оставался на исходных 20px, уезжая вправо от названия колонки */
   .table-dash-releases .col-tracker {
-    width: 112px;
-    max-width: 112px;
+    width: 80px;
+    max-width: 80px;
+    padding-left: 8px;
+    padding-right: 0;
+  }
+
+  .table-dash-releases .col-category {
+    width: 88px;
+    max-width: 88px;
     padding-left: 8px;
     padding-right: 8px;
   }
