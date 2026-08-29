@@ -1,3 +1,11 @@
+/* iOS зумит страницу при фокусе на поле мельче 16px и назад её уже не отпускает:
+   после этого приложение выглядит уехавшим */
+html.mobile-layout input,
+html.mobile-layout select,
+html.mobile-layout textarea {
+  font-size: 16px;
+}
+
 /* мобильные строки таблицы в столбик */
 
 html.mobile-layout .table-dash-releases .col-tracker,

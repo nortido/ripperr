@@ -62,17 +62,24 @@ export function saveSidebarCollapsedPref(collapsed) {
   } catch (_) { /* ponytail: localStorage может быть недоступен */ }
 }
 
+// ширина макетного вьюпорта, а не window.innerWidth: на iOS тот меняется при
+// пинч-зуме и шлёт resize, из-за чего приложение пересчитывало масштаб прямо под
+// пальцами и уезжало с экрана; clientWidth зум не трогает
+export function layoutWidth() {
+  return document.documentElement.clientWidth || window.innerWidth;
+}
+
 export const SIDEBAR_WIDE_MIN = 1200;
 export let sidebarOverlayOpen = false;
 
 export function isSidebarOverlayWidth() {
-  const w = window.innerWidth;
+  const w = layoutWidth();
   return w >= 901 && w < SIDEBAR_WIDE_MIN;
 }
 
 export function effectiveSidebarCollapsed() {
-  if (window.innerWidth <= 900) return false;
-  if (window.innerWidth < SIDEBAR_WIDE_MIN) return true;
+  if (layoutWidth() <= 900) return false;
+  if (layoutWidth() < SIDEBAR_WIDE_MIN) return true;
   const pref = loadSidebarCollapsedPref();
   return pref !== null ? pref : false;
 }
@@ -156,7 +163,7 @@ export function initSidebarCollapse() {
   const btn = document.getElementById('sidebar-collapse-btn');
   if (btn) {
     btn.addEventListener('click', function () {
-      const w = window.innerWidth;
+      const w = layoutWidth();
       if (w <= 900) return;
       if (w < SIDEBAR_WIDE_MIN) {
         if (sidebarOverlayOpen) closeSidebarOverlay();
@@ -180,7 +187,7 @@ export function initSidebarCollapse() {
 export function applyMobileLayout() {
   const app = document.querySelector('.app');
   if (!app) return;
-  const w = window.innerWidth;
+  const w = layoutWidth();
   const mobile = w > 0 && w < MOBILE_LAYOUT_MAX;
   const layoutChanged = mobile !== layoutWasMobile;
   if (mobile) {
@@ -211,7 +218,7 @@ export function applyMobileLayout() {
 // кадр, что и событие resize: перенос в rAF сначала рисует боковую панель развёрнутой
 // и только потом сворачивает её. Выполняется до придушенного applyMobileLayout.
 export function syncSidebarToWidth() {
-  const mobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;
+  const mobile = layoutWidth() > 0 && layoutWidth() < MOBILE_LAYOUT_MAX;
   const sidebar = mobile !== layoutWasMobile ? document.getElementById('sidebar') : null;
   if (sidebar) sidebar.classList.add('no-anim');
   refreshSidebarLayout();
@@ -249,7 +256,7 @@ export function openMobileMenu() {
 
 export function initLayout() {
   initSidebarCollapse();
-  layoutWasMobile = window.innerWidth > 0 && window.innerWidth < MOBILE_LAYOUT_MAX;
+  layoutWasMobile = layoutWidth() > 0 && layoutWidth() < MOBILE_LAYOUT_MAX;
   applyMobileLayout();
   window.addEventListener('resize', function () {
     syncSidebarToWidth();
