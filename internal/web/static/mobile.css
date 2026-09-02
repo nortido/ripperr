@@ -463,3 +463,49 @@ html.mobile-layout .hist-filter-panel-body {
   gap: var(--btn-gap);
   margin-top: 16px;
 }
+
+/* в карточке .col-name это только верхняя ячейка сетки, и полоса статуса на ней
+   рисовалась огрызком у заголовка вместо метки всей записи: вешаем её на строку,
+   она тут grid-бокс и box-shadow на ней работает */
+html.mobile-layout .table-dash-releases tbody tr.release-row-checking .col-name,
+html.mobile-layout .table-dash-releases tbody tr.release-row-queued .col-name,
+html.mobile-layout .table-dash-releases tbody tr.release-row-broken .col-name {
+  box-shadow: none;
+  animation: none;
+}
+
+html.mobile-layout .table-dash-releases tbody tr.release-row-checking {
+  position: relative;
+}
+
+/* Safari на iOS не анимирует box-shadow строки, поэтому полоса там просто
+   висела статичной: рисуем её отдельным слоем и мигаем opacity */
+html.mobile-layout .table-dash-releases tbody tr.release-row-checking::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--success);
+  animation: release-row-checking-fade 1.5s ease-in-out infinite;
+}
+
+@keyframes release-row-checking-fade {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+html.mobile-layout .table-dash-releases tbody tr.release-row-queued {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+html.mobile-layout .table-dash-releases tbody tr.release-row-broken {
+  box-shadow: inset 2px 0 0 var(--hue-violet);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.mobile-layout .table-dash-releases tbody tr.release-row-checking::after {
+    animation: none;
+  }
+}
