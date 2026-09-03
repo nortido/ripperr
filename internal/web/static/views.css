@@ -17,6 +17,9 @@
 }
 
 .dash-header-status-block {
+  /* размер задаём на всей мета-строке: раньше статус, остаток и время были
+     14/13/12px и в одну строку читались разными шрифтами */
+  font-size: 13px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -53,7 +56,6 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
   color: var(--text-muted);
 }
 

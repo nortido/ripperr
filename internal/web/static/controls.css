@@ -498,7 +498,6 @@
 }
 
 .dash-last-updated {
-  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -1278,7 +1277,6 @@
 }
 
 .run-status-left {
-  font-size: 13px;
   color: var(--text-muted);
   white-space: nowrap;
 }

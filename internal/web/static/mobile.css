@@ -270,10 +270,6 @@ html.mobile-layout .dash-page-header .dash-header-status-block {
   min-width: 0;
 }
 
-html.mobile-layout .dash-page-header .dash-header-status-block .run-status {
-  font-size: 12px;
-}
-
 html.mobile-layout .dash-page-header .page-title {
   flex-shrink: 0;
 }
@@ -303,7 +299,6 @@ html.mobile-layout .dash-last-updated {
   white-space: nowrap;
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 12px;
 }
 
 html.mobile-layout .page-header-run-group {
