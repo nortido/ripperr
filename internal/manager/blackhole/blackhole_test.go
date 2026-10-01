@@ -15,8 +15,8 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
-	"trackerr/internal/helper/torrentmeta"
-	"trackerr/internal/model"
+	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/model"
 )
 
 // buildNamedTestTorrent параметризован именем, потому что два вызова с

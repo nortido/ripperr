@@ -10,10 +10,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"trackerr/internal/helper"
-	proxyModel "trackerr/internal/model/proxy"
-	"trackerr/internal/model/tracker"
-	"trackerr/internal/proxy"
+	"ripperr/internal/helper"
+	proxyModel "ripperr/internal/model/proxy"
+	"ripperr/internal/model/tracker"
+	"ripperr/internal/proxy"
 )
 
 const challengeSolveFailureMessage = "Error: Error solving the challenge. Message: invalid cookie domain (Session info: chrome=137.0.7151.103)"

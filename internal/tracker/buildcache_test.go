@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"trackerr/internal/helper"
-	proxyModel "trackerr/internal/model/proxy"
-	trackerModel "trackerr/internal/model/tracker"
-	"trackerr/internal/tracker/client"
-	"trackerr/internal/tracker/client/kinozal"
-	"trackerr/internal/tracker/client/rutor"
+	"ripperr/internal/helper"
+	proxyModel "ripperr/internal/model/proxy"
+	trackerModel "ripperr/internal/model/tracker"
+	"ripperr/internal/tracker/client"
+	"ripperr/internal/tracker/client/kinozal"
+	"ripperr/internal/tracker/client/rutor"
 )
 
 type buildCacheDB struct{}

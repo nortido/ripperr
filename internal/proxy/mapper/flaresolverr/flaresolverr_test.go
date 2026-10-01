@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"trackerr/internal/model/proxy"
+	"ripperr/internal/model/proxy"
 )
 
 func TestPrepareParamsOmitsEmptyCookies(t *testing.T) {

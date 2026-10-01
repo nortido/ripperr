@@ -14,15 +14,15 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/model"
-	proxyModel "trackerr/internal/model/proxy"
-	runnerModel "trackerr/internal/model/runner"
-	storageModel "trackerr/internal/model/storage"
-	"trackerr/internal/model/tracker"
-	"trackerr/internal/notify"
-	storagePkg "trackerr/internal/storage"
-	"trackerr/internal/tracker/client"
+	"ripperr/internal/helper"
+	"ripperr/internal/model"
+	proxyModel "ripperr/internal/model/proxy"
+	runnerModel "ripperr/internal/model/runner"
+	storageModel "ripperr/internal/model/storage"
+	"ripperr/internal/model/tracker"
+	"ripperr/internal/notify"
+	storagePkg "ripperr/internal/storage"
+	"ripperr/internal/tracker/client"
 )
 
 func timePtr(t time.Time) *time.Time { return &t }

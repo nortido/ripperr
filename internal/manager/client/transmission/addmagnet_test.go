@@ -10,7 +10,7 @@ import (
 
 	"github.com/anacrolix/torrent/metainfo"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 // withMagnetFetchStub подменяет magnetFetch и попутно запоминает магнит,

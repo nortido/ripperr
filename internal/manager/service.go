@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 type client interface {

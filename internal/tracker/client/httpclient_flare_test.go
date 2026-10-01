@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"testing"
 
-	"trackerr/internal/helper"
-	proxyModel "trackerr/internal/model/proxy"
-	"trackerr/internal/model/tracker"
-	"trackerr/internal/tracker/client/kinozal"
+	"ripperr/internal/helper"
+	proxyModel "ripperr/internal/model/proxy"
+	"ripperr/internal/model/tracker"
+	"ripperr/internal/tracker/client/kinozal"
 )
 
 type flareOptsTracker struct {

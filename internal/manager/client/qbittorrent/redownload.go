@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"trackerr/internal/manager/blackhole"
-	"trackerr/internal/model"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/manager/blackhole"
+	"ripperr/internal/model"
+	"ripperr/internal/system/logger"
 )
 
 const (

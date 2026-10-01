@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 type stubClient struct {

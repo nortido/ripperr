@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/tracker/client"
+	"ripperr/internal/helper"
+	"ripperr/internal/tracker/client"
 )
 
 func TestStaleOnErrorLimit(t *testing.T) {

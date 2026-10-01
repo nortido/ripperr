@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"time"
 
-	"trackerr/internal/settings"
-	"trackerr/internal/system/logger"
-	trackerPkg "trackerr/internal/tracker"
-	"trackerr/internal/tracker/registry"
+	"ripperr/internal/settings"
+	"ripperr/internal/system/logger"
+	trackerPkg "ripperr/internal/tracker"
+	"ripperr/internal/tracker/registry"
 )
 
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {

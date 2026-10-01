@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"trackerr/internal/config"
+	"ripperr/internal/config"
 )
 
 func EnsureScheme(raw, defaultScheme string) (string, error) {

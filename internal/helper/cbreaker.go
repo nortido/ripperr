@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"trackerr/internal/helper/breakeralerts"
+	"ripperr/internal/helper/breakeralerts"
 )
 
 type State int

@@ -1,4 +1,4 @@
-module trackerr
+module ripperr
 
 go 1.25.0
 

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/helper/torrentmeta"
-	"trackerr/internal/model"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/model"
+	"ripperr/internal/system/logger"
 )
 
 const (

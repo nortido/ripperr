@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/model/tracker"
 )
 
 func TestReadLimitedWithinLimit(t *testing.T) {

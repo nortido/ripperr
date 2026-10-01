@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"trackerr/internal/config"
-	"trackerr/internal/storage/client/sqlite"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/config"
+	"ripperr/internal/storage/client/sqlite"
+	"ripperr/internal/system/logger"
 )
 
 type settingsDB interface {

@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/text/encoding/charmap"
 
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/model/tracker"
 )
 
 const detailsMarkup = `<li class="tp">Характеристика</li>

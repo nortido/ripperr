@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"trackerr/internal/helper/breakeralerts"
+	"ripperr/internal/helper/breakeralerts"
 )
 
 func TestCircuitBreaker_AlertsOnOpenAndClose(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 
-	"trackerr/internal/helper/torrentmeta"
+	"ripperr/internal/helper/torrentmeta"
 )
 
 // mkdirTemp это os.MkdirTemp за переменной пакета: тесту на guard-проверку

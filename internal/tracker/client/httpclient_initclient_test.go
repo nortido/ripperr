@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/model/tracker"
 )
 
 func TestInitClientPublicSkipsLogin(t *testing.T) {

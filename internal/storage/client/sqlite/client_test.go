@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"trackerr/internal/model/storage"
+	"ripperr/internal/model/storage"
 )
 
 func newTestClient(t *testing.T) *Client {

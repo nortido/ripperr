@@ -12,8 +12,8 @@ import (
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
-	"trackerr/internal/manager/blackhole"
-	"trackerr/internal/model"
+	"ripperr/internal/manager/blackhole"
+	"ripperr/internal/model"
 )
 
 // redownloadStubServer изображает qbit ровно с одним торрентом и повторяет

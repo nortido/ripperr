@@ -12,12 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"trackerr/internal/manager"
-	"trackerr/internal/manager/client/transmission"
-	"trackerr/internal/model"
-	"trackerr/internal/model/storage"
-	storagePkg "trackerr/internal/storage"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/manager"
+	"ripperr/internal/manager/client/transmission"
+	"ripperr/internal/model"
+	"ripperr/internal/model/storage"
+	storagePkg "ripperr/internal/storage"
+	"ripperr/internal/system/logger"
 )
 
 func queryInt(r *http.Request, key string, def, min, max int) int {

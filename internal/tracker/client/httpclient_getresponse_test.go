@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/helper"
+	"ripperr/internal/model/tracker"
 )
 
 func TestGetResponseNoHeaderReturnsError(t *testing.T) {

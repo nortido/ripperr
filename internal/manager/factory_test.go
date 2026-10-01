@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 func TestNewClientUnreachableHostReturnsConnectionError(t *testing.T) {

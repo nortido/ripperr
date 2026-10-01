@@ -3,9 +3,9 @@
 package all
 
 import (
-	_ "trackerr/internal/tracker/client/kinozal"
-	_ "trackerr/internal/tracker/client/nnm"
-	_ "trackerr/internal/tracker/client/rutor"
-	_ "trackerr/internal/tracker/client/rutracker"
-	_ "trackerr/internal/tracker/client/teamhd"
+	_ "ripperr/internal/tracker/client/kinozal"
+	_ "ripperr/internal/tracker/client/nnm"
+	_ "ripperr/internal/tracker/client/rutor"
+	_ "ripperr/internal/tracker/client/rutracker"
+	_ "ripperr/internal/tracker/client/teamhd"
 )

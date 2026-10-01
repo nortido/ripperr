@@ -6,10 +6,10 @@ import (
 
 	"github.com/sethvargo/go-envconfig"
 
-	"trackerr/internal/config"
-	trackerModel "trackerr/internal/model/tracker"
-	"trackerr/internal/tracker/registry"
-	_ "trackerr/internal/tracker/registry/all"
+	"ripperr/internal/config"
+	trackerModel "ripperr/internal/model/tracker"
+	"ripperr/internal/tracker/registry"
+	_ "ripperr/internal/tracker/registry/all"
 )
 
 func TestBuiltinTrackersRegistered(t *testing.T) {

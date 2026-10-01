@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/helper"
-	proxyModel "trackerr/internal/model/proxy"
-	trackerModel "trackerr/internal/model/tracker"
-	"trackerr/internal/tracker/client"
+	"ripperr/internal/helper"
+	proxyModel "ripperr/internal/model/proxy"
+	trackerModel "ripperr/internal/model/tracker"
+	"ripperr/internal/tracker/client"
 )
 
 const domainProbeTimeout = 5 * time.Second

@@ -9,8 +9,8 @@ import (
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
-	"trackerr/internal/helper/torrentmeta"
-	"trackerr/internal/model"
+	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/model"
 )
 
 func (c *Client) IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (same bool, known bool) {

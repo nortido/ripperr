@@ -3,7 +3,7 @@ package helper
 import (
 	"strings"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 func DedupeEntriesByName(entries []*model.Entry) []*model.Entry {

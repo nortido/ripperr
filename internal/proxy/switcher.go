@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"trackerr/internal/model/proxy"
-	fmapper "trackerr/internal/proxy/mapper/flaresolverr"
+	"ripperr/internal/model/proxy"
+	fmapper "ripperr/internal/proxy/mapper/flaresolverr"
 )
 
 type IClient interface {

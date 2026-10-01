@@ -1,6 +1,6 @@
 package web
 
-import "trackerr/internal/config"
+import "ripperr/internal/config"
 
 type trackerResp struct {
 	ID  int    `json:"id"`

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"trackerr/internal/helper"
+	"ripperr/internal/helper"
 )
 
 const (

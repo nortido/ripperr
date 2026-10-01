@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"time"
 
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/model/tracker"
 )
 
 type Tracker struct {

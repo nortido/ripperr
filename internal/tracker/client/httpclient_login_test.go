@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/model/tracker"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -16,8 +16,8 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
-	"trackerr/internal/helper/torrentmeta"
-	"trackerr/internal/model"
+	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/model"
 )
 
 func withFastPresenceTimings(t *testing.T) {

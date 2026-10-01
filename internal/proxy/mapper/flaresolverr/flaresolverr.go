@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"trackerr/internal/model/proxy"
+	"ripperr/internal/model/proxy"
 )
 
 const responseOK = "ok"

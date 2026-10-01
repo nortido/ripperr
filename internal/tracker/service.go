@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/helper/breakeralerts"
-	"trackerr/internal/model/tracker"
-	"trackerr/internal/proxy"
-	"trackerr/internal/system/logger"
-	"trackerr/internal/tracker/client"
-	_ "trackerr/internal/tracker/registry/all"
+	"ripperr/internal/helper"
+	"ripperr/internal/helper/breakeralerts"
+	"ripperr/internal/model/tracker"
+	"ripperr/internal/proxy"
+	"ripperr/internal/system/logger"
+	"ripperr/internal/tracker/client"
+	_ "ripperr/internal/tracker/registry/all"
 )
 
 const TTL = time.Hour

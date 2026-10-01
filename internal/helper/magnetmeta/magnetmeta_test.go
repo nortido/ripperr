@@ -13,7 +13,7 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
-	"trackerr/internal/helper/torrentmeta"
+	"ripperr/internal/helper/torrentmeta"
 )
 
 func buildTestTorrentBytes(t *testing.T) []byte {

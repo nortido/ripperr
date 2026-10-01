@@ -5,7 +5,7 @@ import (
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 func (c *Client) WriteBlackholePair(data []byte, magnet string, opts model.ManagerAddFileOptions) error {

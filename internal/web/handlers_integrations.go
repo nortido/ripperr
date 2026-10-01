@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/config"
-	"trackerr/internal/helper"
-	"trackerr/internal/manager"
-	"trackerr/internal/manager/client/qbittorrent"
-	"trackerr/internal/manager/client/transmission"
-	"trackerr/internal/model"
-	"trackerr/internal/notify"
-	"trackerr/internal/settings"
+	"ripperr/internal/config"
+	"ripperr/internal/helper"
+	"ripperr/internal/manager"
+	"ripperr/internal/manager/client/qbittorrent"
+	"ripperr/internal/manager/client/transmission"
+	"ripperr/internal/model"
+	"ripperr/internal/notify"
+	"ripperr/internal/settings"
 )
 
 func (s *Server) handleGetIntegrations(w http.ResponseWriter, r *http.Request) {

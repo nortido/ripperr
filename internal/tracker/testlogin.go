@@ -9,15 +9,15 @@ import (
 	"net/http/cookiejar"
 	"time"
 
-	"trackerr/internal/config"
-	"trackerr/internal/helper"
-	"trackerr/internal/helper/tlsclient"
-	proxyModel "trackerr/internal/model/proxy"
-	trackerModel "trackerr/internal/model/tracker"
-	"trackerr/internal/proxy"
-	"trackerr/internal/settings"
-	"trackerr/internal/tracker/client"
-	"trackerr/internal/tracker/registry"
+	"ripperr/internal/config"
+	"ripperr/internal/helper"
+	"ripperr/internal/helper/tlsclient"
+	proxyModel "ripperr/internal/model/proxy"
+	trackerModel "ripperr/internal/model/tracker"
+	"ripperr/internal/proxy"
+	"ripperr/internal/settings"
+	"ripperr/internal/tracker/client"
+	"ripperr/internal/tracker/registry"
 )
 
 var (

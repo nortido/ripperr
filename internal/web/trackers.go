@@ -3,10 +3,10 @@ package web
 import (
 	"encoding/json"
 
-	"trackerr/internal/config"
-	"trackerr/internal/helper/formcreds"
-	"trackerr/internal/settings"
-	"trackerr/internal/tracker/registry"
+	"ripperr/internal/config"
+	"ripperr/internal/helper/formcreds"
+	"ripperr/internal/settings"
+	"ripperr/internal/tracker/registry"
 )
 
 func trackerName(id int) string {

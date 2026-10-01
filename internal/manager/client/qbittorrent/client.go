@@ -15,12 +15,12 @@ import (
 	qbt "github.com/autobrr/go-qbittorrent"
 	"golang.org/x/sync/errgroup"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/helper/magnetmeta"
-	"trackerr/internal/helper/torrentmeta"
-	"trackerr/internal/manager/blackhole"
-	"trackerr/internal/model"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/helper"
+	"ripperr/internal/helper/magnetmeta"
+	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/manager/blackhole"
+	"ripperr/internal/model"
+	"ripperr/internal/system/logger"
 )
 
 var (

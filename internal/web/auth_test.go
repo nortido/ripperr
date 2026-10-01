@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"trackerr/internal/config"
-	"trackerr/internal/runner"
+	"ripperr/internal/config"
+	"ripperr/internal/runner"
 )
 
 type countingSettingStore struct {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"trackerr/internal/config"
-	trackerModel "trackerr/internal/model/tracker"
+	"ripperr/internal/config"
+	trackerModel "ripperr/internal/model/tracker"
 )
 
 // Def это всё, что ядру нужно знать о трекере: его номер и ключ, значения по

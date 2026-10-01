@@ -18,7 +18,7 @@ vendor:
 	go mod vendor
 
 build:
-	@docker buildx build --platform linux/amd64 -t nortido/trackerr:latest .
+	@docker buildx build --platform linux/amd64 -t nortido/ripperr:latest .
 
 build-arm:
-	@docker buildx build --platform linux/arm64 -t trackerr:arm .
+	@docker buildx build --platform linux/arm64 -t ripperr:arm .

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"trackerr/internal/helper"
+	"ripperr/internal/helper"
 )
 
 const cmdDestroySession = "sessions.destroy"

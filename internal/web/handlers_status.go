@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"time"
 
-	"trackerr/internal/config"
-	"trackerr/internal/helper/breakeralerts"
-	"trackerr/internal/runner"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/config"
+	"ripperr/internal/helper/breakeralerts"
+	"ripperr/internal/runner"
+	"ripperr/internal/system/logger"
 )
 
 func (s *Server) scheduleLoc(cfg config.App) *time.Location {

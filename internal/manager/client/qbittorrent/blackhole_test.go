@@ -17,9 +17,9 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 	qbt "github.com/autobrr/go-qbittorrent"
 
-	"trackerr/internal/helper/torrentmeta"
-	"trackerr/internal/manager/blackhole"
-	"trackerr/internal/model"
+	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/manager/blackhole"
+	"ripperr/internal/model"
 )
 
 // buildNamedTestTorrent это buildTestTorrent (client_test.go), параметризованный

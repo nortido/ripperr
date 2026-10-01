@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"trackerr/internal/config"
-	"trackerr/internal/helper/breakeralerts"
-	"trackerr/internal/model/storage"
-	"trackerr/internal/model/tracker"
-	"trackerr/internal/runner"
+	"ripperr/internal/config"
+	"ripperr/internal/helper/breakeralerts"
+	"ripperr/internal/model/storage"
+	"ripperr/internal/model/tracker"
+	"ripperr/internal/runner"
 )
 
 //go:embed static/*

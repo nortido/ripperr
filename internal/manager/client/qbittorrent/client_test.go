@@ -16,7 +16,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 	qbt "github.com/autobrr/go-qbittorrent"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 func newStubServer(t *testing.T, torrents []qbt.Torrent, propsHandler http.HandlerFunc) *httptest.Server {

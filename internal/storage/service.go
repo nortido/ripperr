@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/model/runner"
-	"trackerr/internal/model/storage"
-	"trackerr/internal/model/tracker"
-	"trackerr/internal/storage/client/sqlite"
+	"ripperr/internal/helper"
+	"ripperr/internal/model/runner"
+	"ripperr/internal/model/storage"
+	"ripperr/internal/model/tracker"
+	"ripperr/internal/storage/client/sqlite"
 )
 
 type Service struct {

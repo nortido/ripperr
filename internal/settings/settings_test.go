@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"trackerr/internal/config"
+	"ripperr/internal/config"
 )
 
 type fakeSettingsDB struct {

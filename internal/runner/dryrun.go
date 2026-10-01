@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"trackerr/internal/system/logger"
+	"ripperr/internal/system/logger"
 )
 
 const dryRunLimit = 30

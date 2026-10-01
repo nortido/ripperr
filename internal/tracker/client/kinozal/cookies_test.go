@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/model/tracker"
 )
 
 func TestLoginAuthIncomplete(t *testing.T) {

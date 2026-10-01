@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/helper/magnetmeta"
-	"trackerr/internal/helper/torrentmeta"
-	"trackerr/internal/manager/blackhole"
-	"trackerr/internal/model"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/helper/magnetmeta"
+	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/manager/blackhole"
+	"ripperr/internal/model"
+	"ripperr/internal/system/logger"
 )
 
 var idRegexp = regexp.MustCompile(`(\d+)`)

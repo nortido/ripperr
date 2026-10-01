@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"trackerr/internal/config"
-	"trackerr/internal/manager/client/qbittorrent"
-	"trackerr/internal/manager/client/transmission"
-	"trackerr/internal/model"
+	"ripperr/internal/config"
+	"ripperr/internal/manager/client/qbittorrent"
+	"ripperr/internal/manager/client/transmission"
+	"ripperr/internal/model"
 )
 
 type Client interface {

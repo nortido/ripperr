@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/pbkdf2"
-	"trackerr/internal/config"
-	"trackerr/internal/storage/client/sqlite"
+	"ripperr/internal/config"
+	"ripperr/internal/storage/client/sqlite"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"trackerr/internal/manager/blackhole"
+	"ripperr/internal/manager/blackhole"
 )
 
 func TestBlackholeAddTimeoutOutlivesMetadataFetch(t *testing.T) {

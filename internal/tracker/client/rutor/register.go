@@ -1,9 +1,9 @@
 package rutor
 
 import (
-	"trackerr/internal/config"
-	trackerModel "trackerr/internal/model/tracker"
-	"trackerr/internal/tracker/registry"
+	"ripperr/internal/config"
+	trackerModel "ripperr/internal/model/tracker"
+	"ripperr/internal/tracker/registry"
 )
 
 func init() {

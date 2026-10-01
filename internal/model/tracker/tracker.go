@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/model/proxy"
+	"ripperr/internal/helper"
+	"ripperr/internal/model/proxy"
 )
 
 const (

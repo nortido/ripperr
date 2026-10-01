@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"trackerr/internal/helper"
+	"ripperr/internal/helper"
 )
 
 const pageSampleMaxRunes = 500

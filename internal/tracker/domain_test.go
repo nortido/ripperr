@@ -9,10 +9,10 @@ import (
 	"net/url"
 	"testing"
 
-	proxyModel "trackerr/internal/model/proxy"
-	trackerModel "trackerr/internal/model/tracker"
-	"trackerr/internal/tracker/client"
-	"trackerr/internal/tracker/client/kinozal"
+	proxyModel "ripperr/internal/model/proxy"
+	trackerModel "ripperr/internal/model/tracker"
+	"ripperr/internal/tracker/client"
+	"ripperr/internal/tracker/client/kinozal"
 )
 
 type stubTracker struct {

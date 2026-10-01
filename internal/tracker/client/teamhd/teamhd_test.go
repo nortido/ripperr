@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/model/tracker"
 )
 
 func TestParseDate(t *testing.T) {

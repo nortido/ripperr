@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/model/tracker"
+	"ripperr/internal/helper"
+	"ripperr/internal/model/tracker"
 )
 
 type Tracker struct {

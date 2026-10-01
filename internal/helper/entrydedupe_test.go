@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"trackerr/internal/model"
+	"ripperr/internal/model"
 )
 
 func TestDedupeEntriesByNameKeepsEarliest(t *testing.T) {

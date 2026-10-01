@@ -1,10 +1,10 @@
 package tracker
 
 import (
-	"trackerr/internal/config"
-	"trackerr/internal/helper"
-	proxyModel "trackerr/internal/model/proxy"
-	trackerModel "trackerr/internal/model/tracker"
+	"ripperr/internal/config"
+	"ripperr/internal/helper"
+	proxyModel "ripperr/internal/model/proxy"
+	trackerModel "ripperr/internal/model/tracker"
 )
 
 func trackerFromItem(it config.TrackerItem) trackerModel.Tracker {

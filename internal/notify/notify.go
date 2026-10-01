@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/helper"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/helper"
+	"ripperr/internal/system/logger"
 )
 
 const (

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"trackerr/internal/helper"
-	proxyModel "trackerr/internal/model/proxy"
-	"trackerr/internal/model/tracker"
-	"trackerr/internal/proxy"
-	"trackerr/internal/system/logger"
+	"ripperr/internal/helper"
+	proxyModel "ripperr/internal/model/proxy"
+	"ripperr/internal/model/tracker"
+	"ripperr/internal/proxy"
+	"ripperr/internal/system/logger"
 )
 
 const (
