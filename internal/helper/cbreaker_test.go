@@ -43,8 +43,7 @@ func TestCircuitBreaker_HalfOpenRecovery(t *testing.T) {
 	}
 	time.Sleep(5 * time.Millisecond)
 
-	// Первый вызов после истечения таймаута переводит Open в HalfOpen и
-	// сразу выполняет пробный вызов.
+	// после таймаута первый же вызов переводит Open в HalfOpen и сразу идет как пробный
 	if err := cb.Call(func() error { return nil }); err != nil {
 		t.Fatalf("expected successful half-open transition call, got %v", err)
 	}
@@ -96,5 +95,33 @@ func TestCircuitBreaker_DeadlineExceededCountsAsFailure(t *testing.T) {
 	}
 	if cb.state != StateOpen {
 		t.Fatalf("expected deadline exceeded to open circuit, got %v", cb.state)
+	}
+}
+
+func TestCircuitBreaker_NeutralErrorKeepsCounter(t *testing.T) {
+	cb := NewCircuitBreaker(&CircuitBreakerConfig{MaxFailures: 2, Timeout: time.Hour})
+	_ = cb.Call(func() error { return errors.New("boom") })
+	for i := 0; i < 3; i++ {
+		err := cb.Call(func() error { return &NeutralError{Err: errors.New("answer")} })
+		if err == nil || err.Error() != "answer" {
+			t.Fatalf("neutral call err = %v, want the wrapped error", err)
+		}
+	}
+	if cb.state != StateClosed || cb.failures != 1 {
+		t.Fatalf("state = %v failures = %d, want closed and 1 (neutral must not reset or count)", cb.state, cb.failures)
+	}
+	_ = cb.Call(func() error { return errors.New("boom") })
+	if cb.state != StateOpen {
+		t.Fatalf("state = %v, want open after the second real failure", cb.state)
+	}
+}
+
+func TestCircuitBreaker_NeutralErrorDoesNotCloseHalfOpen(t *testing.T) {
+	cb := NewCircuitBreaker(&CircuitBreakerConfig{MaxFailures: 1, Timeout: time.Millisecond})
+	_ = cb.Call(func() error { return errors.New("boom") })
+	time.Sleep(5 * time.Millisecond)
+	_ = cb.Call(func() error { return &NeutralError{Err: errors.New("answer")} })
+	if cb.state != StateHalfOpen {
+		t.Fatalf("state = %v, want half-open to stay", cb.state)
 	}
 }

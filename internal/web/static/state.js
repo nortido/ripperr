@@ -9,10 +9,8 @@ export function isMobileStackedLayout() {
   return document.documentElement.classList.contains('mobile-layout');
 }
 
-// позволяет histfilter.js закрывать оверлеи кастомного селекта (select.js) и
-// фильтра по имени (namefilter.js) без прямого импорта этих файлов, так как оба
-// уже импортируют из histfilter.js, и обратный прямой импорт создал бы
-// цикл ES-модулей
+// через этот мост histfilter.js закрывает оверлеи select.js и namefilter.js.
+// Прямой импорт дал бы цикл модулей: оба сами импортируют histfilter.js
 export const overlayBridge = {
   getOpenCustomSelect: null,
   closeCustomSelect: null,

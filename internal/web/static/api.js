@@ -12,17 +12,14 @@ function offlineBanner() {
     el.id = 'offline-banner';
     el.className = 'offline-banner';
     el.setAttribute('role', 'status');
-    // текст задаётся один раз при создании: если писать его в setOffline, то
-    // role="status" зачитает «нет связи» ровно в момент восстановления связи
+    // текст ставим один раз. Если писать его в setOffline, role="status"
+    // зачитает «нет связи» как раз в тот момент, когда связь вернулась
     el.textContent = t('common.offline');
     document.body.appendChild(el);
   }
   return el;
 }
 
-// вешается на fetchJSON, а не на конкретный поллер: статус дашборда глотает
-// свои ошибки молча, поэтому раньше отвалившийся сервер выглядел как живой,
-// а таймштамп «Обновлено» просто замирал
 export function setOffline(next) {
   if (offline === next) return;
   offline = next;
@@ -38,8 +35,8 @@ export async function fetchJSON(url, options = {}) {
   try {
     res = await fetch(url, { ...options, headers });
   } catch (err) {
-    // сам fetch отклонился: до сервера не дошли. Ответ с любым HTTP-кодом
-    // означает, что сервер на связи, отменённый запрос ни о чём не говорит
+    // до сервера не дошли. Ловим здесь, потому что статус дашборда глотает свои ошибки
+    // и упавший сервер выглядел живым. Отмена запроса ни о чем не говорит
     if (err.name !== 'AbortError') setOffline(true);
     throw err;
   }

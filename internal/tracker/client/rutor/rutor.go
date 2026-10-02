@@ -13,13 +13,11 @@ import (
 
 var (
 	rxAdded = regexp.MustCompile(`Добавлен</td><td>(\d{2}-\d{2}-\d{4}) (\d{1,2}):(\d{2}:\d{2})`)
-	// магнет берётся только из самого блока #download: ниже на странице лежат
-	// магнеты связанных раздач, и жадный поиск утащил бы чужую раздачу
+	// только из блока #download. Ниже лежат магнеты связанных раздач, жадный поиск утащил бы чужой
 	rxMagnet = regexp.MustCompile(`id="download">\s*<a href="(magnet:\?[^"]+)"`)
 )
 
-// на страницах rutor время московское, перехода на летнее в этой зоне нет
-var mskZone = time.FixedZone("MSK", 3*60*60)
+var mskZone = time.FixedZone("MSK", 3*60*60) // у rutor московское время, летнего нет
 
 type Tracker struct {
 	tracker.Tracker
@@ -35,9 +33,8 @@ func (t *Tracker) Headers() (header *http.Header) {
 	return
 }
 
-// страницы rutor отдаются в UTF-8, поэтому helper.PageText с декодером
-// windows-1251 тут не годится: кириллица в разметке превратится в мусор.
 func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
+	// rutor отдает UTF-8, helper.PageText с windows-1251 превратил бы кириллицу в мусор
 	matches := rxAdded.FindStringSubmatch(b.String())
 	if len(matches) <= 3 {
 		return
@@ -50,11 +47,9 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	if err != nil {
 		return
 	}
-	// закреплённые темы rutor помечены датой из будущего (19-01-2038, потолок
-	// 32-битного time_t), чтобы висеть вверху списков. Такая дата всегда позже
-	// времени добавления торрента, то есть раздача выглядела бы обновлённой, а
-	// после записи 2038 в историю настоящее обновление уже не поймать никогда.
-	// Сутки запаса на расхождение часов, дальше дата считается нераспознанной.
+	// закрепленные темы rutor стоят с датой 19-01-2038 (потолок 32-битного time_t).
+	// Запишем ее в историю, и настоящее обновление уже не поймать. Сутки запаса на
+	// разницу часов
 	if r.After(time.Now().Add(24 * time.Hour)) {
 		return
 	}
@@ -84,11 +79,10 @@ func New(tracker tracker.Tracker) *Tracker {
 	}
 }
 
-// постер лежит первой картинкой внутри таблицы описания: всё, что выше по
-// странице, это логотип и иконки шапки
 var rxPoster = regexp.MustCompile(`id="details"[\s\S]*?<img[^>]+src="([^"]+)"`)
 
 func (t *Tracker) ParsePoster(b *bytes.Buffer, encoded bool) (poster string) {
+	// выше #details только логотип и иконки шапки
 	matches := rxPoster.FindStringSubmatch(b.String())
 	if len(matches) <= 1 {
 		return

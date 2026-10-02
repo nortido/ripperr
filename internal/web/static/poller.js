@@ -1,7 +1,5 @@
 import { currentView } from './router.js';
 
-// один поллер на вид: таймеры идут только пока этот вид открыт, а вкладка
-// видима; задачи с пометкой onResume срабатывают ещё и в момент возврата вкладки
 export function createPoller(view, tasks) {
   let timers = [];
   let bound = false;

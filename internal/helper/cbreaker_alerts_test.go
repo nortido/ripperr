@@ -23,7 +23,7 @@ func TestCircuitBreaker_AlertsOnOpenAndClose(t *testing.T) {
 	}
 
 	time.Sleep(5 * time.Millisecond)
-	_ = cb.Call(func() error { return nil }) // переход Open в HalfOpen, всё ещё заблокировано
+	_ = cb.Call(func() error { return nil }) // переход Open в HalfOpen, еще заблокировано
 	if err := cb.Call(func() error { return nil }); err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}

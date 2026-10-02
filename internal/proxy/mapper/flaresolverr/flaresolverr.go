@@ -25,7 +25,6 @@ func PrepareParams(r *http.Request, opts *proxy.Options) (params *Payload) {
 	return
 }
 
-// cookiesForFlare срезает домен и путь у кук, чтобы FlareSolverr привязал их к URL запроса.
 func cookiesForFlare(src []*http.Cookie) Cookies {
 	if len(src) == 0 {
 		return nil
@@ -35,6 +34,7 @@ func cookiesForFlare(src []*http.Cookie) Cookies {
 		if c == nil || c.Name == "" {
 			continue
 		}
+		// без домена и пути FlareSolverr сам привяжет куку к URL запроса
 		out = append(out, &http.Cookie{Name: c.Name, Value: c.Value})
 	}
 	return out

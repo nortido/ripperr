@@ -13,9 +13,6 @@ import (
 	"ripperr/internal/model"
 )
 
-// withMagnetFetchStub подменяет magnetFetch и попутно запоминает магнит,
-// с которым его вызвали - тесты сверяют, что в добытчик уехал именно тот
-// магнит, который передали AddFromMagnet, а не пустая строка или чужой.
 func withMagnetFetchStub(t *testing.T, fn func(ctx context.Context, magnet string) ([]byte, error)) *string {
 	t.Helper()
 	var got string
@@ -76,9 +73,7 @@ func TestAddFromMagnet_CommentSet_OwnFetchFails_FallsBackToMagnetAdd(t *testing.
 
 	opts := model.ManagerAddFileOptions{Hash: hash, Name: "fallback", Comment: "http://tracker.example/topic/2"}
 
-	// текущее поведение при неудачной добыче: добавление магнитом без
-	// комментария (RPC Transmission не умеет задать его при добавлении по
-	// магниту), тот же addMagnetVerified, что и раньше
+	// добыча не удалась: просто добавляем магнитом, комментарий так не задать
 	if err := c.AddFromMagnet(context.Background(), magnet, opts); err != nil {
 		t.Fatalf("AddFromMagnet: %v", err)
 	}
@@ -94,11 +89,8 @@ func TestAddFromMagnet_CommentSet_OwnFetchFails_FallsBackToMagnetAdd(t *testing.
 }
 
 func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
-	// регресс: magnetFetch без своего потолка съедал весь ctx AddFromMagnet
-	// целиком (в бою это blackhole.AddTimeout), и запасной путь (обычное
-	// добавление магнитом) получал уже истёкший контекст. Ужимаем потолок до
-	// долей секунды и проверяем, что заглушка, висящая до конца СВОЕГО
-	// контекста, всё равно оставляет запасному пути время на успех.
+	// регресс: без своего потолка magnetFetch съедал весь ctx (в бою это
+	// blackhole.AddTimeout), и запасной путь получал уже истекший контекст
 	withFastPresenceTimings(t)
 	orig := magnetFetchTimeout
 	magnetFetchTimeout = 50 * time.Millisecond
@@ -116,10 +108,8 @@ func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
 
 	opts := model.ManagerAddFileOptions{Hash: hash, Name: "hang-then-fallback", Comment: "http://tracker.example/topic/3"}
 
-	// внешний контекст с дедлайном порядка трёх потолков добычи, а не
-	// context.Background(): мутация "убрать собственный подконтекст" с
-	// Background() вешала бы заглушку навечно, и тест падал бы 10-минутной
-	// паникой раннера вместо быстрого и внятного assert'а
+	// с дедлайном: если сломать свой подконтекст, на Background() заглушка висела
+	// бы вечно и тест падал бы тольок по 10-минутному таймауту раннера
 	ctx, cancel := context.WithTimeout(context.Background(), 3*magnetFetchTimeout)
 	defer cancel()
 	if err := c.AddFromMagnet(ctx, magnet, opts); err != nil {
@@ -131,10 +121,8 @@ func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
 }
 
 func TestAddFromMagnet_CanceledContext_ReturnsQuicklyNotAfterTimeout(t *testing.T) {
-	// сторож на происхождение fctx: если бы подконтекст собственной добычи
-	// заводился от context.Background() вместо входящего ctx, заранее
-	// отменённый внешний контекст игнорировался бы, и заглушка провисела бы
-	// весь magnetFetchTimeout вместо мгновенного возврата
+	// если fctx заводить от context.Background(), отмененный ctx игнорируется
+	// и заглушка висит весь magnetFetchTimeout
 	withFastPresenceTimings(t)
 	orig := magnetFetchTimeout
 	magnetFetchTimeout = time.Second

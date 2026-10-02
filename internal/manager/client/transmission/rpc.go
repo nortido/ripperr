@@ -68,9 +68,8 @@ func (c *rpcClient) call(ctx context.Context, method string, arguments interface
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusConflict {
-		// Transmission на первый (или просроченный) запрос отвечает 409 и отдаёт
-		// свежий session id в заголовке; тело того же запроса шлём повторно
-		// ровно один раз, дальше уже реальная ошибка
+		// на первый или просроченный запрос Transmission отвечает 409 и дает свежий
+		// session id в заголовке. Повторяем запрос один раз, дальше уже настоящая ошибка
 		c.mu.Lock()
 		c.sessionID = resp.Header.Get(sessionHeader)
 		c.mu.Unlock()

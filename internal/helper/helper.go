@@ -9,10 +9,8 @@ import (
 	"golang.org/x/text/encoding/charmap"
 )
 
-// PageText декодирует тело ответа трекера. Ответы, полученные напрямую, приходят
-// в кодировке windows-1251; ответы через FlareSolverr приходят уже
-// декодированными (encoded=true), поэтому возвращаются как есть.
 func PageText(b *bytes.Buffer, encoded bool) string {
+	// через FlareSolverr тело уже декодировано, напрямую трекер шлет windows-1251
 	if encoded {
 		return b.String()
 	}

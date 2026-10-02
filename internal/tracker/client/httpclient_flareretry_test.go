@@ -25,8 +25,6 @@ func TestIsFlareChallengeSolveFailureRecognizesIncidentMessage(t *testing.T) {
 }
 
 func TestIsFlareChallengeSolveFailureIgnoresTimeout(t *testing.T) {
-	// таймаут разгадывания это отдельный класс сбоя (см. helper.IsFlareTimeout),
-	// узкий предикат под него срабатывать не должен
 	if isFlareChallengeSolveFailure(errors.New("Timeout after 60000ms")) {
 		t.Fatal("a solve timeout must not be treated as a challenge solve failure")
 	}
@@ -77,8 +75,6 @@ func newFlareClient(t *testing.T, serverURL, session string) *client {
 }
 
 func TestSendViaFlareRetriesOnceAfterChallengeFailureAndSucceeds(t *testing.T) {
-	// первый запрос падает на "invalid cookie domain", сессия сбрасывается,
-	// повтор поднимает чистый браузер и получает ответ без вмешательства
 	var destroyCalls, requestCalls int32
 	server := newFlareStubServer(t, 1, &destroyCalls, &requestCalls)
 	defer server.Close()
@@ -100,8 +96,6 @@ func TestSendViaFlareRetriesOnceAfterChallengeFailureAndSucceeds(t *testing.T) {
 }
 
 func TestSendViaFlareTwoFailuresReturnsErrorAfterExactlyOneRetry(t *testing.T) {
-	// повтор ровно один: второй такой же отказ отдаётся вызывающему как есть,
-	// без циклов
 	var destroyCalls, requestCalls int32
 	server := newFlareStubServer(t, 2, &destroyCalls, &requestCalls)
 	defer server.Close()
@@ -123,7 +117,6 @@ func TestSendViaFlareTwoFailuresReturnsErrorAfterExactlyOneRetry(t *testing.T) {
 }
 
 func TestSendViaFlareNoSessionSkipsRetry(t *testing.T) {
-	// сессии не было вовсе: повторять с чистого листа нечего, ошибка уходит сразу
 	var destroyCalls, requestCalls int32
 	server := newFlareStubServer(t, 1, &destroyCalls, &requestCalls)
 	defer server.Close()
@@ -142,7 +135,6 @@ func TestSendViaFlareNoSessionSkipsRetry(t *testing.T) {
 }
 
 func TestSendViaFlareSuccessDoesNotRetry(t *testing.T) {
-	// успешный ответ FlareSolverr не должен тянуть за собой лишние запросы
 	var destroyCalls, requestCalls int32
 	server := newFlareStubServer(t, 0, &destroyCalls, &requestCalls)
 	defer server.Close()
@@ -160,9 +152,7 @@ func TestSendViaFlareSuccessDoesNotRetry(t *testing.T) {
 }
 
 func TestSendViaFlareUnrelatedErrorDoesNotRetry(t *testing.T) {
-	// чужая ошибка FlareSolverr (не про неудачу разгадывания челленджа) не
-	// должна вызывать самолечение сессии: без counters тест зеленел бы даже
-	// если бы условие повтора выродилось в "повторять при любой ошибке"
+	// без счетчиков тест прошел бы, даже если повтор начнут делать на любую ошибку
 	var destroyCalls, requestCalls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -196,10 +186,6 @@ func TestSendViaFlareUnrelatedErrorDoesNotRetry(t *testing.T) {
 }
 
 func TestSendViaFlareTimeoutDoesNotRetry(t *testing.T) {
-	// таймаут разгадывания это не тот же класс сбоя, что invalid cookie
-	// domain: у него своя семантика через shouldReloginAfterFlare, и вешать
-	// на него повтор с уничтожением сессии удвоило бы стоимость каждого
-	// таймаута и урезало бы окно circuit breaker вдвое
 	var destroyCalls, requestCalls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -233,15 +219,13 @@ func TestSendViaFlareTimeoutDoesNotRetry(t *testing.T) {
 }
 
 func TestSendViaFlareRespectsCanceledContext(t *testing.T) {
-	// контекст вызывающего уважается: если он уже отменён, повтор не делается
 	var destroyCalls, requestCalls int32
 	server := newFlareStubServer(t, 1, &destroyCalls, &requestCalls)
 	defer server.Close()
 
 	c := newFlareClient(t, server.URL, "session-1")
-	// ponytail: doHttp зовёт px.Send синхронно поверх обычного http.Client,
-	// который сам ctx.Err() на входе не проверяет - дергаем sendViaFlare
-	// напрямую с уже отменённым контекстом, минуя реальную сетевую отмену
+	// doHttp зовет px.Send через обычный http.Client, а тот ctx.Err() на входе не
+	// смотрит. Поэтому дергаем sendViaFlare напрямую с уже отмененым контекстом
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/topic/1", nil)
 	if err != nil {
 		t.Fatal(err)

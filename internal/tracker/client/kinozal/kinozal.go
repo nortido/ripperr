@@ -22,7 +22,6 @@ func (t *Tracker) Headers() (header *http.Header) {
 	header.Add("Content-Type", "text/html; charset=windows-1251")
 	header.Add("Host", t.GetHost())
 	header.Add("Referer", t.GetHost()+"/browse.php")
-	//header.Add("Cookie", "uid=PLACEHOLDER; pass=PLACEHOLDER")
 
 	return
 }
@@ -64,9 +63,8 @@ func New(tracker tracker.Tracker) *Tracker {
 
 var rxImgSrc = regexp.MustCompile(`<img[^>]+src="([^"]+)"`)
 
-// у kinozal нет отдельного класса у постера, зато весь интерфейс лежит в /pic/,
-// поэтому постером считается первая картинка вне этого каталога
 func (t *Tracker) ParsePoster(b *bytes.Buffer, encoded bool) (poster string) {
+	// своего класса у постера нет, зато картинки интерфейса все в /pic/
 	for _, m := range rxImgSrc.FindAllStringSubmatch(helper.PageText(b, encoded), -1) {
 		if strings.HasPrefix(m[1], "/pic/") {
 			continue

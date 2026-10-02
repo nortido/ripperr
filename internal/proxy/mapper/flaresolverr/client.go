@@ -1,6 +1,3 @@
-// Пакет flaresolverr содержит минимальный клиент API FlareSolverr,
-// перенесённый внутрь из github.com/nortido/go-flaresolverr, чтобы починить
-// утечку тела ответа и убрать зависимость.
 package flaresolverr
 
 import (
@@ -77,6 +74,7 @@ func (f *Client) Send(r *http.Request, opts *Payload) (result *Response, err err
 	if resp, err = f.hc.Post(f.conf.Host, "application/json", bytes.NewBuffer(data)); err != nil {
 		return
 	}
+	// в go-flaresolverr тело ответа утекало, из-за этого клиент и перенесли к нам
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()

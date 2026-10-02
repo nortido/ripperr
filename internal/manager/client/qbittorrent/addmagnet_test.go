@@ -12,9 +12,6 @@ import (
 	"ripperr/internal/model"
 )
 
-// withMagnetFetchStub подменяет magnetFetch и попутно запоминает магнит,
-// с которым его вызвали - тесты сверяют, что в добытчик уехал именно тот
-// магнит, который передали AddFromMagnet, а не пустая строка или чужой.
 func withMagnetFetchStub(t *testing.T, fn func(ctx context.Context, magnet string) ([]byte, error)) *string {
 	t.Helper()
 	var got string
@@ -29,9 +26,8 @@ func withMagnetFetchStub(t *testing.T, fn func(ctx context.Context, magnet strin
 
 func TestAddFromMagnet_CommentSet_OwnFetchSucceeds_AddsFileWithComment(t *testing.T) {
 	stub := newSweepStubServer(t)
-	// metadataTorrent намеренно не задан: если бы AddFromMagnet всё-таки
-	// свалился в старый путь qbit fetchMetadata/saveMetadata, saveMetadata
-	// ответил бы 404, а сам путь ушёл бы магнит-URL без комментария
+	// metadataTorrent пустой: если AddFromMagnet свалится в старый путь через qbit,
+	// saveMetadata ответит 404 и торрент уйдет магнитом без комментария
 	c, err := New(model.ManagerConfig{Host: stub.server.URL})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -84,8 +80,7 @@ func TestAddFromMagnet_CommentSet_OwnFetchFails_FallsBackToQbitMetadataFetch(t *
 	if *gotMagnet != magnet {
 		t.Errorf("magnetFetch получил %q, want %q", *gotMagnet, magnet)
 	}
-	// прежнее поведение: fetchAndSaveMetadata через qbit, затем файл с
-	// комментарием, вшитым addTorrentWithComment
+	// старый путь: метаданные через qbit, комментарий вшивает addTorrentWithComment
 	if stub.lastAddedFile == nil {
 		t.Fatal("expected fallback to add via qbit fetchMetadata/saveMetadata")
 	}
@@ -99,11 +94,8 @@ func TestAddFromMagnet_CommentSet_OwnFetchFails_FallsBackToQbitMetadataFetch(t *
 }
 
 func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
-	// регресс: magnetFetch без своего потолка съедал весь ctx AddFromMagnet
-	// целиком (в бою это blackhole.AddTimeout), и запасной путь получал уже
-	// истёкший контекст. Ужимаем потолок до долей секунды и проверяем, что
-	// заглушка, висящая до конца СВОЕГО контекста, всё равно оставляет
-	// запасному пути достаточно времени на успешное добавление.
+	// регресс: добыча без своего потолка съедала весь ctx, и запасному пути
+	// доставался уже истекщий контекст. Заглушка висит до конца своего ctx, фолбэк все равно должен успеть
 	orig := magnetFetchTimeout
 	magnetFetchTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { magnetFetchTimeout = orig })
@@ -124,11 +116,8 @@ func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
 	opts := model.ManagerAddFileOptions{Hash: metaHash, Name: "hang-then-fallback", Comment: "http://tracker.example/topic/3"}
 	magnet := "magnet:?xt=urn:btih:" + metaHash
 
-	// внешний контекст с дедлайном порядка трёх потолков добычи, а не
-	// context.Background(): мутация "убрать собственный подконтекст" (звать
-	// magnetFetch(ctx, ...) вместо magnetFetch(fctx, ...)) с Background()
-	// вешала бы заглушку навечно, и тест падал бы 10-минутной паникой
-	// раннера вместо быстрого и внятного assert'а
+	// дедлайн на случай, если кто-то уберет свой подконтекст: с Background() заглушка
+	// повисла бы навсегда и тест умер бы через 10 минут по таймауту раннера
 	ctx, cancel := context.WithTimeout(context.Background(), 3*magnetFetchTimeout)
 	defer cancel()
 	if err := c.AddFromMagnet(ctx, magnet, opts); err != nil {
@@ -140,24 +129,17 @@ func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
 }
 
 func TestAddFromMagnet_DeadSwarmBothPaths_FallsBackToMagnetAdd(t *testing.T) {
-	// регресс: своя добыча съедала magnetFetchTimeout, а запасной путь через
-	// qbit упирался дедлайном внешнего контекста РАНЬШЕ своего
-	// metadataFetchTimeout - waitForMetadata возвращал context.DeadlineExceeded
-	// вместо errMetadataFetchTimeout, addMagnetWithComment эту ошибку не
-	// распознавал и не падал в addMagnetURLVerified, торрент не добавлялся
-	// никак. Чинится арифметикой blackhole.AddTimeout (см. тест-страж
-	// TestBlackholeAddTimeoutOutlivesMetadataFetch); этот тест стережёт, что
-	// с достаточным бюджетом фолбэк реально срабатывает, когда рой мёртв для
-	// ОБОИХ путей добычи разом.
+	// регресс: своя добыча съедала magnetFetchTimeout, и путь через qbit упирался во внешний
+	// дедлайн раньше своего таймаута. DeadlineExceeded никто не ловил, торрент не добавлялся вовсе.
+	// Здесь рой мертв для обоих путей, и при нормальном бюджете фолбэк должен сработать
 	origMagnet, origMeta, origPoll := magnetFetchTimeout, metadataFetchTimeout, metadataFetchPollInterval
 	magnetFetchTimeout = 20 * time.Millisecond
 	metadataFetchTimeout = 60 * time.Millisecond
-	metadataFetchPollInterval = 5 * time.Millisecond // мельче таймаута, иначе деталь не успеет сработать раньше внешнего ctx
+	metadataFetchPollInterval = 5 * time.Millisecond // меньше таймаута, иначе он не сработает раньше внешнего ctx
 	t.Cleanup(func() {
 		magnetFetchTimeout, metadataFetchTimeout, metadataFetchPollInterval = origMagnet, origMeta, origPoll
 	})
-	// сумма обоих потолков плюс запас - пропорция та же, что у
-	// blackhole.AddTimeout в бою (см. комментарий там)
+	// оба потолка плюс запас, как в blackhole.AddTimeout
 	budget := magnetFetchTimeout + metadataFetchTimeout + 20*time.Millisecond
 
 	stub := newSweepStubServer(t)
@@ -190,10 +172,8 @@ func TestAddFromMagnet_DeadSwarmBothPaths_FallsBackToMagnetAdd(t *testing.T) {
 }
 
 func TestAddFromMagnet_CanceledContext_ReturnsQuicklyNotAfterTimeout(t *testing.T) {
-	// сторож на происхождение fctx: если бы подконтекст собственной добычи
-	// заводился от context.Background() вместо входящего ctx, заранее
-	// отменённый внешний контекст игнорировался бы, и заглушка провисела бы
-	// весь magnetFetchTimeout вместо мгновенного возврата
+	// fctx должен наследовать отмену входящего ctx. Заведи его от Background(),
+	// и заглушка провисела бы весь magnetFetchTimeout
 	orig := magnetFetchTimeout
 	magnetFetchTimeout = time.Second
 	t.Cleanup(func() { magnetFetchTimeout = orig })

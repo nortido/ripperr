@@ -32,8 +32,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	for i, t := range slots {
 		strSlots[i] = t.Format(time.RFC3339)
 	}
-	// хеши очереди нужны только для подсветки видимых строк, поэтому режем по
-	// пределу, а длину прохода отдаём отдельным числом
+	// хеши нужны только для подсветки видимых строк, полный проход это тысячи
+	// записей. Режем по пределу, а длину прохода отдаем отдельным числом
 	queued, queuedTotal := s.runnerState.QueuedItems(queuedHashLimit)
 	writeJSON(w, http.StatusOK, statusResp{
 		Now:         now.Format(time.RFC3339),
@@ -139,8 +139,6 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, runResp{Started: true})
 }
 
-// queuedHashLimit ограничивает список хешей очереди в ответе: подсветить нужно
-// только строки открытой страницы, а полный проход это тысячи записей.
 const queuedHashLimit = 500
 
 func emptyIfNil(v []string) []string {

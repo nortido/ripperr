@@ -24,6 +24,12 @@ const (
 
 var ErrCircuitOpen = errors.New("circuit breaker: circuit is open")
 
+type NeutralError struct{ Err error }
+
+func (e *NeutralError) Error() string { return e.Err.Error() }
+
+func (e *NeutralError) Unwrap() error { return e.Err }
+
 type CircuitBreaker struct {
 	MaxFailures     int
 	Timeout         time.Duration
@@ -43,7 +49,7 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 	switch cb.state {
 	case StateClosed:
 		if err = fn(); err != nil {
-			if errors.Is(err, context.Canceled) {
+			if cb.neutral(err) {
 				return err
 			}
 			cb.recordFailure(err)
@@ -58,7 +64,7 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 		fallthrough
 	case StateHalfOpen:
 		if err = fn(); err != nil {
-			if errors.Is(err, context.Canceled) {
+			if cb.neutral(err) {
 				return err
 			}
 			cb.recordFailure(err)
@@ -67,6 +73,11 @@ func (cb *CircuitBreaker) Call(fn func() (err error)) (err error) {
 		cb.reset()
 	}
 	return
+}
+
+func (cb *CircuitBreaker) neutral(err error) bool {
+	var ne *NeutralError
+	return errors.Is(err, context.Canceled) || errors.As(err, &ne)
 }
 
 func (cb *CircuitBreaker) recordFailure(err error) {

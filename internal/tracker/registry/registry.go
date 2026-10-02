@@ -8,26 +8,19 @@ import (
 	trackerModel "ripperr/internal/model/tracker"
 )
 
-// Def это всё, что ядру нужно знать о трекере: его номер и ключ, значения по
-// умолчанию и конструктор парсера. Пакет трекера регистрирует свой Def в init,
-// поэтому добавление трекера не трогает ни config, ни service, ни web.
 type Def struct {
 	ID       int
 	Key      string
 	Defaults config.TrackerItem
-	Login    *LoginForm
+	Login    *LoginForm // nil у nnm и teamhd, они пускают по кукам
 	New      func(t trackerModel.Tracker) trackerModel.ITracker
 }
 
-// LoginForm описывает, какие поля в теле формы логина отвечают за имя и пароль.
-// Заполняют его только трекеры, где вход идёт обычным POST формы: nnm и teamhd
-// пускают по кукам, у них форма не нужна и поле остаётся nil.
 type LoginForm struct {
 	UserField string
 	PassField string
-	// Template это скелет тела на первую настройку, со служебными полями
-	// трекера и пустыми логином с паролем. Нужен потому, что подставлять
-	// логин в пустую строку некуда, а без служебных полей вход не сработает.
+	// тело для первой настройки: служебные поля трекера и пустые логин с паролем.
+	// В пустую строку логин подставить некуда, а без служебных полей вход не пройдет
 	Template string
 }
 
@@ -36,10 +29,9 @@ var (
 	byKey = make(map[string]int)
 )
 
-// Register вызывается из init пакета трекера, то есть до старта main и в один
-// поток, поэтому блокировка не нужна, а любая коллизия это ошибка сборки, а не
-// рантайма: падаем сразу, чтобы два трекера не делили номер молча.
 func Register(d Def) {
+	// зовется из init, до main и в один поток, так что без блокировки. Коллизия тут
+	// это ошибка сборки, падаем сразу, чтобы два трекера молча не делили номер
 	switch {
 	case d.ID <= 0:
 		panic(fmt.Sprintf("registry: tracker %q has non-positive id %d", d.Key, d.ID))
@@ -60,12 +52,12 @@ func Register(d Def) {
 	byKey[d.Key] = d.ID
 }
 
-// All отдаёт трекеры по возрастанию id: этот порядок видит пользователь в UI.
 func All() []Def {
 	ids := make([]int, 0, len(defs))
 	for id := range defs {
 		ids = append(ids, id)
 	}
+	// в этом порядке трекеры видит пользователь в UI
 	sort.Ints(ids)
 	out := make([]Def, 0, len(ids))
 	for _, id := range ids {
@@ -96,21 +88,18 @@ func ByKey(key string) (Def, bool) {
 	return defs[id], true
 }
 
-// ID возвращает 0 для незнакомого ключа: 0 не бывает валидным номером трекера,
-// вызывающему хватает его как признака "нет такого".
 func ID(key string) int {
-	return byKey[key]
+	return byKey[key] // 0 значит нет такого, нулевых номеров у трекеров не бывает
 }
 
 func Key(id int) string {
 	return defs[id].Key
 }
 
-// ConfigDefaults собирает набор настроек трекеров из значений по умолчанию,
-// объявленных самими трекерами. Копия на вызов: дальше по ней ходят env и БД.
 func ConfigDefaults() config.Tracker {
 	out := make(config.Tracker, len(defs))
 	for _, d := range All() {
+		// копия на каждый вызов, дальше ее правят env и БД
 		item := d.Defaults
 		item.Mirrors = append([]string(nil), d.Defaults.Mirrors...)
 		out[d.Key] = &item

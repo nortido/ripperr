@@ -51,10 +51,7 @@ func TestQueryTrimmed(t *testing.T) {
 		t.Fatalf("queryTrimmed ascii len = %d, want 200", len(got))
 	}
 
-	// кириллическая строка сильно за пределом в 200 байт: каждая руна по 2 байта, поэтому
-	// наивный срез байтов [:200] может попасть в середину руны. хелпер обязан отступить
-	// до полной границы руны и остаться валидным UTF-8.
-	cyrillic := strings.Repeat("б", 150) // 300 bytes, 150 runes
+	cyrillic := strings.Repeat("б", 150) // 300 байт, 150 рун
 	req = httptest.NewRequest("GET", "/?name="+cyrillic, nil)
 	got = queryTrimmed(req, "name", 200)
 	if len(got) > 200 {

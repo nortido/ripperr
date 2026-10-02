@@ -16,12 +16,8 @@ import (
 )
 
 var (
-	// metadataFetchTimeout и metadataFetchPollInterval это var, а не const:
-	// blackhole.AddTimeout обязан покрывать сумму этого таймаута и
-	// magnetFetchTimeout из client.go (см. комментарий там и тест-страж
-	// metadata_timeout_test.go), а тесту на мёртвый рой нужно ужать оба
-	// значения и интервал опроса, иначе проверка идёт реальные минуты вместо
-	// миллисекунд
+	// var, чтобы тест на мертвый рой мог их ужать, иначе он шел бы минутами.
+	// Вместе с magnetFetchTimeout должно влезать в blackhole.AddTimeout (сторожит metadata_timeout_test.go)
 	metadataFetchTimeout      = 5 * time.Minute
 	metadataFetchPollInterval = 2 * time.Second
 

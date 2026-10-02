@@ -13,8 +13,7 @@ func TestIsFlareTimeoutRecognizesChallengeSolveFailure(t *testing.T) {
 }
 
 func TestIsFlareTimeoutRecognizesSolveTimeout(t *testing.T) {
-	// функция шире одного класса сбоя: она же ловит исчерпание отведённого
-	// времени, у которого своя семантика через shouldReloginAfterFlare
+	// функция ловит и исчерпание отведенного времени, а у него своя логика в shouldReloginAfterFlare
 	err := errors.New("flaresolverr error: Timeout after 60000ms")
 	if !IsFlareTimeout(err) {
 		t.Fatal("expected solve timeout to be recognized")

@@ -44,9 +44,7 @@ func (r *Registry) Open(tracker, errMsg string) {
 	r.incidents[tracker] = inc
 	hook := r.hook
 	r.mu.Unlock()
-	// срабатывает только на переходе closed в open; хук здесь это вызов
-	// notify.Notify, который сам по себе неблокирующий, поэтому вызов на месте
-	// (без блокировки) не тормозит других вызывающих Registry
+	// хук это notify.Notify, он не блокирует, поэтому зовем его на месте после Unlock
 	if !existed && hook != nil {
 		hook(true, tracker, errMsg)
 	}

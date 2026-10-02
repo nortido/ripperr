@@ -3,9 +3,8 @@ package qbittorrent
 import "testing"
 
 func TestIncomingHashSameAs_NilBufferWithMagnet(t *testing.T) {
-	// manager.SubmitMagnet вызывает IncomingHashSameAs с buf == nil на каждом
-	// магнитном сабмите: без guard на nil это паника на горячем пути,
-	// buf.Len() и buf.Bytes() на nil-указателе
+	// manager.SubmitMagnet зовет IncomingHashSameAs с buf == nil на каждом магните.
+	// Без проверки на nil это паника на горячем пути
 	c := &Client{}
 	hash := "0123456789abcdef0123456789abcdef01234567"
 	magnet := "magnet:?xt=urn:btih:" + hash

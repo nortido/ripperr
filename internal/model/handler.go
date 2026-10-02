@@ -11,8 +11,8 @@ type HandlerConfig struct {
 	ListRefreshPerDay    int
 	StartHour            int
 	Categories           []string
-	Location             *time.Location // nil = time.Local (локальная зона процесса)
+	Location             *time.Location // nil = time.Local
 	Immediate            bool
 	ErrorStreakThreshold int
-	MagnetTimeout        int64 // секунды на добычу метаданных по магниту, см. runner.handler.submit
+	MagnetTimeout        int64 // сколько секунд ждать метаданные магнета, см. runner.handler.submit
 }

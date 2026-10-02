@@ -31,11 +31,10 @@ func EnrichCookies(cookies []*http.Cookie, domain string, ttl time.Duration) {
 	}
 }
 
-// ParseCookies разбирает значение заголовка Cookie. Куки приходят из настроек,
-// набранных руками, поэтому пары режем сами и мусорные пропускаем: http.ParseCookie
-// на первой же паре без "=" (хоть на висящей в конце ";") возвращает ошибку и ни
-// одной куки. Валидацию имени и значения по-прежнему делает она.
 func ParseCookies(line string) (cookies []*http.Cookie) {
+	// куки набирают руками в настройках, а http.ParseCookie на первой паре без "="
+	// (хоть на висящей в конце ";") отдает ошибку и ни одной куки. Поэтому режем
+	// сами и мусор пропускаем, имя и значение все равно проверяет она
 	for _, part := range strings.Split(line, ";") {
 		if part = strings.TrimSpace(part); part == "" {
 			continue
