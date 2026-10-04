@@ -93,3 +93,13 @@ func TestParsePosterFallsBackToFirstPostImg(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestParsePosterBrowserRenderedTakesTitleOverPlaceholder(t *testing.T) {
+	tr := New(tracker.Tracker{Domain: "rutracker.org"})
+	// после FlareSolverr картинка не загрузилась: в src заглушка, адрес остался в title
+	html := `<img src="https://static.rutracker.cc/templates/v1/images/broken_image_1.svg" class="postImg post-img-broken" title="https://i128.fastpic.org/big/2026/0919/82/screen.jpg" alt="x">
+<img src="https://static.rutracker.cc/templates/v1/images/broken_image_1.svg" class="postImg postImgAligned img-right post-img-broken" title="https://i128.fastpic.org/big/2026/0919/70/poster.jpg" alt="x">`
+	if got, want := tr.ParsePoster(bytes.NewBufferString(html), true), "https://i128.fastpic.org/big/2026/0919/70/poster.jpg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

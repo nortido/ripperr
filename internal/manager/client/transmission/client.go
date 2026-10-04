@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ripperr/internal/helper/fileselect"
 	"ripperr/internal/helper/magnetmeta"
 	"ripperr/internal/helper/torrentmeta"
 	"ripperr/internal/manager/blackhole"
@@ -23,52 +24,66 @@ import (
 
 var idRegexp = regexp.MustCompile(`(\d+)`)
 
-// magnetFetch добывает метаданные по магниту сам, без участия Transmission
-// (у его RPC вообще нет способа задать комментарий на добавлении по магниту);
-// переменная пакета, а не прямой вызов magnetmeta.Fetch, чтобы тесты могли
-// подменить добычу, тем же приёмом, что presenceCheckAttempts/presenceCheckDelay
-// ниже и SettleDelay у blackhole
 var magnetFetch = magnetmeta.Fetch
 
-// magnetFetchTimeout ограничивает magnetFetch внутри AddFromMagnet своим
-// подконтекстом. Единственный источник этого вызова - подметальщик
-// blackhole, и весь AddFromMagnet целиком идёт в одном контексте с общим
-// потолком blackhole.AddTimeout (6 минут); без отдельного потолка мёртвый рой
-// (валидный tr, но пиров нет) выжирает весь этот бюджет, и запасному пути
-// (addMagnetVerified) достаётся уже истёкший контекст. Заметно меньше
-// AddTimeout, чтобы запасной путь успел отработать. Переменная, а не const,
-// чтобы тесты могли ужать
 var magnetFetchTimeout = time.Minute
 
 var ErrRedownloadUnsupported = errors.New("force redownload is not supported for transmission: its RPC cannot restore the torrent comment, so the tracker link would be lost")
 
 var (
-	// presenceCheckAttempts и presenceCheckDelay это число попыток и пауза
-	// между ними при ожидании появления/исчезновения торрента; переменные
-	// пакета, чтобы тесты могли их ужать (тот же приём, что у blackhole.SettleDelay).
+	// не const: тесты их ужимают
 	presenceCheckAttempts = 5
 	presenceCheckDelay    = time.Second
-	// startupProbeTimeout ограничивает session-get в New, см. комментарий там.
-	startupProbeTimeout = 15 * time.Second
+	startupProbeTimeout   = 15 * time.Second
+	checkWaitDelay        = time.Second
+	checkWaitBudget       = blackhole.CheckWaitBudget
 )
 
 var torrentFields = []string{
 	"hashString", "name", "comment", "downloadDir", "labels",
-	"addedDate", "percentDone", "status", "seedRatioLimit", "seedRatioMode", "magnetLink",
+	"addedDate", "percentDone", "status", "seedRatioLimit", "seedRatioMode", "magnetLink", "error",
 }
 
 type rpcTorrent struct {
-	HashString     string   `json:"hashString"`
-	Name           string   `json:"name"`
-	Comment        string   `json:"comment"`
-	DownloadDir    string   `json:"downloadDir"`
-	Labels         []string `json:"labels"`
-	AddedDate      int64    `json:"addedDate"`
-	PercentDone    float64  `json:"percentDone"`
-	Status         int      `json:"status"`
-	SeedRatioLimit float64  `json:"seedRatioLimit"`
-	SeedRatioMode  int      `json:"seedRatioMode"`
-	MagnetLink     string   `json:"magnetLink"`
+	HashString     string        `json:"hashString"`
+	Name           string        `json:"name"`
+	Comment        string        `json:"comment"`
+	DownloadDir    string        `json:"downloadDir"`
+	Labels         []string      `json:"labels"`
+	AddedDate      int64         `json:"addedDate"`
+	PercentDone    float64       `json:"percentDone"`
+	Status         int           `json:"status"`
+	SeedRatioLimit float64       `json:"seedRatioLimit"`
+	SeedRatioMode  int           `json:"seedRatioMode"`
+	MagnetLink     string        `json:"magnetLink"`
+	Error          int           `json:"error"`
+	ErrorString    string        `json:"errorString"`
+	Files          []rpcFile     `json:"files"`
+	FileStats      []rpcFileStat `json:"fileStats"`
+}
+
+type rpcFile struct {
+	Name string `json:"name"`
+}
+
+type rpcFileStat struct {
+	Wanted wantedFlag `json:"wanted"`
+}
+
+type wantedFlag bool
+
+func (w *wantedFlag) UnmarshalJSON(b []byte) error {
+	// в коде Transmission wanted это bool, но спецификация пишет 0/1; читаем оба,
+	// иначе Files ломается на каждом вызове
+	switch string(bytes.TrimSpace(b)) {
+	case "true", "1":
+		*w = true
+	case "false", "0":
+		*w = false
+	default:
+		return fmt.Errorf("decode wanted: unexpected value %s", b)
+	}
+	return nil
 }
 
 type torrentGetArgs struct {
@@ -79,13 +94,10 @@ type sessionGetArgs struct {
 	DownloadDir string `json:"download-dir"`
 }
 
-// torrentAddArgs это ответ torrent-add. На дубликат Transmission всё равно
-// шлёт result:"success", но arguments несёт torrent-duplicate вместо
-// torrent-added; без этой проверки ensurePresentAfterAdd видит СТАРЫЙ торрент
-// по тому же хешу и молча рапортует успех, хотя новые download-dir/labels не
-// применились.
 type torrentAddArgs struct {
-	TorrentAdded     *addedTorrent `json:"torrent-added"`
+	TorrentAdded *addedTorrent `json:"torrent-added"`
+	// на дубликат Transmission все равно шлет success. Без этого поля
+	// ensurePresentAfterAdd увидит старый торрент и молча рапортует успех
 	TorrentDuplicate *addedTorrent `json:"torrent-duplicate"`
 }
 
@@ -104,10 +116,8 @@ func checkAddDuplicate(raw json.RawMessage, name string) error {
 	return nil
 }
 
-// проверка соответствия сигнатур интерфейсу client из internal/manager/service.go
-// (тот неэкспортирован, поэтому сверяем литералом) и интерфейсу client из
-// internal/manager/blackhole/blackhole.go.
 var (
+	// client в internal/manager/service.go неэкспортирован, сверяем литералом
 	_ interface {
 		List(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error)
 		GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error)
@@ -118,12 +128,17 @@ var (
 		WriteBlackholePair(data []byte, magnet string, opts model.ManagerAddFileOptions) error
 		RemoveBlackholePair(hash string)
 		ConfirmSettled(ctx context.Context, hash string) bool
+		Discard(ctx context.Context, hash string) error
+		Resume(ctx context.Context, hash string) error
+		ReplacePending(hash string) bool
 	} = (*Client)(nil)
 	_ interface {
 		AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) error
 		AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error
 		Exists(ctx context.Context, hash string) (bool, error)
 		Reachable(ctx context.Context) bool
+		Discard(ctx context.Context, hash string) error
+		Resume(ctx context.Context, hash string) error
 	} = (*Client)(nil)
 )
 
@@ -146,13 +161,9 @@ func New(config model.ManagerConfig) (*Client, error) {
 	}
 	c.bh = blackhole.New(config.BlackholeDir, c)
 
-	// сигнатура New (совместимая с qbittorrent.New) не принимает контекст, а
-	// session-get на старте не относится ни к одному пользовательскому запросу,
-	// поэтому это единственная в пакете точка с background-контекстом. Свой
-	// таймаут обязателен: без него потолок только defaultTimeout (60с) из
-	// rpc.go, и хост, который принимает TCP и молчит, держит вызывающий
-	// HTTP-обработчик (например, проверку интеграции) минуту вместо разумных
-	// секунд.
+	// New без контекста, как qbittorrent.New. Без своего таймаута остается только
+	// defaultTimeout (60с), и хост, который принял TCP и молчит, держит проверку
+	// интеграции целую минуту
 	startCtx, cancel := context.WithTimeout(context.Background(), startupProbeTimeout)
 	defer cancel()
 	raw, err := c.rpc.call(startCtx, "session-get", nil)
@@ -168,12 +179,6 @@ func New(config model.ManagerConfig) (*Client, error) {
 	return c, nil
 }
 
-// categoryFromPath отдаёт категорию раздачи и признак, что downloadDir реально
-// лежит внутри базового каталога загрузок. Второе важно для Delete: раздача в
-// /mnt/archive/Movies и раздача в <base>/Movies дают одну и ту же категорию
-// Movies (по filepath.Base), но только вторая на самом деле под управлением
-// базового каталога, и только для неё позволительно удалять файлы по совпадению
-// с DeleteCategories.
 func categoryFromPath(downloadDir, base string) (category string, insideBase bool) {
 	downloadDir = filepath.Clean(downloadDir)
 	base = filepath.Clean(base)
@@ -182,11 +187,12 @@ func categoryFromPath(downloadDir, base string) (category string, insideBase boo
 	}
 	rel, err := filepath.Rel(base, downloadDir)
 	if err != nil || strings.HasPrefix(rel, "..") {
+		// /mnt/archive/Movies дает ту же категорию, что <base>/Movies. Delete
+		// по совпадению с DeleteCategories может удалять файлы только внутри базы
 		return filepath.Base(downloadDir), false
 	}
-	// клиенты вроде Sonarr/Radarr кладут категорию ровно одним подкаталогом;
-	// берём только первый сегмент, иначе у tv/show1 и tv/show2 была бы своя
-	// категория на каждый торрент и GetCategories возвращал бы мусор
+	// Sonarr/Radarr кладут категорию одним подкаталогом. Без обрезки у tv/show1
+	// и tv/show2 была бы своя категория и GetCategories отдавал бы мусор
 	rel = filepath.ToSlash(rel)
 	if idx := strings.Index(rel, "/"); idx >= 0 {
 		rel = rel[:idx]
@@ -202,9 +208,8 @@ func destinationDir(opts model.ManagerAddFileOptions, downloadDir string) string
 		dir = filepath.Join(downloadDir, opts.Category)
 	}
 	if !filepath.IsAbs(dir) {
-		// пустой базовый каталог (session-get ничего не отдал) даёт здесь
-		// относительный путь; Transmission такое не ждёт, поэтому лучше не
-		// слать download-dir вовсе и пусть клиент возьмёт свой умолчательный каталог
+		// пустой базовый каталог (session-get ничего не отдал) дает относительный
+		// путь. Transmission его не ждет, пусть лучше берет свой каталог по умолчанию
 		return ""
 	}
 	return dir
@@ -217,6 +222,9 @@ func addArgs(opts model.ManagerAddFileOptions, downloadDir string) map[string]in
 	}
 	if labels := splitLabels(opts.Tag); len(labels) > 0 {
 		args["labels"] = labels
+	}
+	if opts.Stopped {
+		args["paused"] = true
 	}
 	return args
 }
@@ -250,9 +258,12 @@ func (c *Client) mapEntry(t *rpcTorrent) *model.Entry {
 		Tag:       strings.Join(t.Labels, ","),
 		// у Transmission нет аналога автоматического режима qBittorrent
 		AutoManaged: false,
-		// ponytail: у Transmission есть только лимит простоя (seedIdleLimit), это
-		// не суммарное время раздачи, подменять одно другим нельзя, поэтому 0
+		// у Transmission только лимит простоя (seedIdleLimit). С общим временем
+		// раздачи это разные вещи
 		MaxSeedingTime: 0,
+		Stopped:        t.Status == 0,
+		// error 3: локальная ошибка (нет данных, диск отключен), 1-2: проверка
+		Unhealthy: t.Error == 3 || t.Status == 1 || t.Status == 2,
 	}
 	// соглашение qBittorrent: -1 без ограничения, -2 глобальный лимит клиента
 	switch t.SeedRatioMode {
@@ -335,14 +346,11 @@ func (c *Client) GetCategories(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
-// categoryInsideBase перезапрашивает текущий downloadDir раздачи по хешу: opts,
-// пришедшие в Delete, несут только вычисленную категорию, а не путь, из
-// которого её посчитали, и одноимённая категория может означать как каталог
-// внутри базы, так и одноимённый каталог снаружи (см. categoryFromPath).
-// Ошибка запроса или отсутствие раздачи трактуются как "не внутри": лучше не
-// удалить файлы, о которых ничего не известно, чем удалить чужие.
 func (c *Client) categoryInsideBase(ctx context.Context, hash string) bool {
+	// в opts от Delete только категория, пути нет. Такая же категория бывает
+	// и у каталога снаружи базы, поэтому спрашиваем downloadDir заново
 	t, err := c.torrentByHash(ctx, hash, []string{"downloadDir"})
+	// раздачу не нашли: лучше оставить файлы, чем удалить чужие
 	if err != nil || t == nil {
 		return false
 	}
@@ -356,20 +364,17 @@ func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) er
 	}
 	logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))
 
-	deleteFiles := false
-	for i := range c.config.DeleteCategories {
-		if opts.Category == c.config.DeleteCategories[i] {
-			if c.categoryInsideBase(ctx, opts.Hash) {
-				deleteFiles = c.config.DeleteFilesEnabled
-			}
-			break
-		}
-	}
 	_, err := c.rpc.call(ctx, "torrent-remove", map[string]interface{}{
 		"ids":               []string{opts.Hash},
-		"delete-local-data": deleteFiles,
+		"delete-local-data": c.DeletesFiles(ctx, opts),
 	})
 	return err
+}
+
+func (c *Client) DeletesFiles(ctx context.Context, opts model.ManagerDeleteOptions) bool {
+	return c.config.DeleteEnabled && c.config.DeleteFilesEnabled &&
+		slices.Contains(c.config.DeleteCategories, opts.Category) &&
+		c.categoryInsideBase(ctx, opts.Hash)
 }
 
 func (c *Client) torrentPresent(ctx context.Context, hash string) (bool, error) {
@@ -389,6 +394,10 @@ func (c *Client) ensureNotPresent(ctx context.Context, hash, name string) error 
 		return fmt.Errorf("%w: %s", model.ErrAlreadyAdded, name)
 	}
 	return nil
+}
+
+func (c *Client) WaitAbsent(ctx context.Context, hash string) (bool, error) {
+	return c.waitUntilAbsent(ctx, hash)
 }
 
 func (c *Client) waitUntilAbsent(ctx context.Context, hash string) (bool, error) {
@@ -438,10 +447,9 @@ func (c *Client) preAddPresenceCheck(ctx context.Context, hash, name, optsHash s
 }
 
 func (c *Client) applyMaxRatio(ctx context.Context, hash string, opts model.ManagerAddFileOptions) {
-	// соглашение qBittorrent, зеркально к mapEntry: -1 без ограничения (режим 2),
-	// -2 глобальный лимит клиента (режим 0), положительное значение свой лимит
-	// (режим 1); 0 или иное не встречается у qbit в норме, оставляем режим
-	// Transmission по умолчанию как есть
+	// как в mapEntry, по соглашению qBittorrent: -1 без лимита (режим 2), -2
+	// глобальный лимит (режим 0), больше нуля свой (режим 1). Другое у qbit
+	// не бывает, режим Transmission тогда не трогаем
 	args := map[string]interface{}{"ids": []string{hash}}
 	switch {
 	case opts.MaxRatio > 0:
@@ -469,7 +477,10 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 		return err
 	}
 
-	args := addArgs(opts, c.downloadDir)
+	// выбор файлов ставим до старта, иначе успеет качнуться лишнее
+	addOpts := opts
+	addOpts.Stopped = opts.Stopped || len(opts.FileSelection) > 0
+	args := addArgs(addOpts, c.downloadDir)
 	args["metainfo"] = base64.StdEncoding.EncodeToString(data)
 	raw, err := c.rpc.call(ctx, "torrent-add", args)
 	if err != nil {
@@ -483,6 +494,50 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 		return err
 	}
 	c.applyMaxRatio(ctx, hash, opts)
+	if len(opts.FileSelection) == 0 {
+		return nil
+	}
+	if err = c.applySelection(ctx, hash, opts); err != nil {
+		// убираем без файлов и на своем контексте: отмена ctx не должна
+		// оставить висеть остановленный торрент без выбора
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), selectionCleanupTimeout)
+		defer cancel()
+		if derr := c.Discard(dctx, hash); derr != nil {
+			logger.Warn(fmt.Sprintf("transmission: discard %s after failed file selection: %v", hash, derr))
+		}
+		return fmt.Errorf("apply file selection to %s: %w", opts.Name, err)
+	}
+	return nil
+}
+
+const selectionCleanupTimeout = 10 * time.Second
+
+func (c *Client) applySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
+	files, err := c.Files(ctx, hash)
+	if err != nil {
+		return err
+	}
+	// без списка файлов (нет метаданных) выбор не применить, а старт скачал бы все
+	if len(files) == 0 {
+		return fmt.Errorf("torrent %s has no files yet", hash)
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	idx := fileselect.Unwanted(opts.FileSelection, paths)
+	// пустой files-unwanted значит все файлы, поэтому шлем только непустой
+	if len(idx) > 0 {
+		if _, err = c.rpc.call(ctx, "torrent-set", map[string]interface{}{"ids": []string{hash}, "files-unwanted": idx}); err != nil {
+			return err
+		}
+	}
+	if !opts.Stopped {
+		if _, err = c.rpc.call(ctx, "torrent-start", map[string]interface{}{"ids": []string{hash}}); err != nil {
+			return err
+		}
+	}
+	logger.Info(fmt.Sprintf("transmission: file selection for %s: %d of %d files skipped", opts.Name, len(idx), len(paths)))
 	return nil
 }
 
@@ -494,11 +549,9 @@ func (c *Client) addMagnetVerified(ctx context.Context, magnet string, opts mode
 		}
 	}
 	if opts.Comment != "" {
-		// ponytail: у RPC Transmission нет способа задать комментарий торрента при
-		// добавлении по магниту, поэтому ссылка на тему трекера у него не
-		// сохранится; зеркалит запасной путь qbittorrent при недоступном
-		// fetchMetadata. Апгрейд: если появится способ прописать комментарий
-		// после раздачи метаданных, довести его здесь.
+		// RPC Transmission не дает задать комментарий при добавлении по магниту,
+		// ссылка на тему потеряется. Так же ведет себя qbittorrent без fetchMetadata.
+		// Если появится способ дописать комментарий после метаданных, сделать тут
 		logger.Warn(fmt.Sprintf("transmission: magnet add for %s has no way to set torrent comment, tracker link will not persist", opts.Name))
 	}
 
@@ -526,15 +579,12 @@ func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 }
 
 func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error {
+	// по магниту комментарий не задать, и старая magnet-пара blackhole так
+	// и осталась бы невидимой. Собираем .torrent с комментарием сами, если
+	// не вышло, добавляем магнитом
 	if opts.Comment != "" {
-		// старая magnet-пара blackhole здесь без своей добычи метаданных
-		// невидима навсегда: у RPC Transmission нет способа задать комментарий
-		// при добавлении по магниту (см. предупреждение ниже в addMagnetVerified).
-		// Пробуем собрать .torrent сами и добавить файлом с уже вшитым
-		// комментарием; неудача не фатальна, остаётся прежнее поведение
-		// (добавление магнитом с предупреждением о потере ссылки на тему).
-		// Свой подконтекст (см. magnetFetchTimeout) - иначе мёртвый рой съедает
-		// весь ctx целиком, и запасному пути ниже нечем воспользоваться
+		// потолок сильно меньше blackhole.AddTimeout (6 мин): мертвый рой иначе
+		// съест весь ctx и запасному пути ниже ничего не останется
 		fctx, cancel := context.WithTimeout(ctx, magnetFetchTimeout)
 		data, ferr := magnetFetch(fctx, magnet)
 		cancel()
@@ -581,14 +631,10 @@ func (c *Client) Reachable(ctx context.Context) bool {
 	return err == nil
 }
 
-func (c *Client) ForceRedownload(_ context.Context, _ string) error {
-	// Transmission RPC не умеет ни выгрузить .torrent целиком (как
-	// ExportTorrentCtx в qbittorrent), ни задать комментарий раздачи при
-	// повторном добавлении, а весь трекинг trackerr держится на комментарии
-	// со ссылкой на тему трекера. qbit-версия выгружает .torrent и добавляет
-	// его обратно вместе с комментарием, здесь такого пути нет. Кнопка
-	// удаляет файлы с диска, поэтому молча ломать трекинг нельзя: отказываем
-	// сразу, не трогая раздачу.
+func (c *Client) ForceRedownload(_ context.Context, _ string, _ model.RedownloadOptions) error {
+	// RPC не умеет выгрузить .torrent (как ExportTorrentCtx в qbittorrent) и не
+	// задает комментарий при повтороном добавлении, а трекинг держится на ссылке
+	// в комментарии. Кнопка сносит файлы, так что отказываем сразу
 	return ErrRedownloadUnsupported
 }
 
@@ -601,4 +647,92 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+func (c *Client) ReplacePending(hash string) bool {
+	return c.bh.PendingReplace(hash)
+}
+
+func (c *Client) Discard(ctx context.Context, hash string) error {
+	logger.Info(fmt.Sprint("discarding torrent without files: ", hash))
+	_, err := c.rpc.call(ctx, "torrent-remove", map[string]interface{}{
+		"ids":               []string{hash},
+		"delete-local-data": false,
+	})
+	return err
+}
+
+func (c *Client) Resume(ctx context.Context, hash string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, checkWaitBudget)
+	defer cancel()
+	// остановленное добавление само сверяет файлы со старыми: ждем ее конца
+	status, err := c.waitChecked(waitCtx, hash)
+	if err != nil {
+		return err
+	}
+	// запущенный не проверяем заново, иначе каждый тик подметальщика гонял бы диск
+	if status != 0 {
+		return nil
+	}
+	// torrent-start не перепроверяет и после удаления файлов старого
+	// отказывает "No data found", поэтому сначала torrent-verify
+	ids := []string{hash}
+	if _, err = c.rpc.call(ctx, "torrent-verify", map[string]interface{}{"ids": ids}); err != nil {
+		return err
+	}
+	if _, err = c.waitChecked(waitCtx, hash); err != nil {
+		return err
+	}
+	if _, err = c.rpc.call(ctx, "torrent-start", map[string]interface{}{"ids": ids}); err != nil {
+		return err
+	}
+	t, err := c.torrentByHash(ctx, hash, []string{"hashString", "error", "errorString"})
+	if err != nil {
+		return err
+	}
+	if t == nil {
+		return fmt.Errorf("torrent %s not found after start", hash)
+	}
+	// 3 это локальная ошибка данных; 1 и 2 про трекер, файлы тут ни при чем
+	if t.Error == 3 {
+		return fmt.Errorf("torrent %s failed to start: %s", hash, t.ErrorString)
+	}
+	return nil
+}
+
+func (c *Client) waitChecked(ctx context.Context, hash string) (int, error) {
+	for {
+		t, err := c.torrentByHash(ctx, hash, []string{"hashString", "status"})
+		if err == nil && t == nil {
+			err = fmt.Errorf("torrent %s not found", hash)
+		}
+		if err != nil {
+			return 0, fmt.Errorf("wait for verify of %s: %w", hash, err)
+		}
+		// 1 ждет проверки, 2 проверяется
+		if t.Status != 1 && t.Status != 2 {
+			return t.Status, nil
+		}
+		if err = sleepCtx(ctx, checkWaitDelay); err != nil {
+			return 0, fmt.Errorf("wait for verify of %s: %w", hash, err)
+		}
+	}
+}
+
+func (c *Client) Files(ctx context.Context, hash string) ([]model.TorrentFile, error) {
+	t, err := c.torrentByHash(ctx, hash, []string{"hashString", "files", "fileStats"})
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return nil, fmt.Errorf("torrent %s not found", hash)
+	}
+	if len(t.Files) != len(t.FileStats) {
+		return nil, fmt.Errorf("torrent %s: %d files but %d file stats", hash, len(t.Files), len(t.FileStats))
+	}
+	files := make([]model.TorrentFile, len(t.Files))
+	for i := range t.Files {
+		files[i] = model.TorrentFile{Path: t.Files[i].Name, Wanted: bool(t.FileStats[i].Wanted)}
+	}
+	return files, nil
 }

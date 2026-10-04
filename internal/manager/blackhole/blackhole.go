@@ -18,47 +18,29 @@ import (
 
 const (
 	sweepInterval = 5 * time.Minute
-	// reachableTimeout ограничивает пробу доступности: без неё зависший клиент
-	// загрузок навсегда блокирует горутину подметания, а app.Run ждёт эту
-	// горутину перед возвратом, так что зависает и перезагрузка.
+	// без потолка зависший клиент навсегда держит горутину подметания, а app.Run
+	// ждет ее перед выходом, так что зависает и перезагрузка
 	reachableTimeout = 30 * time.Second
-	// AddTimeout это страховка от зависшего вызова добавления, а не регулятор
-	// очереди. У qbittorrent.Client (internal/manager/client/qbittorrent) на
-	// пути с комментарием ДВА последовательных потолка внутри одного и того
-	// же контекста: сперва свой magnetFetchTimeout = 1 * time.Minute (своя
-	// добыча метаданных по магниту), и только при её неудаче - запасной путь
-	// через qbit, ожидание metadataFetchTimeout = 5 * time.Minute. AddTimeout
-	// обязан быть не меньше СУММЫ обоих потолков плюс запас на дорогу, а не
-	// длиннее одного metadataFetchTimeout, как было раньше: иначе на мёртвом
-	// для обеих добыч рое своя добыча съедает первую минуту, а запасной путь
-	// упирается дедлайном внешнего контекста раньше своего metadataFetchTimeout
-	// - тот вернёт context.DeadlineExceeded вместо errMetadataFetchTimeout, а
-	// это не совпадает ни с errFetchMetadataUnsupported, ни с
-	// errMetadataFetchTimeout (metadata.go), и запасной путь «без комментария»
-	// не запускается вовсе - торрент не добавляется НИКАК. Медленный рой тогда
-	// не переподхватится никогда, по AddTimeout впустую на каждый тик.
-	// Задержка всего, что стоит за ним в очереди того же тика, принимается как
-	// плата. Пакет blackhole не зависит от qbittorrent, поэтому оба числа
-	// продублированы суммой здесь; экспортирована, чтобы пакет qbittorrent мог
-	// держать тест-страж на равенство magnetFetchTimeout + metadataFetchTimeout
-	// + 1 мин запаса == AddTimeout, вместо того чтобы полагаться на дисциплину
-	// поддержки этого комментария. Transmission этим не задет: у его запасного
-	// пути (обычное добавление магнитом) нет собственного многоминутного
-	// ожидания.
-	AddTimeout = 7 * time.Minute
+	// страховка от зависшего добавления. У qbit путь с комментарием ждет в одном ctx подряд magnetFetchTimeout
+	// (1 мин) и metadataFetchTimeout (5 мин). Если тут меньше суммы с запасом, запасной путь упрется в дедлайн,
+	// вернет DeadlineExceeded, путь без комментария не запустится и торрент не добавится вообще. Сумму сторожит тест в qbittorrent
+	AddTimeout      = 7 * time.Minute
+	CheckWaitBudget = 2 * time.Minute
+	// свежая пара еще в работе у записавшего: replaceTorrent добавляет новый
+	// остановленным (до AddTimeout) и запускает его (Resume до CheckWaitBudget),
+	// раньше конца окна подметальщик мог бы откатить торрент, который вот-вот запустят
+	freshPairGrace = AddTimeout + CheckWaitBudget + time.Minute
 )
 
-// SettleDelay даёт клиенту загрузок время дочистить файлы: торрент уходит из
-// списка сразу, но задача удаления продолжает работать, и слишком раннее
-// повторное добавление того же infohash молча отвергается. Экспортируемая
-// переменная, чтобы тесты могли её ужать.
-var SettleDelay = 3 * time.Second
+var SettleDelay = 3 * time.Second // переменная, чтобы тесты могли ужать
 
 type client interface {
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) error
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error
 	Exists(ctx context.Context, hash string) (bool, error)
 	Reachable(ctx context.Context) bool
+	Discard(ctx context.Context, hash string) error
+	Resume(ctx context.Context, hash string) error
 }
 
 type Store struct {
@@ -97,7 +79,7 @@ func (s *Store) Write(data []byte, magnet string, opts model.ManagerAddFileOptio
 	torrentPath, jsonPath := blackholePaths(s.dir, opts.Hash)
 	wroteTorrent := false
 	if len(data) > 0 {
-		if err = os.WriteFile(torrentPath, data, 0o644); err != nil {
+		if err = writeFileAtomic(torrentPath, data); err != nil {
 			return fmt.Errorf("write blackhole torrent: %w", err)
 		}
 		wroteTorrent = true
@@ -114,9 +96,8 @@ func (s *Store) Write(data []byte, magnet string, opts model.ManagerAddFileOptio
 }
 
 func writeFileAtomic(path string, data []byte) error {
-	// для пары только с магнитом json единственная копия страховки, поэтому
-	// os.WriteFile с усечением и записью теряет её при падении посреди записи;
-	// вместо этого пишем в соседний временный файл, fsync и переименование поверх цели
+	// у пары с одним магнитом json это вся страховка, а os.WriteFile потеряет ее при
+	// падении посреди записи. Пишем во временный файл, fsync, потом rename поверх
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -128,9 +109,8 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	if err = f.Sync(); err != nil {
-		// fsync поддерживается не на всякой файловой системе; не валим из-за
-		// него всю запись, просто отмечаем (переименованию ниже для
-		// надёжности нужен свой fsync каталога, он делается отдельно)
+		// fsync умеет не каждая ФС, запись из-за него не валим. Для rename ниже
+		// отдельно делается fsync каталога
 		logger.Warn(fmt.Sprintf("blackhole: fsync %s: %v", tmp, err))
 	}
 	if err = f.Close(); err != nil {
@@ -141,10 +121,8 @@ func writeFileAtomic(path string, data []byte) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	// само переименование не надёжно, пока не сброшена запись каталога:
-	// без этого падение сразу после Rename на некоторых файловых системах
-	// всё ещё теряет файл, хотя Rename вернул успех. История та же, что с
-	// fsync файла выше: не фатально, поддерживается не везде.
+	// пока запись каталога не сброшена, падение сразу после Rename на некоторых ФС
+	// теряет файл, хотя Rename вернул успех. Как и fsync файла, не фатально
 	if err = syncDir(filepath.Dir(path)); err != nil {
 		logger.Warn(fmt.Sprintf("blackhole: fsync dir %s: %v", filepath.Dir(path), err))
 	}
@@ -171,14 +149,9 @@ func (s *Store) Remove(hash string) {
 }
 
 func (s *Store) Settled(ctx context.Context, hash string) bool {
-	// задача клиента загрузок на удаление с файлами идёт асинхронно: торрент
-	// исчезает из списка в момент вызова удаления, но удаление файлов
-	// продолжается после этого. Успешное добавление заново (или
-	// ErrAlreadyAdded) значит лишь, что торрент в списке прямо сейчас, а не
-	// что никакая задача удаления не гонится снести его вместе с файлами
-	// снова. Выжидаем ту же задержку, на которую опирается ForceRedownload,
-	// прежде чем верить в присутствие, и берём для этого не ctx конкретного
-	// добавления, тот уже отменён вызывающим.
+	// удаление с файлами идет у клиента асинхронно: торрент уходит из списка сразу, а задача
+	// еще может снести его снова, ранний повтор того же infohash клиент молча отвергает. Ждем
+	// SettleDelay, как ForceRedownload, и на общем ctx, ctx добавления вызывающий уже отменил
 	if err := sleepCtx(ctx, SettleDelay); err != nil {
 		logger.Warn(fmt.Sprintf("blackhole: %s settle wait interrupted: %v, keeping record for a later retry", hash, err))
 		return false
@@ -211,13 +184,16 @@ type blackholePair struct {
 	torrent []byte
 	magnet  string
 	opts    model.ManagerAddFileOptions
+	modTime time.Time
 }
 
 const reasonHashMismatch = "hash mismatch"
 
 type blackholeBroken struct {
-	hash   string
-	reason string
+	hash    string
+	reason  string
+	opts    model.ManagerAddFileOptions
+	modTime time.Time
 }
 
 func scanBlackholeDir(dir string) (pairs []blackholePair, broken []blackholeBroken, err error) {
@@ -231,6 +207,7 @@ func scanBlackholeDir(dir string) (pairs []blackholePair, broken []blackholeBrok
 
 	torrents := map[string]string{}
 	jsons := map[string]string{}
+	modTimes := map[string]time.Time{}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -239,13 +216,15 @@ func scanBlackholeDir(dir string) (pairs []blackholePair, broken []blackholeBrok
 		// файлы с любым другим расширением не трогаем вообще, даже не логируем
 		switch ext := filepath.Ext(name); ext {
 		case ".torrent":
-			// приводим к нижнему регистру, чтобы хеш совпал с тем, что
-			// пересобирает removeBlackholePair (blackholePaths всегда понижает
-			// регистр), иначе пара со смешанным регистром на диске оживала бы
-			// каждый тик вечно и её нельзя было бы удалить
+			// нижний регистр, как в blackholePaths, иначе пару со смешанным регистром
+			// подметальщик оживлял бы каждый тик и никогда не смог удалить
 			torrents[strings.ToLower(strings.TrimSuffix(name, ext))] = filepath.Join(dir, name)
 		case ".json":
-			jsons[strings.ToLower(strings.TrimSuffix(name, ext))] = filepath.Join(dir, name)
+			hash := strings.ToLower(strings.TrimSuffix(name, ext))
+			jsons[hash] = filepath.Join(dir, name)
+			if info, infoErr := e.Info(); infoErr == nil {
+				modTimes[hash] = info.ModTime()
+			}
 		}
 	}
 
@@ -253,10 +232,10 @@ func scanBlackholeDir(dir string) (pairs []blackholePair, broken []blackholeBrok
 		tPath, hasTorrent := torrents[hash]
 		data, magnet, opts, reason := loadBlackholePair(hash, jPath, tPath, hasTorrent)
 		if reason != "" {
-			broken = append(broken, blackholeBroken{hash: hash, reason: reason})
+			broken = append(broken, blackholeBroken{hash: hash, reason: reason, opts: opts, modTime: modTimes[hash]})
 			continue
 		}
-		pairs = append(pairs, blackholePair{hash: hash, torrent: data, magnet: magnet, opts: opts})
+		pairs = append(pairs, blackholePair{hash: hash, torrent: data, magnet: magnet, opts: opts, modTime: modTimes[hash]})
 	}
 	for hash := range torrents {
 		if _, ok := jsons[hash]; !ok {
@@ -278,12 +257,10 @@ func loadBlackholePair(hash, jsonPath, torrentPath string, hasTorrent bool) (dat
 	if err = json.Unmarshal(raw, &meta); err != nil {
 		return nil, "", opts, fmt.Sprintf("parse json: %v", err)
 	}
-	// meta встраивает ManagerAddFileOptions плоско, поэтому .json, записанный
-	// старым кодом (только опции, без ключа Magnet), тоже разбирается здесь,
-	// а Magnet остаётся нулевым: миграция существующих пар не нужна.
+	// опции встроены плоско, так что старый .json без Magnet тоже читается, миграция не нужна
 	opts = meta.ManagerAddFileOptions
-	// тело json "null" или "{}" разбирается без ошибки и с нулевым opts:
-	// ловим это здесь, а не восстанавливаем торрент без категории/тегов/имени
+	// "null" и "{}" разбираются без ошибки в пустые opts. Ловим тут, иначе восстановим
+	// торрент без категории, тегов и имени
 	if !strings.EqualFold(meta.Hash, hash) {
 		return nil, "", opts, fmt.Sprintf("%s: meta hash %q, file %s", reasonHashMismatch, meta.Hash, hash)
 	}
@@ -296,9 +273,8 @@ func loadBlackholePair(hash, jsonPath, torrentPath string, hasTorrent bool) (dat
 	}
 	data, err = os.ReadFile(torrentPath)
 	if err != nil {
-		// битый .torrent рядом с рабочим магнитом ещё восстановим, не даём ему
-		// вечно гнить сломанным, но ошибку чтения оставляем на виду: это
-		// единственный сигнал умирающего диска до того, как сломаются все пары
+		// битый .torrent при живом магните еще восстановим, но ошибку чтения пишем в лог:
+		// другого сигнала об умирающем диске до поломки всех пар не будет
 		if meta.Magnet != "" {
 			logger.Warn(fmt.Sprintf("blackhole %s: read torrent: %v, falling back to magnet", hash, err))
 			return nil, meta.Magnet, opts, ""
@@ -311,9 +287,8 @@ func loadBlackholePair(hash, jsonPath, torrentPath string, hasTorrent bool) (dat
 		}
 		return nil, "", opts, "empty torrent file"
 	}
-	// непустой .torrent всё ещё может быть обрезанным bencode-блобом после
-	// падения посреди записи; запасной магнит означает, что AddFromBuffer не
-	// получит байты, на которых torrentmeta.InfoHash снова просто упадёт
+	// непустой .torrent может быть обрезан падением посреди записи. Тогда берем магнит,
+	// иначе AddFromBuffer получит байты, на которых InfoHash снова упадет
 	if _, err = torrentmeta.InfoHash(data); err != nil {
 		if meta.Magnet != "" {
 			logger.Warn(fmt.Sprintf("blackhole %s: parse torrent: %v, falling back to magnet", hash, err))
@@ -357,13 +332,17 @@ func (s *Store) SweepOnce(ctx context.Context) {
 		return
 	}
 	for _, b := range broken {
-		// сломанная запись опасна только пока отсутствует торрент, который она
-		// должна была защитить; если торрент уже в клиенте, запись ничего не
-		// защищает и может уйти, тот же вызов ErrAlreadyAdded уже делает это
-		// для валидной пары ниже
-		// кроме случая несовпадения хеша: там байты на диске принадлежат
-		// другому infohash, чем имя файла, поэтому присутствие торрента из
-		// имени файла ничего не говорит о том, что защищает эта запись
+		// битая пара незаконченной замены все еще метка: снять ее значило бы
+		// оставить новый торрент остановленным навсегда
+		if replacePair(b.opts, b.hash) && !strings.HasPrefix(b.reason, reasonHashMismatch) {
+			if time.Since(b.modTime) >= freshPairGrace {
+				s.finishReplace(ctx, blackholePair{hash: b.hash, opts: b.opts, modTime: b.modTime})
+			}
+			continue
+		}
+		// битая запись опасна, только пока нет торрента, который она защищает. Если он уже в клиенте,
+		// запись можно убрать, как с ErrAlreadyAdded для целой пары ниже. Кроме hash mismatch: там
+		// байты от другого infohash, и торрент из имени файла ничего про них не говорит
 		present, err := s.client.Exists(ctx, b.hash)
 		if err == nil && present && !strings.HasPrefix(b.reason, reasonHashMismatch) {
 			removeBlackholePair(s.dir, b.hash)
@@ -377,14 +356,15 @@ func (s *Store) SweepOnce(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		addCtx, cancel := context.WithTimeout(ctx, AddTimeout)
-		var addErr error
-		if len(p.torrent) > 0 {
-			addErr = s.client.AddFromBuffer(addCtx, bytes.NewBuffer(p.torrent), p.opts)
-		} else {
-			addErr = s.client.AddFromMagnet(addCtx, p.magnet, p.opts)
+		if age := time.Since(p.modTime); age < freshPairGrace {
+			logger.Debug(fmt.Sprintf("blackhole sweep: skipping fresh pair %s (%s), age %s", p.opts.Name, p.hash, age.Round(time.Second)))
+			continue
 		}
-		cancel()
+		if replacePair(p.opts, p.hash) {
+			s.finishReplace(ctx, p)
+			continue
+		}
+		addErr := s.readd(ctx, p)
 		switch {
 		case addErr == nil:
 			if s.Settled(ctx, p.hash) {
@@ -400,4 +380,104 @@ func (s *Store) SweepOnce(ctx context.Context) {
 			logger.Warn(fmt.Sprintf("blackhole sweep: re-add %s (%s) failed: %v", p.opts.Name, p.hash, addErr))
 		}
 	}
+}
+
+func (s *Store) readd(ctx context.Context, p blackholePair) error {
+	addCtx, cancel := context.WithTimeout(ctx, AddTimeout)
+	defer cancel()
+	opts := p.opts
+	opts.Stopped = false
+	if len(p.torrent) > 0 {
+		return s.client.AddFromBuffer(addCtx, bytes.NewBuffer(p.torrent), opts)
+	}
+	return s.client.AddFromMagnet(addCtx, p.magnet, opts)
+}
+
+func (s *Store) finishReplace(ctx context.Context, p blackholePair) {
+	old := p.opts.ReplacesHash
+	oldPresent, err := s.client.Exists(ctx, old)
+	if err != nil {
+		logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): old %s presence check failed: %v, keeping pair", p.opts.Name, p.hash, old, err))
+		return
+	}
+	if oldPresent {
+		// старый жив, значит его файлы целы: убираем новый без файлов, и
+		// следующий проход runner повторит замену с начала
+		newPresent, err := s.client.Exists(ctx, p.hash)
+		if err != nil {
+			logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): presence check failed: %v, keeping pair", p.opts.Name, p.hash, err))
+			return
+		}
+		if newPresent {
+			if err = s.client.Discard(ctx, p.hash); err != nil {
+				logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): discard failed: %v, keeping pair", p.opts.Name, p.hash, err))
+				return
+			}
+		}
+		removeBlackholePair(s.dir, p.hash)
+		logger.Info(fmt.Sprintf("blackhole sweep: replace %s (%s) rolled back, old torrent %s kept", p.opts.Name, p.hash, old))
+		return
+	}
+	// одной пробе "нет" не верим: клиент мог еще не дочитать свой список
+	if err = sleepCtx(ctx, SettleDelay); err != nil {
+		return
+	}
+	if oldPresent, err = s.client.Exists(ctx, old); err != nil || oldPresent {
+		logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): old %s not confirmed absent (present %v, err %v), keeping pair", p.opts.Name, p.hash, old, oldPresent, err))
+		return
+	}
+	newPresent, err := s.client.Exists(ctx, p.hash)
+	if err != nil {
+		logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): presence check failed: %v, keeping pair", p.opts.Name, p.hash, err))
+		return
+	}
+	if newPresent {
+		resumeCtx, cancel := context.WithTimeout(ctx, AddTimeout)
+		err = s.client.Resume(resumeCtx, p.hash)
+		cancel()
+		if err != nil {
+			logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): start failed: %v, keeping pair", p.opts.Name, p.hash, err))
+			return
+		}
+	} else if len(p.torrent) == 0 && p.magnet == "" {
+		logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): broken pair, both torrents absent, nothing to re-add, keeping pair", p.opts.Name, p.hash))
+		return
+	} else if err = s.readd(ctx, p); err != nil && !errors.Is(err, model.ErrAlreadyAdded) {
+		logger.Warn(fmt.Sprintf("blackhole sweep: replace %s (%s): re-add failed: %v, keeping pair", p.opts.Name, p.hash, err))
+		return
+	}
+	if s.Settled(ctx, p.hash) {
+		logger.Info(fmt.Sprintf("blackhole sweep: replace %s (%s) finished", p.opts.Name, p.hash))
+		removeBlackholePair(s.dir, p.hash)
+	}
+}
+
+func (s *Store) PendingReplace(hash string) bool {
+	if s.dir == "" {
+		return false
+	}
+	_, jsonPath := blackholePaths(s.dir, hash)
+	if _, err := os.Stat(jsonPath); err != nil {
+		// и при иной ошибке (каталог недоступен) пары нет: записать ее туда
+		// нельзя, так что до удаления файлов дело не дойдет
+		if !errors.Is(err, os.ErrNotExist) {
+			logger.Warn(fmt.Sprintf("blackhole: pending replace check %s: %v", hash, err))
+		}
+		return false
+	}
+	// нечитаемую пару считаем незаконченной заменой: ошибка в эту сторону только
+	// отложит обновление, но не потеряет его
+	raw, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return true
+	}
+	var meta blackholeMeta
+	if err = json.Unmarshal(raw, &meta); err != nil {
+		return true
+	}
+	return meta.ReplacesHash != ""
+}
+
+func replacePair(opts model.ManagerAddFileOptions, hash string) bool {
+	return opts.ReplacesHash != "" && !strings.EqualFold(opts.ReplacesHash, hash)
 }

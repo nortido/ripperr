@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
@@ -22,11 +23,9 @@ import (
 	"ripperr/internal/model"
 )
 
-// buildNamedTestTorrent это buildTestTorrent (client_test.go), параметризованный
-// именем, потому что два вызова с одинаковым именем дают один и тот же infohash,
-// а нескольким тестам подметания нужны разные пары на диске одновременно.
 func buildNamedTestTorrent(t *testing.T, name string) ([]byte, string) {
 	t.Helper()
+	// одно имя дает один infohash, а тестам подметания нужны разные пары на диске
 	info := metainfo.Info{
 		PieceLength: 16384,
 		Pieces:      make([]byte, 20),
@@ -48,30 +47,20 @@ func buildNamedTestTorrent(t *testing.T, name string) ([]byte, string) {
 	return buf.Bytes(), mi.HashInfoBytes().HexString()
 }
 
-// blackholePaths это зеркало приватной раскладки путей пакета blackhole,
-// нужное только тестам для сборки ожидаемых путей на диске.
 func blackholePaths(dir, hash string) (torrentPath, jsonPath string) {
 	hash = strings.ToLower(hash)
 	return filepath.Join(dir, hash+".torrent"), filepath.Join(dir, hash+".json")
 }
 
-// sweepStubServer это минимальный поддельный qbit, нужный только тесту с
-// addMagnetWithComment/fetchMetadata: torrents/info сообщает то, что лежит в
-// present, torrents/add переводит хеш в present, fetchMetadata и saveMetadata
-// обслуживают путь fetchAndSaveMetadata.
 type sweepStubServer struct {
 	mu              sync.Mutex
 	present         map[string]bool
 	metadataTorrent []byte
-	// lastAddedFile и lastAddedURL это последний вызов torrents/add: файлом
-	// (metainfo) или по магнит-URL - только AddFromMagnet-тестам нужно видеть,
-	// каким путём в итоге ушло добавление
+	// последний torrents/add, файлом или по магниту: тесты AddFromMagnet по нему видят, каким путем ушло добавление
 	lastAddedFile []byte
 	lastAddedURL  string
-	// fetchMetadataForeverPending моделирует рой, мёртвый и для собственной
-	// добычи, и для qbit: fetchMetadata вечно отвечает 202 (метаданные ещё не
-	// готовы), а не 200 с результатом - единственный способ дойти до ветки
-	// errMetadataFetchTimeout в waitForMetadata
+	// рой мертв и для нас, и для qbit: fetchMetadata всегда отвечает 202.
+	// По-другому до errMetadataFetchTimeout в waitForMetadata не дойти
 	fetchMetadataForeverPending bool
 	server                      *httptest.Server
 }
@@ -138,10 +127,8 @@ func newSweepStubServer(t *testing.T) *sweepStubServer {
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
-	// обслуживает addMagnetWithComment: настоящий qbit отвечает на
-	// fetchMetadata/saveMetadata до самого torrents/add, так как opts.Comment
-	// в бою выставлен всегда (URL темы), значит именно этим путём и идёт
-	// повторное добавление магнита.
+	// настоящий qbit гоняет fetchMetadata/saveMetadata до torrents/add. Comment в бою есть всегда
+	// (URL темы), так что магнит заново добавляется как раз этим путем
 	mux.HandleFunc("/api/v2/torrents/fetchMetadata", func(w http.ResponseWriter, _ *http.Request) {
 		s.mu.Lock()
 		pending := s.fetchMetadataForeverPending
@@ -172,12 +159,23 @@ func writePair(t *testing.T, dir string, data []byte, opts model.ManagerAddFileO
 	if err := blackhole.New(dir, nil).Write(data, "", opts); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
+	ageJSON(t, dir, opts.Hash)
 }
 
 func writeMagnetPair(t *testing.T, dir, magnet string, opts model.ManagerAddFileOptions) {
 	t.Helper()
 	if err := blackhole.New(dir, nil).Write(nil, magnet, opts); err != nil {
 		t.Fatalf("Write: %v", err)
+	}
+	ageJSON(t, dir, opts.Hash)
+}
+
+func ageJSON(t *testing.T, dir, hash string) {
+	t.Helper()
+	_, jsonPath := blackholePaths(dir, hash)
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(jsonPath, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
 	}
 }
 
@@ -223,8 +221,7 @@ func TestSweepBlackholeOnce_MagnetPairWithComment_ReAddsViaMetadataFetch(t *test
 	}
 
 	magnet := "magnet:?xt=urn:btih:" + hash
-	// Comment выставлен намеренно: это боевая форма (URL темы), которая уводит
-	// AddFromMagnet в addMagnetWithComment/fetchAndSaveMetadata.
+	// Comment как в бою (URL темы), он уводит AddFromMagnet в addMagnetWithComment
 	opts := model.ManagerAddFileOptions{Hash: hash, Name: "with-comment", Comment: "http://tracker.example/topic/1"}
 	writeMagnetPair(t, dir, magnet, opts)
 
@@ -242,8 +239,7 @@ func TestSweepBlackholeOnce_DeleteEnabled_SuccessRemovesPair(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// боевая форма: preAddPresenceCheck идёт веткой waitUntilAbsent вместо
-	// ensureNotPresent всякий раз, когда выставлен DeleteEnabled
+	// как в бою: с DeleteEnabled preAddPresenceCheck идет через waitUntilAbsent
 	data, hash := buildNamedTestTorrent(t, "delete-enabled.txt")
 	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "delete-enabled"})
 

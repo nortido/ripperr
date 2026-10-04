@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -56,8 +57,6 @@ func writeResult(w http.ResponseWriter, args interface{}) {
 	_ = json.NewEncoder(w).Encode(rpcResponse{Result: "success", Arguments: raw})
 }
 
-// stubServer это минимальный поддельный Transmission: держит торренты в памяти
-// и обслуживает ровно те методы RPC, которые использует Client.
 type stubServer struct {
 	mu          sync.Mutex
 	downloadDir string
@@ -65,15 +64,21 @@ type stubServer struct {
 	addCalls    []map[string]interface{}
 	removeCalls []map[string]interface{}
 	setCalls    []map[string]interface{}
-	// failEnsurePresent: не добавлять торрент по-настоящему, чтобы
-	// смоделировать молчаливый отказ Transmission
+	methods     []string
+	startCalls  []map[string]interface{}
+	// torrent-get с полями files или fileStats
+	fileGets int
+	// достаются торренту, созданному torrent-add
+	addFiles     []rpcFile
+	addFileStats []rpcFileStat
+	// torrent-set с files-unwanted отвечает ошибкой
+	failSetUnwanted bool
+	// торрент на деле не добавляется, как при молчаливом отказе Transmission
 	failEnsurePresent bool
-	// duplicateFor: torrent-add с этим хешем отвечает torrent-duplicate вместо
-	// torrent-added, как настоящий Transmission на повторное добавление, и не
-	// трогает состояние торрентов
+	// torrent-add с этим хешем отвечает torrent-duplicate, как настоящий
+	// Transmission на повторное добавление, и торренты не трогает
 	duplicateFor string
-	// failTorrentGetFor: torrent-get с этим хешем в ids отвечает ошибкой,
-	// моделирует сбой сети при проверке categoryInsideBase перед удалением
+	// torrent-get с этим хешем падает: сбой сети в categoryInsideBase перед удалением
 	failTorrentGetFor string
 	server            *httptest.Server
 }
@@ -93,10 +98,19 @@ func newStubServer(t *testing.T, downloadDir string) *stubServer {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		s.methods = append(s.methods, req.Method)
 		switch req.Method {
 		case "session-get":
 			writeResult(w, map[string]interface{}{"download-dir": s.downloadDir})
 		case "torrent-get":
+			if fields, ok := req.Arguments["fields"].([]interface{}); ok {
+				for _, f := range fields {
+					if f == "files" || f == "fileStats" {
+						s.fileGets++
+						break
+					}
+				}
+			}
 			var list []rpcTorrent
 			if idsRaw, ok := req.Arguments["ids"]; ok {
 				for _, idAny := range idsRaw.([]interface{}) {
@@ -134,6 +148,9 @@ func newStubServer(t *testing.T, downloadDir string) *stubServer {
 					}
 				}
 				s.torrents[hash] = rpcTorrent{HashString: hash, DownloadDir: dl, Labels: labels}
+				if s.addFiles != nil {
+					s.torrents[hash] = rpcTorrent{HashString: hash, DownloadDir: dl, Labels: labels, Files: s.addFiles, FileStats: s.addFileStats}
+				}
 			}
 			writeResult(w, map[string]interface{}{"torrent-added": map[string]interface{}{"hashString": hash}})
 		case "torrent-remove":
@@ -145,7 +162,14 @@ func newStubServer(t *testing.T, downloadDir string) *stubServer {
 			}
 			writeResult(w, map[string]interface{}{})
 		case "torrent-set":
+			if _, ok := req.Arguments["files-unwanted"]; ok && s.failSetUnwanted {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			s.setCalls = append(s.setCalls, req.Arguments)
+			writeResult(w, map[string]interface{}{})
+		case "torrent-start":
+			s.startCalls = append(s.startCalls, req.Arguments)
 			writeResult(w, map[string]interface{}{})
 		default:
 			w.WriteHeader(http.StatusBadRequest)
@@ -191,8 +215,6 @@ func newTestClient(t *testing.T, stub *stubServer, cfg model.ManagerConfig) *Cli
 	return c
 }
 
-// категория из downloadDir
-
 func TestCategoryFromPath(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -204,12 +226,10 @@ func TestCategoryFromPath(t *testing.T) {
 		{"equal", "/downloads", "/downloads", "", true},
 		{"equal trailing slash", "/downloads/", "/downloads", "", true},
 		{"one level inside", "/downloads/movies", "/downloads", "movies", true},
-		// два уровня внутри базы: категория это только первый сегмент (tv), а не
-		// весь хвост (tv/show1), иначе у каждого торрента была бы своя категория
+		// категория только первый сегмент (tv), иначе у каждого торрента своя
 		{"two levels inside", "/downloads/tv/show1", "/downloads", "tv", true},
 		{"outside base", "/other/place", "/downloads", "place", false},
-		// одноимённый каталог вне базы: категория совпадает по basename с той, что
-		// была бы внутри базы, но insideBase обязан различать их для Delete
+		// basename как у категории внутри базы, но для Delete их надо различать
 		{"outside base same name as inside category", "/mnt/archive/movies", "/downloads", "movies", false},
 	}
 	for _, c := range cases {
@@ -240,8 +260,7 @@ func TestDestinationDir(t *testing.T) {
 		})
 	}
 
-	// базовый каталог сессии пуст (session-get ничего не отдал): результат
-	// никогда не должен быть относительным путём
+	// session-get не отдал базовый каталог: относительный путь получиться не должен
 	emptyBaseCases := []struct {
 		name string
 		opts model.ManagerAddFileOptions
@@ -296,7 +315,7 @@ func TestMapEntry(t *testing.T) {
 	if e.MaxSeedingTime != 0 {
 		t.Error("MaxSeedingTime should always be zero")
 	}
-	// status stopped (0) + percentDone >= 1 -> paused max ratio overrides seedRatioMode
+	// остановлен и докачан: PausedMaxRatio перекрывает seedRatioMode
 	if e.MaxRatio != 0.5 {
 		t.Errorf("expected paused max ratio override, got %v", e.MaxRatio)
 	}
@@ -379,8 +398,7 @@ func TestAddArgs_OmitsEmptyKeysInsteadOfNull(t *testing.T) {
 
 func TestAddFromBuffer_EmptyBaseOmitsDownloadDirKey(t *testing.T) {
 	withFastPresenceTimings(t)
-	// session-get у стаба отдаёт пустой download-dir, как настоящий Transmission
-	// может при неожиданном ответе
+	// пустой download-dir бывает и у настоящего Transmission при странном ответе
 	stub := newStubServer(t, "")
 	c := newTestClient(t, stub, model.ManagerConfig{})
 
@@ -425,7 +443,7 @@ func TestAddFromBuffer_AlreadyPresentDifferentHash(t *testing.T) {
 
 	c := newTestClient(t, stub, model.ManagerConfig{})
 
-	// opts.Hash умышленно другой: та же ветка, что и "чужой торрент уже занял инфохеш"
+	// другой opts.Hash: та же ветка, что "чужой торрент уже занял инфохеш"
 	opts := model.ManagerAddFileOptions{Hash: "deadbeef", Name: "already-present"}
 	err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts)
 	if !errors.Is(err, model.ErrAlreadyAdded) {
@@ -522,9 +540,8 @@ func TestAddFromBuffer_DuplicateResponseIsAlreadyAdded(t *testing.T) {
 	withFastPresenceTimings(t)
 	stub := newStubServer(t, "/downloads")
 	data, hash := buildTestTorrent(t, "dup.txt")
-	// Transmission на дубликат шлёт result:"success" с torrent-duplicate вместо
-	// torrent-added; без разбора этого ключа ensurePresentAfterAdd видит старый
-	// торрент и молча рапортует успех
+	// на дубликат приходит success с torrent-duplicate. Без разбора этого ключа
+	// ensurePresentAfterAdd видит старый торрент и рапортует успех
 	stub.duplicateFor = hash
 	c := newTestClient(t, stub, model.ManagerConfig{})
 
@@ -548,8 +565,6 @@ func TestDelete_DisabledDoesNothing(t *testing.T) {
 
 func TestDelete_CategoryInListDeletesFiles(t *testing.T) {
 	stub := newStubServer(t, "/downloads")
-	// раздача реально лежит внутри базового каталога: категория "movies" совпадает
-	// и с DeleteCategories, и с реальным downloadDir, удаление файлов разрешено
 	stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: "/downloads/movies"})
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
@@ -563,10 +578,8 @@ func TestDelete_CategoryInListDeletesFiles(t *testing.T) {
 
 func TestDelete_CategoryMatchesButOutsideBaseKeepsFiles(t *testing.T) {
 	stub := newStubServer(t, "/downloads")
-	// /mnt/archive/movies даёт ту же категорию "movies" по basename, что и
-	// /downloads/movies, но лежит вне базового каталога: пользователь, добавивший
-	// "movies" в DeleteFilesCategories, имел в виду каталог внутри базы, поэтому
-	// файлы снаружи неё удалять нельзя
+	// категория та же, что у /downloads/movies, но кто добавил "movies" в список
+	// имел ввиду каталог внутри базы. Файлы снаружи не трогаем
 	stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: "/mnt/archive/movies"})
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
@@ -592,9 +605,7 @@ func TestDelete_CategoryNotInListKeepsFiles(t *testing.T) {
 
 func TestDelete_CategoryInsideBaseCheckFailsKeepsFiles(t *testing.T) {
 	stub := newStubServer(t, "/downloads")
-	// сеть/клиент отказывают именно на проверке downloadDir перед удалением:
-	// categoryInsideBase обязан трактовать это как "не внутри" и не удалять файлы,
-	// о принадлежности которых ничего не удалось узнать
+	// где лежит раздача, неизвестно, значит файлы не удаляем
 	stub.failTorrentGetFor = "h1"
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
@@ -608,8 +619,7 @@ func TestDelete_CategoryInsideBaseCheckFailsKeepsFiles(t *testing.T) {
 
 func TestDelete_TorrentAbsentFromCheckKeepsFiles(t *testing.T) {
 	stub := newStubServer(t, "/downloads")
-	// категория совпадает с DeleteCategories, но самой раздачи в клиенте уже нет
-	// (torrentByHash возвращает nil, а не ошибку): тот же безопасный дефолт
+	// раздачи в клиенте уже нет, torrentByHash вернет nil без ошибки. Файлы тоже не трогаем
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
 	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x"}); err != nil {
@@ -624,7 +634,7 @@ func TestForceRedownload_Unsupported(t *testing.T) {
 	stub := newStubServer(t, "/downloads")
 	c := newTestClient(t, stub, model.ManagerConfig{})
 
-	if err := c.ForceRedownload(context.Background(), "somehash"); !errors.Is(err, ErrRedownloadUnsupported) {
+	if err := c.ForceRedownload(context.Background(), "somehash", model.RedownloadOptions{}); !errors.Is(err, ErrRedownloadUnsupported) {
 		t.Fatalf("expected ErrRedownloadUnsupported, got %v", err)
 	}
 }
@@ -698,5 +708,432 @@ func TestIncomingHashSameAs_NilBufferNoMagnet(t *testing.T) {
 	same, known := c.IncomingHashSameAs(nil, "", hash)
 	if same || known {
 		t.Errorf("got same=%v known=%v, want same=false known=false", same, known)
+	}
+}
+
+func TestDeletesFiles(t *testing.T) {
+	all := model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}}
+	cases := []struct {
+		name        string
+		cfg         model.ManagerConfig
+		downloadDir string
+		category    string
+		want        bool
+	}{
+		{"inside base", all, "/downloads/movies", "movies", true},
+		{"outside base", all, "/mnt/archive/movies", "movies", false},
+		{"category not listed", all, "/downloads/tv", "tv", false},
+		{"files disabled", model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}}, "/downloads/movies", "movies", false},
+		{"delete disabled", model.ManagerConfig{DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}}, "/downloads/movies", "movies", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newStubServer(t, "/downloads")
+			stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: tc.downloadDir})
+			c := newTestClient(t, stub, tc.cfg)
+			if got := c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: tc.category}); got != tc.want {
+				t.Fatalf("DeletesFiles = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWaitAbsent(t *testing.T) {
+	withFastPresenceTimings(t)
+	stub := newStubServer(t, "/downloads")
+	stub.putTorrent(rpcTorrent{HashString: "h1"})
+	c := newTestClient(t, stub, model.ManagerConfig{})
+
+	if absent, err := c.WaitAbsent(context.Background(), "h1"); err != nil || absent {
+		t.Fatalf("WaitAbsent(present) = %v, %v; want false, nil", absent, err)
+	}
+	if absent, err := c.WaitAbsent(context.Background(), "missing"); err != nil || !absent {
+		t.Fatalf("WaitAbsent(missing) = %v, %v; want true, nil", absent, err)
+	}
+}
+
+func TestAddArgs_StoppedSendsPaused(t *testing.T) {
+	args := addArgs(model.ManagerAddFileOptions{Stopped: true}, "/downloads")
+	if args["paused"] != true {
+		t.Errorf("paused: got %v, want true", args["paused"])
+	}
+	args = addArgs(model.ManagerAddFileOptions{}, "/downloads")
+	if _, ok := args["paused"]; ok {
+		t.Errorf("expected no paused key for a started add, got %v", args["paused"])
+	}
+}
+
+func TestDiscard_NeverDeletesLocalData(t *testing.T) {
+	stub := newStubServer(t, "/downloads")
+	stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: "/downloads/movies"})
+	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
+
+	if err := c.Discard(context.Background(), "h1"); err != nil {
+		t.Fatalf("Discard: %v", err)
+	}
+	if len(stub.removeCalls) != 1 || stub.removeCalls[0]["delete-local-data"] != false {
+		t.Fatalf("expected one torrent-remove with delete-local-data=false, got %v", stub.removeCalls)
+	}
+}
+
+func withFastCheckWait(t *testing.T, budget time.Duration) {
+	t.Helper()
+	origDelay, origBudget := checkWaitDelay, checkWaitBudget
+	checkWaitDelay, checkWaitBudget = 5*time.Millisecond, budget
+	t.Cleanup(func() { checkWaitDelay, checkWaitBudget = origDelay, origBudget })
+}
+
+func newResumeClient(t *testing.T, statuses []int, afterErr int, afterErrString string) (*Client, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var methods []string
+	started := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/transmission/rpc", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		switch req.Method {
+		case "session-get":
+			writeResult(w, map[string]interface{}{"download-dir": "/downloads"})
+			return
+		case "torrent-start":
+			started = true
+		case "torrent-get":
+			tor := map[string]interface{}{"hashString": "h1", "status": 0, "error": afterErr, "errorString": afterErrString}
+			if !started {
+				tor = map[string]interface{}{"hashString": "h1", "status": statuses[0], "error": 0, "errorString": ""}
+				if len(statuses) > 1 {
+					statuses = statuses[1:]
+				}
+			}
+			methods = append(methods, req.Method)
+			writeResult(w, map[string]interface{}{"torrents": []interface{}{tor}})
+			return
+		}
+		methods = append(methods, req.Method)
+		writeResult(w, map[string]interface{}{})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	c, err := New(model.ManagerConfig{Host: server.URL})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), methods...)
+	}
+}
+
+func TestResume_VerifiesWaitsThenStarts(t *testing.T) {
+	withFastCheckWait(t, time.Second)
+	c, methods := newResumeClient(t, []int{0, 2, 2, 0}, 0, "")
+	if err := c.Resume(context.Background(), "h1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	want := "torrent-get,torrent-verify,torrent-get,torrent-get,torrent-get,torrent-start,torrent-get"
+	if got := strings.Join(methods(), ","); got != want {
+		t.Fatalf("methods = %s, want %s", got, want)
+	}
+}
+
+func TestResume_LocalErrorAfterStartIsError(t *testing.T) {
+	withFastCheckWait(t, time.Second)
+	c, _ := newResumeClient(t, []int{0}, 3, "No data found!")
+	if err := c.Resume(context.Background(), "h1"); err == nil || !strings.Contains(err.Error(), "No data found!") {
+		t.Fatalf("err = %v, want No data found!", err)
+	}
+}
+
+func TestResume_TrackerErrorAfterStartIsFine(t *testing.T) {
+	// ошибка трекера не про данные: падение на ней держало бы пару вечно
+	for _, code := range []int{1, 2} {
+		withFastCheckWait(t, time.Second)
+		c, methods := newResumeClient(t, []int{0}, code, "tracker says no")
+		if err := c.Resume(context.Background(), "h1"); err != nil {
+			t.Errorf("error %d: Resume = %v, want nil", code, err)
+		}
+		if got := methods(); len(got) < 2 || got[len(got)-2] != "torrent-start" {
+			t.Errorf("error %d: methods = %v, want torrent-start before the last read", code, got)
+		}
+	}
+}
+
+func TestResume_CheckPastBudgetNeverStarts(t *testing.T) {
+	withFastCheckWait(t, 50*time.Millisecond)
+	c, methods := newResumeClient(t, []int{1, 2}, 0, "")
+	if err := c.Resume(context.Background(), "h1"); err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	for _, m := range methods() {
+		if m == "torrent-start" {
+			t.Fatalf("torrent-start was sent: %v", methods())
+		}
+	}
+}
+
+func TestResume_RunningTorrentNoVerify(t *testing.T) {
+	// повторная проверка запущенного торрента на каждом тике подметальщика
+	// гоняла бы диск и держала пару вечно
+	withFastCheckWait(t, time.Second)
+	c, methods := newResumeClient(t, []int{4}, 0, "")
+	if err := c.Resume(context.Background(), "h1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if got := strings.Join(methods(), ","); got != "torrent-get" {
+		t.Fatalf("methods = %s, want torrent-get only", got)
+	}
+}
+
+func TestResume_PausedAddStillVerifyingWaitsThenStarts(t *testing.T) {
+	// остановленное добавление само сверяет файлы: ждем конца, потом
+	// проверяем заново уже без файлов старого и запускаем
+	withFastCheckWait(t, time.Second)
+	c, methods := newResumeClient(t, []int{2, 0, 1, 0}, 0, "")
+	if err := c.Resume(context.Background(), "h1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	want := "torrent-get,torrent-get,torrent-verify,torrent-get,torrent-get,torrent-start,torrent-get"
+	if got := strings.Join(methods(), ","); got != want {
+		t.Fatalf("methods = %s, want %s", got, want)
+	}
+}
+
+func TestFiles_ZipsFilesAndStats(t *testing.T) {
+	stub := newStubServer(t, "/downloads")
+	stub.putTorrent(rpcTorrent{HashString: "h1", Files: []rpcFile{{Name: "R/a"}, {Name: "R/b"}}, FileStats: []rpcFileStat{{Wanted: true}, {Wanted: false}}})
+	stub.putTorrent(rpcTorrent{HashString: "h2", Files: []rpcFile{{Name: "R/a"}, {Name: "R/b"}}, FileStats: []rpcFileStat{{Wanted: true}}})
+	c := newTestClient(t, stub, model.ManagerConfig{})
+
+	got, err := c.Files(context.Background(), "h1")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	want := []model.TorrentFile{{Path: "R/a", Wanted: true}, {Path: "R/b", Wanted: false}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("Files: got %v, want %v", got, want)
+	}
+	if stub.fileGets != 1 {
+		t.Errorf("expected 1 torrent-get with file fields, got %d", stub.fileGets)
+	}
+	if _, err = c.Files(context.Background(), "h2"); err == nil {
+		t.Error("expected an error for files/fileStats length mismatch")
+	}
+	if _, err = c.Files(context.Background(), "absent"); err == nil {
+		t.Error("expected an error for an absent torrent")
+	}
+}
+
+func TestRPCFileStat_WantedAcceptsBoolAndNumber(t *testing.T) {
+	var stats []rpcFileStat
+	if err := json.Unmarshal([]byte(`[{"wanted":true},{"wanted":false},{"wanted":1},{"wanted":0}]`), &stats); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	want := []bool{true, false, true, false}
+	if len(stats) != len(want) {
+		t.Fatalf("got %d stats, want %d", len(stats), len(want))
+	}
+	for i, w := range want {
+		if bool(stats[i].Wanted) != w {
+			t.Errorf("stats[%d].Wanted: got %v, want %v", i, stats[i].Wanted, w)
+		}
+	}
+	if err := json.Unmarshal([]byte(`[{"wanted":"1"}]`), &stats); err == nil {
+		t.Error("expected an error for a string wanted value")
+	}
+}
+
+func newSelectionStub(t *testing.T) (*stubServer, *Client, []byte, string) {
+	t.Helper()
+	withFastPresenceTimings(t)
+	stub := newStubServer(t, "/downloads")
+	stub.addFiles = []rpcFile{{Name: "R2/a"}, {Name: "R2/b"}, {Name: "R2/c"}}
+	stub.addFileStats = []rpcFileStat{{Wanted: true}, {Wanted: true}, {Wanted: true}}
+	c := newTestClient(t, stub, model.ManagerConfig{})
+	data, hash := buildTestTorrent(t, "selection.txt")
+	return stub, c, data, hash
+}
+
+func selectionOpts() model.ManagerAddFileOptions {
+	return model.ManagerAddFileOptions{
+		Hash:          "oldhash",
+		Name:          "selection",
+		FileSelection: []model.TorrentFile{{Path: "R1/a", Wanted: true}, {Path: "R1/b", Wanted: false}},
+	}
+}
+
+func unwantedSets(stub *stubServer) []map[string]interface{} {
+	var out []map[string]interface{}
+	for _, call := range stub.setCalls {
+		if _, ok := call["files-unwanted"]; ok {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+
+func idsAre(v interface{}, hash string) bool {
+	ids, _ := v.([]interface{})
+	return len(ids) == 1 && strings.EqualFold(ids[0].(string), hash)
+}
+
+func TestAddFromBuffer_SelectionAddsPausedSetsUnwantedThenStarts(t *testing.T) {
+	stub, c, data, hash := newSelectionStub(t)
+
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), selectionOpts()); err != nil {
+		t.Fatalf("AddFromBuffer: %v", err)
+	}
+	if len(stub.addCalls) != 1 || stub.addCalls[0]["paused"] != true {
+		t.Fatalf("expected one paused torrent-add, got %v", stub.addCalls)
+	}
+	sets := unwantedSets(stub)
+	if len(sets) != 1 || !idsAre(sets[0]["ids"], hash) {
+		t.Fatalf("expected one files-unwanted torrent-set for %s, got %v", hash, stub.setCalls)
+	}
+	idx, _ := sets[0]["files-unwanted"].([]interface{})
+	if len(idx) != 2 || idx[0] != float64(1) || idx[1] != float64(2) {
+		t.Errorf("files-unwanted: got %v, want [1 2]", sets[0]["files-unwanted"])
+	}
+	if len(stub.startCalls) != 1 || !idsAre(stub.startCalls[0]["ids"], hash) {
+		t.Fatalf("expected one torrent-start for %s, got %v", hash, stub.startCalls)
+	}
+	setAt, startAt := -1, -1
+	for i, m := range stub.methods {
+		switch m {
+		case "torrent-set":
+			setAt = i
+		case "torrent-start":
+			startAt = i
+		}
+	}
+	if setAt < 0 || startAt < setAt {
+		t.Errorf("expected torrent-start after torrent-set, methods %v", stub.methods)
+	}
+}
+
+func TestAddFromBuffer_SelectionStoppedSkipsStart(t *testing.T) {
+	stub, c, data, _ := newSelectionStub(t)
+	opts := selectionOpts()
+	opts.Stopped = true
+
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts); err != nil {
+		t.Fatalf("AddFromBuffer: %v", err)
+	}
+	if len(stub.addCalls) != 1 || stub.addCalls[0]["paused"] != true {
+		t.Fatalf("expected one paused torrent-add, got %v", stub.addCalls)
+	}
+	if len(unwantedSets(stub)) != 1 {
+		t.Errorf("expected one files-unwanted torrent-set, got %v", stub.setCalls)
+	}
+	if len(stub.startCalls) != 0 {
+		t.Errorf("expected no torrent-start for a stopped add, got %v", stub.startCalls)
+	}
+}
+
+func TestAddFromBuffer_SelectionNothingUnwantedSendsNoSet(t *testing.T) {
+	stub, c, data, hash := newSelectionStub(t)
+	stub.addFiles = []rpcFile{{Name: "R2/a"}}
+	stub.addFileStats = []rpcFileStat{{Wanted: true}}
+
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), selectionOpts()); err != nil {
+		t.Fatalf("AddFromBuffer: %v", err)
+	}
+	if sets := unwantedSets(stub); len(sets) != 0 {
+		t.Errorf("expected no files-unwanted torrent-set, got %v", sets)
+	}
+	if len(stub.startCalls) != 1 || !idsAre(stub.startCalls[0]["ids"], hash) {
+		t.Errorf("expected one torrent-start for %s, got %v", hash, stub.startCalls)
+	}
+}
+
+func TestAddFromBuffer_SelectionSetFailureDiscards(t *testing.T) {
+	stub, c, data, hash := newSelectionStub(t)
+	stub.failSetUnwanted = true
+
+	err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), selectionOpts())
+	if err == nil {
+		t.Fatal("expected an error when files-unwanted fails")
+	}
+	if len(stub.removeCalls) != 1 || !idsAre(stub.removeCalls[0]["ids"], hash) || stub.removeCalls[0]["delete-local-data"] != false {
+		t.Fatalf("expected one torrent-remove of %s with delete-local-data=false, got %v", hash, stub.removeCalls)
+	}
+	if len(stub.startCalls) != 0 {
+		t.Errorf("expected no torrent-start, got %v", stub.startCalls)
+	}
+}
+
+func TestAddFromBuffer_NoSelectionNoExtraCalls(t *testing.T) {
+	stub, c, data, _ := newSelectionStub(t)
+	opts := selectionOpts()
+	opts.FileSelection = nil
+
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts); err != nil {
+		t.Fatalf("AddFromBuffer: %v", err)
+	}
+	if len(stub.addCalls) != 1 {
+		t.Fatalf("expected 1 add call, got %d", len(stub.addCalls))
+	}
+	if _, ok := stub.addCalls[0]["paused"]; ok {
+		t.Errorf("expected no paused key, got %v", stub.addCalls[0]["paused"])
+	}
+	if stub.fileGets != 0 || len(stub.startCalls) != 0 || len(stub.setCalls) != 0 {
+		t.Errorf("expected no file fields, set or start, got fileGets %d sets %v starts %v", stub.fileGets, stub.setCalls, stub.startCalls)
+	}
+	want := []string{"session-get", "torrent-get", "torrent-add", "torrent-get"}
+	if strings.Join(stub.methods, ",") != strings.Join(want, ",") {
+		t.Errorf("methods: got %v, want %v", stub.methods, want)
+	}
+}
+
+func TestAddFromBuffer_SelectionEmptyFilesDiscards(t *testing.T) {
+	stub, c, data, hash := newSelectionStub(t)
+	stub.addFiles = nil
+	stub.addFileStats = nil
+
+	err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), selectionOpts())
+	if err == nil {
+		t.Fatal("expected an error when the new torrent reports no files")
+	}
+	if len(stub.removeCalls) != 1 || !idsAre(stub.removeCalls[0]["ids"], hash) || stub.removeCalls[0]["delete-local-data"] != false {
+		t.Fatalf("expected one torrent-remove of %s with delete-local-data=false, got %v", hash, stub.removeCalls)
+	}
+	if len(stub.startCalls) != 0 {
+		t.Errorf("expected no torrent-start, got %v", stub.startCalls)
+	}
+}
+
+func TestMapEntry_Unhealthy(t *testing.T) {
+	stub := newStubServer(t, "/downloads")
+	c := newTestClient(t, stub, model.ManagerConfig{})
+	cases := []struct {
+		status, errCode int
+		want            bool
+	}{
+		{status: 6, want: false},
+		{status: 0, want: false},
+		{status: 4, errCode: 2, want: false},
+		{status: 0, errCode: 3, want: true},
+		{status: 1, want: true},
+		{status: 2, want: true},
+	}
+	for _, cse := range cases {
+		rt := &rpcTorrent{DownloadDir: "/downloads", Status: cse.status, Error: cse.errCode}
+		if got := c.mapEntry(rt).Unhealthy; got != cse.want {
+			t.Errorf("status=%d error=%d: Unhealthy = %v, want %v", cse.status, cse.errCode, got, cse.want)
+		}
+	}
+}
+
+func TestListRequestsErrorField(t *testing.T) {
+	if !slices.Contains(torrentFields, "error") {
+		t.Errorf("torrentFields %v lack error, List cannot see a local error", torrentFields)
 	}
 }

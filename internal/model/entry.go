@@ -18,4 +18,6 @@ type Entry struct {
 	Update         bool
 	Magnet         string
 	Poster         string
+	Stopped        bool
+	Unhealthy      bool
 }

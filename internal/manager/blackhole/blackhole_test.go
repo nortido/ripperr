@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -19,11 +20,9 @@ import (
 	"ripperr/internal/model"
 )
 
-// buildNamedTestTorrent параметризован именем, потому что два вызова с
-// одинаковым именем дают один и тот же infohash, а нескольким тестам
-// подметания нужны разные пары на диске одновременно.
 func buildNamedTestTorrent(t *testing.T, name string) ([]byte, string) {
 	t.Helper()
+	// одно имя дает один infohash, а тестам подметания нужны разные пары сразу
 	info := metainfo.Info{
 		PieceLength: 16384,
 		Pieces:      make([]byte, 20),
@@ -45,25 +44,23 @@ func buildNamedTestTorrent(t *testing.T, name string) ([]byte, string) {
 	return buf.Bytes(), mi.HashInfoBytes().HexString()
 }
 
-// fakeClient это минимальный поддельный client для подметальщика: Exists
-// сообщает то, что лежит в present, AddFromBuffer/AddFromMagnet переводят хеш
-// в present (или сразу отказывают, когда выставлен addFail), повторяя
-// двойную проверку присутствия настоящего qbittorrent.Client (до добавления и
-// сразу после), чтобы vanishHash вёл себя так же, как асинхронная задача
-// удаления в реальном клиенте.
 type fakeClient struct {
 	mu          sync.Mutex
 	present     map[string]bool
 	addFail     bool
 	unreachable bool
-	// vanishHash: следующий Exists, нашедший этот хеш присутствующим, убирает
-	// его из present сразу после ответа, поэтому очередной запрос сообщает об
-	// отсутствии.
+	// следующий Exists, увидевший этот хеш, сразу убирает его из present
 	vanishHash string
+	calls      []string
+	existsSeq  map[string][]bool
+	existsErr  map[string]error
+	discardErr error
+	resumeErr  error
+	addOpts    []model.ManagerAddFileOptions
 }
 
 func newFakeClient() *fakeClient {
-	return &fakeClient{present: map[string]bool{}}
+	return &fakeClient{present: map[string]bool{}, existsSeq: map[string][]bool{}, existsErr: map[string]error{}}
 }
 
 func (f *fakeClient) markPresent(hash string) {
@@ -82,6 +79,14 @@ func (f *fakeClient) Exists(_ context.Context, hash string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	hash = strings.ToLower(hash)
+	f.calls = append(f.calls, "exists:"+hash)
+	if err := f.existsErr[hash]; err != nil {
+		return false, err
+	}
+	if seq := f.existsSeq[hash]; len(seq) > 0 {
+		f.existsSeq[hash] = seq[1:]
+		return seq[0], nil
+	}
 	present := f.present[hash]
 	if present && f.vanishHash == hash {
 		delete(f.present, hash)
@@ -95,11 +100,9 @@ func (f *fakeClient) Reachable(_ context.Context) bool {
 	return !f.unreachable
 }
 
-// add воспроизводит qbittorrent.Client.addTorrentVerified: проверка
-// присутствия до добавления (preAddPresenceCheck), сам вызов добавления,
-// проверка присутствия после (ensurePresentAfterAdd). Оба обращения идут
-// через Exists, поэтому vanishHash одинаково задевает оба этапа.
 func (f *fakeClient) add(ctx context.Context, hash string) error {
+	// как qbittorrent.Client.addTorrentVerified: Exists до и после добавления. Так vanishHash
+	// задевает оба шага, как асинхроное удаление в живом клиенте
 	hash = strings.ToLower(hash)
 	present, _ := f.Exists(ctx, hash)
 	if present {
@@ -121,7 +124,8 @@ func (f *fakeClient) add(ctx context.Context, hash string) error {
 	return nil
 }
 
-func (f *fakeClient) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, _ model.ManagerAddFileOptions) error {
+func (f *fakeClient) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) error {
+	f.recordAdd(opts)
 	hash, err := torrentmeta.InfoHash(buf.Bytes())
 	if err != nil {
 		return err
@@ -130,11 +134,50 @@ func (f *fakeClient) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, _ mod
 }
 
 func (f *fakeClient) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error {
+	f.recordAdd(opts)
 	hash, ok := torrentmeta.BtihFromMagnet(magnet)
 	if !ok {
 		hash = opts.Hash
 	}
 	return f.add(ctx, hash)
+}
+
+func (f *fakeClient) recordAdd(opts model.ManagerAddFileOptions) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "add:"+strings.ToLower(opts.Hash))
+	f.addOpts = append(f.addOpts, opts)
+}
+
+func (f *fakeClient) Discard(_ context.Context, hash string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	hash = strings.ToLower(hash)
+	f.calls = append(f.calls, "discard:"+hash)
+	if f.discardErr != nil {
+		return f.discardErr
+	}
+	delete(f.present, hash)
+	return nil
+}
+
+func (f *fakeClient) Resume(_ context.Context, hash string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "resume:"+strings.ToLower(hash))
+	return f.resumeErr
+}
+
+func (f *fakeClient) callsOf(prefix string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func writePair(t *testing.T, dir string, data []byte, opts model.ManagerAddFileOptions) {
@@ -143,6 +186,7 @@ func writePair(t *testing.T, dir string, data []byte, opts model.ManagerAddFileO
 	if err := s.Write(data, "", opts); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
+	ageJSON(t, dir, opts.Hash, time.Hour)
 }
 
 func writeMagnetPair(t *testing.T, dir, magnet string, opts model.ManagerAddFileOptions) {
@@ -151,6 +195,7 @@ func writeMagnetPair(t *testing.T, dir, magnet string, opts model.ManagerAddFile
 	if err := s.Write(nil, magnet, opts); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
+	ageJSON(t, dir, opts.Hash, time.Hour)
 }
 
 func assertJSONGone(t *testing.T, dir, hash string) {
@@ -224,7 +269,7 @@ func TestWriteBlackholePair_CreatesFiles(t *testing.T) {
 	if err = json.Unmarshal(rawJSON, &gotOpts); err != nil {
 		t.Fatalf("unmarshal json: %v", err)
 	}
-	if gotOpts != opts {
+	if !reflect.DeepEqual(gotOpts, opts) {
 		t.Errorf("opts mismatch: got %+v, want %+v", gotOpts, opts)
 	}
 }
@@ -282,7 +327,7 @@ func TestWriteBlackholePair_MagnetOnly_CreatesJSONOnlyWithMagnetField(t *testing
 	if gotMeta.Magnet != magnet {
 		t.Errorf("magnet mismatch: got %q, want %q", gotMeta.Magnet, magnet)
 	}
-	if gotMeta.ManagerAddFileOptions != opts {
+	if !reflect.DeepEqual(gotMeta.ManagerAddFileOptions, opts) {
 		t.Errorf("opts mismatch: got %+v, want %+v", gotMeta.ManagerAddFileOptions, opts)
 	}
 }
@@ -477,7 +522,7 @@ func TestScanBlackholeDir_OldFormatJSONWithTorrent_StillReadable(t *testing.T) {
 	if err := os.WriteFile(torrentPath, data, 0o644); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
-	// старый формат: json.Marshal(opts) напрямую, без обёртки и без ключа Magnet
+	// старый формат: json.Marshal(opts) напрямую, без обертки и без ключа Magnet
 	raw, err := json.Marshal(opts)
 	if err != nil {
 		t.Fatalf("marshal opts: %v", err)
@@ -502,7 +547,7 @@ func TestScanBlackholeDir_OldFormatJSONWithTorrent_StillReadable(t *testing.T) {
 	if pairs[0].magnet != "" {
 		t.Errorf("expected empty magnet for an old-format pair, got %q", pairs[0].magnet)
 	}
-	if pairs[0].opts != opts {
+	if !reflect.DeepEqual(pairs[0].opts, opts) {
 		t.Errorf("opts mismatch: got %+v, want %+v", pairs[0].opts, opts)
 	}
 }
@@ -583,7 +628,7 @@ func TestScanBlackholeDir_TruncatedTorrentWithMagnet_FallsBackToMagnet(t *testin
 	opts := model.ManagerAddFileOptions{Hash: hash, Name: "truncated"}
 
 	torrentPath, jsonPath := blackholePaths(dir, hash)
-	// непустой, но невалидный bencode: то, что остаётся от оборванной записи
+	// непустой, но невалидный bencode: то, что остается от оборванной записи
 	if err := os.WriteFile(torrentPath, data[:5], 0o644); err != nil {
 		t.Fatalf("write truncated torrent: %v", err)
 	}
@@ -644,14 +689,13 @@ func TestScanBlackholeDir_TruncatedTorrentNoMagnet_Broken(t *testing.T) {
 
 func TestScanBlackholeDir_HashMismatch_Broken(t *testing.T) {
 	dir := t.TempDir()
-	// .torrent намеренно на месте и валиден: без проверки meta.Hash он прошёл бы
-	// через loadBlackholePair как обычная валидная пара
+	// .torrent на месте и валиден: без проверки meta.Hash он прошел бы как обычная пара
 	data, hash := buildNamedTestTorrent(t, "ghost.txt")
 	torrentPath, jsonPath := blackholePaths(dir, hash)
 	if err := os.WriteFile(torrentPath, data, 0o644); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
-	// meta.Hash оставлен пустым: та же форма, что даёт тело json "null" или "{}"
+	// meta.Hash пустой, как после тела json "null" или "{}"
 	raw, err := json.Marshal(blackholeMeta{ManagerAddFileOptions: model.ManagerAddFileOptions{Name: "ghost"}})
 	if err != nil {
 		t.Fatalf("marshal meta: %v", err)
@@ -800,5 +844,424 @@ func TestWriteFileAtomic_FailedWriteLeavesTargetAndNoTmp(t *testing.T) {
 	}
 	if _, err = os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Errorf("expected no leftover .tmp file, stat err = %v", err)
+	}
+}
+
+func ageJSON(t *testing.T, dir, hash string, age time.Duration) {
+	t.Helper()
+	_, jsonPath := blackholePaths(dir, hash)
+	old := time.Now().Add(-age)
+	if err := os.Chtimes(jsonPath, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+}
+
+func (f *fakeClient) isPresent(hash string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.present[strings.ToLower(hash)]
+}
+
+func TestSweepBlackholeOnce_FreshPairSkipped(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+
+	data, hash := buildNamedTestTorrent(t, "fresh.txt")
+	if err := s.Write(data, "", model.ManagerAddFileOptions{Hash: hash, Name: "fresh"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	s.SweepOnce(context.Background())
+
+	if fc.isPresent(hash) {
+		t.Error("fresh pair was re-added during the replace window")
+	}
+	assertPairRemains(t, dir, hash)
+}
+
+func TestSweepBlackholeOnce_AgedPairReAdded(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+
+	data, hash := buildNamedTestTorrent(t, "aged.txt")
+	if err := s.Write(data, "", model.ManagerAddFileOptions{Hash: hash, Name: "aged"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	ageJSON(t, dir, hash, freshPairGrace+time.Minute)
+
+	s.SweepOnce(context.Background())
+
+	if !fc.isPresent(hash) {
+		t.Error("aged pair was not re-added")
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepBlackholeOnce_FreshMagnetPairSkipped(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+
+	hash := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	if err := s.Write(nil, "magnet:?xt=urn:btih:"+hash, model.ManagerAddFileOptions{Hash: hash, Name: "fresh-magnet"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	s.SweepOnce(context.Background())
+
+	if fc.isPresent(hash) {
+		t.Error("fresh magnet pair was re-added during the replace window")
+	}
+	assertJSONRemains(t, dir, hash)
+}
+
+func writeReplacePair(t *testing.T, s *Store, dir, name string, age time.Duration) string {
+	t.Helper()
+	data, hash := buildNamedTestTorrent(t, name)
+	if err := s.Write(data, "", model.ManagerAddFileOptions{Hash: hash, Name: name, ReplacesHash: "old"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	ageJSON(t, dir, hash, age)
+	return strings.ToLower(hash)
+}
+
+func assertNoCalls(t *testing.T, fc *fakeClient, prefixes ...string) {
+	t.Helper()
+	for _, p := range prefixes {
+		if got := fc.callsOf(p); len(got) != 0 {
+			t.Errorf("unexpected %s calls: %v", p, got)
+		}
+	}
+}
+
+func TestSweepReplace_OldPresentNewPresentDiscardsNew(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-both.txt", freshPairGrace+time.Minute)
+	fc.markPresent("old")
+	fc.markPresent(hash)
+
+	s.SweepOnce(context.Background())
+
+	if got := fc.callsOf("discard:"); len(got) != 1 || got[0] != "discard:"+hash {
+		t.Errorf("discard calls = %v, want [discard:%s]", got, hash)
+	}
+	assertNoCalls(t, fc, "add:", "resume:")
+	if !fc.isPresent("old") {
+		t.Error("old torrent must stay")
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplace_OldPresentNewAbsentDropsPair(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-old.txt", freshPairGrace+time.Minute)
+	fc.markPresent("old")
+
+	s.SweepOnce(context.Background())
+
+	assertNoCalls(t, fc, "add:", "resume:", "discard:")
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplace_OldGoneNewPresentResumes(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-new.txt", freshPairGrace+time.Minute)
+	fc.markPresent(hash)
+
+	s.SweepOnce(context.Background())
+
+	if got := fc.callsOf("exists:old"); len(got) != 2 {
+		t.Errorf("old probes = %v, want two", got)
+	}
+	if got := fc.callsOf("resume:"); len(got) != 1 || got[0] != "resume:"+hash {
+		t.Errorf("resume calls = %v, want [resume:%s]", got, hash)
+	}
+	assertNoCalls(t, fc, "add:", "discard:")
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplace_OldBackOnSecondProbeKeepsPair(t *testing.T) {
+	// клиент мог еще не дочитать свой список: одной пробе "нет" не верим
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-flap.txt", freshPairGrace+time.Minute)
+	fc.markPresent(hash)
+	fc.existsSeq["old"] = []bool{false, true}
+
+	s.SweepOnce(context.Background())
+
+	assertNoCalls(t, fc, "add:", "resume:", "discard:")
+	assertPairRemains(t, dir, hash)
+}
+
+func TestSweepReplace_BothGoneReAddsStarted(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "rp-none.txt")
+	if err := s.Write(data, "", model.ManagerAddFileOptions{Hash: hash, Name: "rp-none", ReplacesHash: "old", Stopped: true}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	ageJSON(t, dir, hash, freshPairGrace+time.Minute)
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.addOpts) != 1 || fc.addOpts[0].Stopped {
+		t.Fatalf("add opts = %+v, want one add with Stopped false", fc.addOpts)
+	}
+	assertNoCalls(t, fc, "resume:", "discard:")
+	if !fc.isPresent(hash) {
+		t.Error("new torrent was not re-added")
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplace_ReaddCarriesFileSelection(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "rp-sel.txt")
+	sel := []model.TorrentFile{{Path: "R/a", Wanted: true}, {Path: "R/b"}}
+	opts := model.ManagerAddFileOptions{Hash: hash, Name: "rp-sel", ReplacesHash: "old", Stopped: true, FileSelection: sel}
+	if err := s.Write(data, "", opts); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	ageJSON(t, dir, hash, freshPairGrace+time.Minute)
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.addOpts) != 1 {
+		t.Fatalf("add opts = %+v, want one add", fc.addOpts)
+	}
+	if !reflect.DeepEqual(fc.addOpts[0].FileSelection, sel) {
+		t.Errorf("FileSelection = %+v, want %+v", fc.addOpts[0].FileSelection, sel)
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplace_OldProbeErrorKeepsPair(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-err.txt", freshPairGrace+time.Minute)
+	fc.markPresent(hash)
+	fc.existsErr["old"] = fmt.Errorf("connection refused")
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.calls) != 1 || fc.calls[0] != "exists:old" {
+		t.Errorf("calls = %v, want only exists:old", fc.calls)
+	}
+	assertPairRemains(t, dir, hash)
+}
+
+func TestSweepReplace_ResumeErrorKeepsPair(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-resume.txt", freshPairGrace+time.Minute)
+	fc.markPresent(hash)
+	fc.resumeErr = fmt.Errorf("no data found")
+
+	s.SweepOnce(context.Background())
+
+	if got := fc.callsOf("resume:"); len(got) != 1 {
+		t.Errorf("resume calls = %v, want one", got)
+	}
+	assertPairRemains(t, dir, hash)
+}
+
+func TestSweepReplace_DiscardErrorKeepsPair(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-discard.txt", freshPairGrace+time.Minute)
+	fc.markPresent("old")
+	fc.markPresent(hash)
+	fc.discardErr = fmt.Errorf("discard failed")
+
+	s.SweepOnce(context.Background())
+
+	if got := fc.callsOf("discard:"); len(got) != 1 {
+		t.Errorf("discard calls = %v, want one", got)
+	}
+	assertPairRemains(t, dir, hash)
+}
+
+func TestSweepReplace_PairInsideGraceSkipped(t *testing.T) {
+	// основной путь может еще запускать новый торрент (Resume до CheckWaitBudget)
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeReplacePair(t, s, dir, "rp-fresh.txt", AddTimeout+CheckWaitBudget)
+	fc.markPresent(hash)
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.calls) != 0 {
+		t.Errorf("calls = %v, want none for a pair inside the grace", fc.calls)
+	}
+	assertPairRemains(t, dir, hash)
+}
+
+func TestSweepBlackholeOnce_ClassicReAddForcesStarted(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "classic-stopped.txt")
+	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "classic", Stopped: true})
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.addOpts) != 1 || fc.addOpts[0].Stopped {
+		t.Fatalf("add opts = %+v, want one add with Stopped false", fc.addOpts)
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestPendingReplace(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, newFakeClient())
+	replaceHash := writeReplacePair(t, s, dir, "pending-replace.txt", 0)
+	data, classicHash := buildNamedTestTorrent(t, "pending-classic.txt")
+	if err := s.Write(data, "", model.ManagerAddFileOptions{Hash: classicHash, Name: "classic"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	brokenHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	_, brokenJSON := blackholePaths(dir, brokenHash)
+	if err := os.WriteFile(brokenJSON, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		hash string
+		want bool
+	}{
+		{"delete-first pair", strings.ToUpper(replaceHash), true},
+		{"classic pair", classicHash, false},
+		{"no pair", "cccccccccccccccccccccccccccccccccccccccc", false},
+		{"unparsable json", brokenHash, true},
+	}
+	for _, tc := range cases {
+		if got := s.PendingReplace(tc.hash); got != tc.want {
+			t.Errorf("%s: PendingReplace = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestWriteBlackholePair_ReplacesTorrentAtomically(t *testing.T) {
+	// .torrent пишется через временный файл и rename, а не усечением на месте
+	dir := t.TempDir()
+	s := New(dir, newFakeClient())
+	data, hash := buildNamedTestTorrent(t, "atomic.txt")
+	torrentPath, _ := blackholePaths(dir, hash)
+	if err := os.WriteFile(torrentPath, []byte("stale"), 0o444); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := s.Write(data, "", model.ManagerAddFileOptions{Hash: hash, Name: "atomic"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := os.ReadFile(torrentPath)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("torrent = %d bytes (err %v), want the new %d bytes", len(got), err, len(data))
+	}
+	if _, err = os.Stat(torrentPath + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("expected no leftover .tmp file, stat err = %v", err)
+	}
+}
+
+func writeBrokenReplacePair(t *testing.T, s *Store, dir, name string) string {
+	t.Helper()
+	hash := writeReplacePair(t, s, dir, name, freshPairGrace+time.Minute)
+	torrentPath, _ := blackholePaths(dir, hash)
+	if err := os.WriteFile(torrentPath, []byte("d8:announce"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return hash
+}
+
+func TestSweepReplace_BrokenPairOldGoneNewPresentResumes(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeBrokenReplacePair(t, s, dir, "broken-resume.txt")
+	fc.markPresent(hash)
+
+	s.SweepOnce(context.Background())
+
+	if got := fc.callsOf("resume:"); len(got) != 1 || got[0] != "resume:"+hash {
+		t.Errorf("resume calls = %v, want [resume:%s]", got, hash)
+	}
+	assertNoCalls(t, fc, "add:", "discard:")
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplace_BrokenPairOldPresentDiscardsNew(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeBrokenReplacePair(t, s, dir, "broken-discard.txt")
+	fc.markPresent("old")
+	fc.markPresent(hash)
+
+	s.SweepOnce(context.Background())
+
+	if got := fc.callsOf("discard:"); len(got) != 1 || got[0] != "discard:"+hash {
+		t.Errorf("discard calls = %v, want [discard:%s]", got, hash)
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplace_BrokenPairBothGoneKept(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	hash := writeBrokenReplacePair(t, s, dir, "broken-keep.txt")
+
+	s.SweepOnce(context.Background())
+
+	assertNoCalls(t, fc, "add:", "resume:", "discard:")
+	_, jsonPath := blackholePaths(dir, hash)
+	if _, err := os.Stat(jsonPath); err != nil {
+		t.Errorf("expected json to remain: %v", err)
+	}
+}
+
+func TestPendingReplace_UnreadableDirIsFalse(t *testing.T) {
+	// каталог недоступен: пары там нет и быть не может, запись все равно
+	// упадет раньше любого удаления
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if New(file, newFakeClient()).PendingReplace("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
+		t.Error("PendingReplace = true for a dir that cannot hold a pair, want false")
 	}
 }

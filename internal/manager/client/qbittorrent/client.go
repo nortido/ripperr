@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -25,20 +27,14 @@ import (
 
 var (
 	idRegexp = regexp.MustCompile(`(\d+)`)
-	// magnetFetch добывает метаданные по магниту сам, без участия qbit;
-	// переменная пакета, а не прямой вызов magnetmeta.Fetch, чтобы тесты могли
-	// подменить добычу, тем же приёмом, что presenceCheckAttempts/presenceCheckDelay
-	// у transmission и SettleDelay у blackhole
+	// var, чтобы тесты могли подменить добычу
 	magnetFetch = magnetmeta.Fetch
-	// magnetFetchTimeout ограничивает magnetFetch внутри AddFromMagnet своим
-	// подконтекстом. Единственный источник этого вызова - подметальщик
-	// blackhole, и весь AddFromMagnet целиком идёт в одном контексте с общим
-	// потолком blackhole.AddTimeout (6 минут); без отдельного потолка мёртвый
-	// рой (валидный tr, но пиров нет) выжирает весь этот бюджет, и запасному
-	// пути (addMagnetWithComment) достаётся уже истёкший контекст. Заметно
-	// меньше AddTimeout, чтобы запасной путь успел отработать. Переменная, а
-	// не const, чтобы тесты могли ужать
+	// весь AddFromMagnet идет под blackhole.AddTimeout (6 минут). Без своего потолка мертвый рой
+	// съест его целиком и addMagnetWithComment получит истекший ctx, поэтому заметно меньше.
+	// var, чтобы тесты могли ужать
 	magnetFetchTimeout = time.Minute
+	checkWaitDelay     = time.Second
+	checkWaitBudget    = blackhole.CheckWaitBudget
 )
 
 type Client struct {
@@ -97,14 +93,9 @@ func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 
 func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
 	if opts.Comment != "" {
-		// старая magnet-пара blackhole без своей добычи метаданных уходит либо в
-		// torrents/fetchMetadata (нет в части сборок qbit) с отказом без
-		// комментария, либо была бы невидимой навсегда - ровно то, от чего ушли
-		// в основном пути runner.submit. Пробуем собрать .torrent сами и
-		// добавить файлом с уже вшитым комментарием; неудача не фатальна,
-		// остаётся прежнее поведение (fetchMetadata и затем без комментария).
-		// Свой подконтекст (см. magnetFetchTimeout) - иначе мёртвый рой съедает
-		// весь ctx целиком, и запасному пути ниже нечем воспользоваться
+		// без комментария Ripperr торрент не увидит, а fetchMetadata есть не во всех сборках qbit.
+		// Поэтому сперва сами собираем .torrent с комментарием, не вышло, идем старым путем.
+		// Подконтекст свой, иначе мертвый рой съест весь ctx и запасному пути ничего не останется
 		fctx, cancel := context.WithTimeout(ctx, magnetFetchTimeout)
 		data, ferr := magnetFetch(fctx, magnet)
 		cancel()
@@ -119,20 +110,23 @@ func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.Ma
 	return c.addMagnetURLVerified(ctx, magnet, opts)
 }
 
-func torrentAddOptions(opts model.ManagerAddFileOptions) *qbt.TorrentAddOptions {
+func addOptions(opts model.ManagerAddFileOptions) map[string]string {
 	op := &qbt.TorrentAddOptions{
 		Tags:          opts.Tag,
 		Category:      opts.Category,
-		AutoTMM:       opts.AutoManaged,
 		LimitRatio:    opts.MaxRatio,
 		LimitSeedTime: opts.MaxSeedingTime,
 		Rename:        opts.Name,
+		Stopped:       opts.Stopped,
 	}
-	// opts.SavePath сознательно игнорируется: у qbit путём распоряжается
-	// AutoTMM по категории, а не явный путь, и подстановка могла бы изменить
-	// уже настроенное поведение. Поле нужно клиентам без категорий
-	// (transmission), там и заполняется
-	return op
+	if !opts.AutoManaged {
+		op.SavePath = opts.SavePath
+	}
+	// Prepare шлет autoTMM только вместе с savepath, а пропущенный флаг qbit
+	// берет из глобального умолчания, поэтому режим задаем явно
+	m := op.Prepare()
+	m["autoTMM"] = strconv.FormatBool(opts.AutoManaged)
+	return m
 }
 
 func (c *Client) GetTorrentDetails(ctx context.Context, hash string) (name, comment string, err error) {
@@ -182,13 +176,11 @@ func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (e
 		return
 	}
 	logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))
+	return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, c.DeletesFiles(ctx, opts))
+}
 
-	for i := range c.config.DeleteCategories {
-		if opts.Category == c.config.DeleteCategories[i] {
-			return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, c.config.DeleteFilesEnabled)
-		}
-	}
-	return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, false)
+func (c *Client) DeletesFiles(_ context.Context, opts model.ManagerDeleteOptions) bool {
+	return c.config.DeleteEnabled && c.config.DeleteFilesEnabled && slices.Contains(c.config.DeleteCategories, opts.Category)
 }
 
 func (c *Client) getProperties(ctx context.Context, t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {
@@ -214,6 +206,9 @@ func (c *Client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.
 		AutoManaged:    t.AutoManaged,
 		MaxRatio:       t.MaxRatio,
 		MaxSeedingTime: t.MaxSeedingTime,
+		SavePath:       t.SavePath,
+		Stopped:        isStopped(t.State),
+		Unhealthy:      isChecking(t.State) || t.State == qbt.TorrentStateError || t.State == qbt.TorrentStateMissingFiles || t.State == qbt.TorrentStateMoving,
 	}
 	if t.State == qbt.TorrentStatePausedUp {
 		res.MaxRatio = c.config.PausedMaxRatio
@@ -222,25 +217,58 @@ func (c *Client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.
 }
 
 func (c *Client) getClient() (err error) {
+	host, basicUser, basicPass, hasUserinfo := splitHostUserinfo(c.config.Host)
 	c.client = qbt.NewClient(qbt.Config{
-		Host:     c.config.Host,
-		Username: c.config.Username,
-		Password: c.config.Password,
+		Host:      host,
+		Username:  c.config.Username,
+		Password:  c.config.Password,
+		BasicUser: basicUser,
+		BasicPass: basicPass,
 	})
-	// qbt ставит своему транспорту http.ProxyFromEnvironment, а торрент-клиент стоит
-	// рядом и через прокси ходить не должен: имя хоста в docker-сети Go из прокси не
-	// исключает, в отличие от localhost
+	// qbt ставит транспорту http.ProxyFromEnvironment, а торрент-клиент стоит рядом и прокси ему не нужен.
+	// docker-имя хоста Go из прокси не исключает, localhost исключает
 	hc := c.client.GetHTTPClient()
 	if tr, ok := hc.Transport.(*http.Transport); ok {
 		tr.Proxy = nil
 	} else {
-		// чужой тип транспорта оставил бы ProxyFromEnvironment, а с ним пароль от
-		// веб-морды ушёл бы в прокси, поэтому подменяем транспорт целиком
+		// с чужим транспортом остался бы ProxyFromEnvironment и пароль от веб-морды ушел бы в прокси
 		hc.Transport = helper.DirectTransport()
+	}
+	if hasUserinfo && (basicUser == "" || basicPass == "") {
+		hu, _ := url.Parse(host)
+		hc.Transport = &basicAuthTransport{base: hc.Transport, host: hu.Host, user: basicUser, pass: basicPass}
 	}
 	err = c.client.Login()
 
 	return
+}
+
+func splitHostUserinfo(raw string) (host, user, pass string, hasUserinfo bool) {
+	// qbt пишет адрес запроса в текст ошибок, поэтому логин и пароль из адреса уносим из него.
+	// qbt шлет basic только при обоих непустых полях, иначе его ставит basicAuthTransport, как раньше net/http
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw, "", "", false
+	}
+	user = u.User.Username()
+	pass, _ = u.User.Password()
+	u.User = nil
+	return u.String(), user, pass, true
+}
+
+type basicAuthTransport struct {
+	base       http.RoundTripper
+	host       string
+	user, pass string
+}
+
+func (t *basicAuthTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	// заголовок идет мимо net/http, который сам снимает его при переходе на другой хост, поэтому хост сверяем здесь
+	if r.Header.Get("Authorization") == "" && strings.EqualFold(r.URL.Host, t.host) {
+		r = r.Clone(r.Context())
+		r.SetBasicAuth(t.user, t.pass)
+	}
+	return t.base.RoundTrip(r)
 }
 
 func New(config model.ManagerConfig) (c *Client, err error) {
@@ -254,9 +282,101 @@ func New(config model.ManagerConfig) (c *Client, err error) {
 	}
 	cl.bh = blackhole.New(config.BlackholeDir, cl)
 	if err = cl.getClient(); err != nil {
-		return
+		return nil, redactHostUserinfo(err, config.Host)
 	}
 	c = cl
 
 	return
+}
+
+func redactHostUserinfo(err error, host string) error {
+	// библиотека qbt пишет в текст ошибки адрес запроса целиком, вместе с паролем
+	// из адреса хоста, и в сыром, и в экранированном виде
+	u, perr := url.Parse(host)
+	if perr != nil || u.User == nil {
+		return err
+	}
+	authority := host[strings.Index(host, "://")+3:]
+	if i := strings.IndexAny(authority, "/?#"); i >= 0 {
+		authority = authority[:i]
+	}
+	raw := authority[:strings.LastIndex(authority, "@")+1]
+	msg := strings.ReplaceAll(err.Error(), raw, "")
+	msg = strings.ReplaceAll(msg, u.User.String()+"@", "")
+	return &redactedError{msg: msg, err: err}
+}
+
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
+func (c *Client) ReplacePending(hash string) bool {
+	return c.bh.PendingReplace(hash)
+}
+
+func (c *Client) Discard(ctx context.Context, hash string) error {
+	logger.Info(fmt.Sprint("discarding torrent without files: ", hash))
+	return c.client.DeleteTorrentsCtx(ctx, []string{hash}, false)
+}
+
+func (c *Client) Resume(ctx context.Context, hash string) error {
+	// без recheck: остановленный при добавлении торрент еще не проверялся, и
+	// libtorrent проверит его на старте, а recheck сам запускает и потом
+	// останавливает торрент, что по кешу состояния webapi не отличить
+	waitCtx, cancel := context.WithTimeout(ctx, checkWaitBudget)
+	defer cancel()
+	state, err := c.torrentState(waitCtx, hash)
+	for err == nil && isChecking(state) {
+		if err = sleepCtx(waitCtx, checkWaitDelay); err == nil {
+			state, err = c.torrentState(waitCtx, hash)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("read state of %s: %w", hash, err)
+	}
+	if !isStopped(state) && state != qbt.TorrentStateError && state != qbt.TorrentStateMissingFiles {
+		return nil
+	}
+	if err = c.client.StartCtx(ctx, []string{hash}); err != nil {
+		return err
+	}
+	// состояние в webapi обновляется с задержкой, первые чтения после start
+	// еще могут показать stopped
+	for {
+		if err = sleepCtx(waitCtx, checkWaitDelay); err != nil {
+			return fmt.Errorf("torrent %s still %s after start: %w", hash, state, err)
+		}
+		if state, err = c.torrentState(waitCtx, hash); err != nil {
+			return fmt.Errorf("read state of %s: %w", hash, err)
+		}
+		if state == qbt.TorrentStateError || state == qbt.TorrentStateMissingFiles {
+			return fmt.Errorf("torrent %s is %s after start", hash, state)
+		}
+		if !isStopped(state) {
+			return nil
+		}
+	}
+}
+
+func isChecking(state qbt.TorrentState) bool {
+	return state == qbt.TorrentStateCheckingDl || state == qbt.TorrentStateCheckingUp || state == qbt.TorrentStateCheckingResumeData
+}
+
+func isStopped(state qbt.TorrentState) bool {
+	return state == qbt.TorrentStateStoppedDl || state == qbt.TorrentStateStoppedUp || state == qbt.TorrentStatePausedDl || state == qbt.TorrentStatePausedUp
+}
+
+func (c *Client) torrentState(ctx context.Context, hash string) (qbt.TorrentState, error) {
+	torrents, err := c.client.GetTorrentsCtx(ctx, qbt.TorrentFilterOptions{Hashes: []string{hash}})
+	if err != nil {
+		return "", err
+	}
+	if len(torrents) == 0 {
+		return "", fmt.Errorf("torrent %s not found", hash)
+	}
+	return torrents[0].State, nil
 }

@@ -3,11 +3,14 @@ package qbittorrent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,8 +71,6 @@ func TestList_Success(t *testing.T) {
 	}
 }
 
-// TestList_SkipsBadTorrent: при провале загрузки свойств одного торрента
-// возвращаются успешные записи; битый торрент пропускается, List отдаёт ErrPartialList.
 func TestList_SkipsBadTorrent(t *testing.T) {
 	torrents := []qbt.Torrent{
 		{Hash: "h1", Name: "torrent-1"},
@@ -111,9 +112,6 @@ func TestList_SkipsBadTorrent(t *testing.T) {
 	}
 }
 
-// TestList_ContextCancellationDoesNotHang это регрессионный тест на исходную
-// реализацию List(), которая могла зависать и течь горутинами, когда контекст
-// вызывающего отменяли на полпути.
 func TestList_ContextCancellationDoesNotHang(t *testing.T) {
 	unblock := make(chan struct{})
 	defer close(unblock)
@@ -176,9 +174,6 @@ func buildTestTorrent(t *testing.T) ([]byte, string) {
 	return buf.Bytes(), mi.HashInfoBytes().HexString()
 }
 
-// TestAddFromBuffer_WaitsForDeleteRace проверяет, что при DeleteEnabled и
-// совпадении хеша нового торрента с заменяемым добавление ждёт исчезновения
-// старого, а не валит предпроверку сразу.
 func TestAddFromBuffer_WaitsForDeleteRace(t *testing.T) {
 	data, hash := buildTestTorrent(t)
 	var infoCalls atomic.Int32
@@ -226,13 +221,12 @@ func TestAddFromBuffer_WaitsForDeleteRace(t *testing.T) {
 }
 
 func TestGetClientNeverProxiesTorrentClient(t *testing.T) {
-	// прокси из окружения увёл бы пароль от веб-морды оператору прокси, а сам
-	// торрент-клиент стоит рядом с приложением
+	// прокси из окружения увел бы пароль от веб-морды его владельцу, а клиент и так стоит рядом
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
 	srv := newStubServer(t, nil, func(http.ResponseWriter, *http.Request) {})
 
 	c := &Client{config: model.ManagerConfig{Host: srv.URL, Username: "u", Password: "p"}}
-	// ошибка логина здесь не важна, транспорт настраивается до неё
+	// ошибка логина тут ни при чем, транспорт ставится раньше
 	_ = c.getClient()
 	tr, ok := c.client.GetHTTPClient().Transport.(*http.Transport)
 	if !ok {
@@ -240,5 +234,475 @@ func TestGetClientNeverProxiesTorrentClient(t *testing.T) {
 	}
 	if tr.Proxy != nil {
 		t.Fatal("qbit client still resolves a proxy")
+	}
+}
+
+func newAddRecorder(t *testing.T, hash string) (*Client, *map[string]string) {
+	t.Helper()
+	var added atomic.Bool
+	var mu sync.Mutex
+	got := map[string]string{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/app/webapiVersion", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("4.6.0"))
+	})
+	mux.HandleFunc("/api/v2/torrents/info", func(w http.ResponseWriter, r *http.Request) {
+		if added.Load() {
+			_ = json.NewEncoder(w).Encode([]qbt.Torrent{{Hash: hash, Name: "new"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]qbt.Torrent{})
+	})
+	mux.HandleFunc("/api/v2/torrents/add", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(32 << 20)
+		mu.Lock()
+		for _, k := range []string{"autoTMM", "savepath", "category", "stopped", "paused"} {
+			got[k] = r.FormValue(k)
+		}
+		mu.Unlock()
+		added.Store(true)
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	c, err := New(model.ManagerConfig{Host: server.URL})
+	if err != nil {
+		t.Fatalf("unexpected error creating client: %v", err)
+	}
+	return c, &got
+}
+
+func TestAddFromBuffer_AutoManagedSendsAutoTMMTrue(t *testing.T) {
+	data, hash := buildTestTorrent(t)
+	c, got := newAddRecorder(t, hash)
+
+	opts := model.ManagerAddFileOptions{Name: "new", Category: "movies", SavePath: "/data/movies", AutoManaged: true}
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if (*got)["autoTMM"] != "true" || (*got)["savepath"] != "" || (*got)["category"] != "movies" {
+		t.Fatalf("expected autoTMM=true, no savepath, category movies; got %+v", *got)
+	}
+}
+
+func TestAddFromBuffer_ManualKeepsSavePath(t *testing.T) {
+	data, hash := buildTestTorrent(t)
+	c, got := newAddRecorder(t, hash)
+
+	opts := model.ManagerAddFileOptions{Name: "new", SavePath: "/data/x"}
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if (*got)["autoTMM"] != "false" || (*got)["savepath"] != "/data/x" {
+		t.Fatalf("expected autoTMM=false and savepath /data/x; got %+v", *got)
+	}
+}
+
+func TestAddFromMagnet_URLPathSendsAutoTMM(t *testing.T) {
+	hash := "0123456789abcdef0123456789abcdef01234567"
+	c, got := newAddRecorder(t, hash)
+
+	opts := model.ManagerAddFileOptions{Name: "new", AutoManaged: true}
+	if err := c.AddFromMagnet(context.Background(), "magnet:?xt=urn:btih:"+hash, opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if (*got)["autoTMM"] != "true" {
+		t.Fatalf("expected autoTMM=true; got %+v", *got)
+	}
+}
+
+func TestList_MapsSavePath(t *testing.T) {
+	server := newStubServer(t, []qbt.Torrent{{Hash: "h1", Name: "t", SavePath: "/data/movies"}}, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(qbt.TorrentProperties{Hash: "h1", AdditionDate: 1700000000})
+	})
+	c, err := New(model.ManagerConfig{Host: server.URL})
+	if err != nil {
+		t.Fatalf("unexpected error creating client: %v", err)
+	}
+	entries, err := c.List(context.Background(), model.FilterOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].SavePath != "/data/movies" {
+		t.Fatalf("expected SavePath /data/movies, got %+v", entries)
+	}
+}
+
+func TestDeletesFiles(t *testing.T) {
+	cases := []struct {
+		name     string
+		cfg      model.ManagerConfig
+		category string
+		want     bool
+	}{
+		{"all on, listed", model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"tv", "movies"}}, "movies", true},
+		{"category not listed", model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"tv"}}, "movies", false},
+		{"files disabled", model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}}, "movies", false},
+		{"delete disabled", model.ManagerConfig{DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}}, "movies", false},
+		{"no categories", model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true}, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Client{config: tc.cfg}
+			if got := c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: tc.category}); got != tc.want {
+				t.Fatalf("DeletesFiles = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDelete_ListedCategoryPostsDeleteFiles(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]string{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/app/webapiVersion", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("4.6.0"))
+	})
+	mux.HandleFunc("/api/v2/torrents/delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		got["hashes"] = r.FormValue("hashes")
+		got["deleteFiles"] = r.FormValue("deleteFiles")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	c, err := New(model.ManagerConfig{Host: server.URL, DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}})
+	if err != nil {
+		t.Fatalf("unexpected error creating client: %v", err)
+	}
+	if err = c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x"}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got["hashes"] != "h1" || got["deleteFiles"] != "true" {
+		t.Fatalf("expected hashes=h1 deleteFiles=true, got %+v", got)
+	}
+}
+
+func TestAddFromBuffer_StoppedFlagSendsStoppedAndPaused(t *testing.T) {
+	for _, stopped := range []bool{true, false} {
+		data, hash := buildTestTorrent(t)
+		c, got := newAddRecorder(t, hash)
+		opts := model.ManagerAddFileOptions{Name: "new", Stopped: stopped}
+		if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := strconv.FormatBool(stopped)
+		if (*got)["stopped"] != want || (*got)["paused"] != want {
+			t.Errorf("Stopped %v: stopped=%q paused=%q, want %q", stopped, (*got)["stopped"], (*got)["paused"], want)
+		}
+	}
+}
+
+func TestDiscard_NeverDeletesFiles(t *testing.T) {
+	cfgs := map[string]model.ManagerConfig{
+		"delete files on": {DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}},
+		"delete disabled": {},
+	}
+	for name, cfg := range cfgs {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			got := map[string]string{}
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v2/torrents/delete", func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				mu.Lock()
+				got["hashes"] = r.FormValue("hashes")
+				got["deleteFiles"] = r.FormValue("deleteFiles")
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			cfg.Host = server.URL
+			c, err := New(cfg)
+			if err != nil {
+				t.Fatalf("unexpected error creating client: %v", err)
+			}
+			if err = c.Discard(context.Background(), "h1"); err != nil {
+				t.Fatalf("Discard: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if got["hashes"] != "h1" || got["deleteFiles"] != "false" {
+				t.Fatalf("expected hashes=h1 deleteFiles=false, got %+v", got)
+			}
+		})
+	}
+}
+
+func withFastCheckWait(t *testing.T, budget time.Duration) {
+	t.Helper()
+	origDelay, origBudget := checkWaitDelay, checkWaitBudget
+	checkWaitDelay, checkWaitBudget = 5*time.Millisecond, budget
+	t.Cleanup(func() { checkWaitDelay, checkWaitBudget = origDelay, origBudget })
+}
+
+func newResumeServer(t *testing.T, before, after []qbt.TorrentState) (*Client, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var endpoints []string
+	started := false
+	next := func(states *[]qbt.TorrentState) qbt.TorrentState {
+		s := (*states)[0]
+		if len(*states) > 1 {
+			*states = (*states)[1:]
+		}
+		return s
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/app/webapiVersion", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("2.11.2"))
+	})
+	mux.HandleFunc("/api/v2/torrents/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		name := strings.TrimPrefix(r.URL.Path, "/api/v2/torrents/")
+		endpoints = append(endpoints, name)
+		switch name {
+		case "start", "resume":
+			started = true
+		case "info":
+			state := next(&before)
+			if started {
+				state = next(&after)
+			}
+			_ = json.NewEncoder(w).Encode([]qbt.Torrent{{Hash: "h1", State: state}})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	c, err := New(model.ManagerConfig{Host: server.URL})
+	if err != nil {
+		t.Fatalf("unexpected error creating client: %v", err)
+	}
+	return c, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), endpoints...)
+	}
+}
+
+func states(s ...qbt.TorrentState) []qbt.TorrentState { return s }
+
+func TestResume_StartsWithoutRecheckAndWaitsPastStaleState(t *testing.T) {
+	// состояние в webapi кешируется: первые чтения после start еще stoppedDL
+	withFastCheckWait(t, time.Second)
+	c, endpoints := newResumeServer(t, states(qbt.TorrentStateStoppedDl), states(qbt.TorrentStateStoppedDl, qbt.TorrentStateStoppedDl, qbt.TorrentStateDownloading))
+	if err := c.Resume(context.Background(), "h1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	want := []string{"info", "start", "info", "info", "info"}
+	if got := endpoints(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("endpoints = %v, want %v", got, want)
+	}
+}
+
+func TestResume_StillStoppedAfterStartIsError(t *testing.T) {
+	withFastCheckWait(t, 50*time.Millisecond)
+	c, _ := newResumeServer(t, states(qbt.TorrentStateStoppedDl), states(qbt.TorrentStateStoppedDl))
+	if err := c.Resume(context.Background(), "h1"); err == nil {
+		t.Fatal("expected an error for a torrent that stays stopped")
+	}
+}
+
+func TestResume_AlreadyRunningNoStart(t *testing.T) {
+	withFastCheckWait(t, time.Second)
+	c, endpoints := newResumeServer(t, states(qbt.TorrentStateDownloading), states(qbt.TorrentStateDownloading))
+	if err := c.Resume(context.Background(), "h1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if got := endpoints(); strings.Join(got, ",") != "info" {
+		t.Fatalf("endpoints = %v, want [info]", got)
+	}
+}
+
+func TestResume_CheckPastBudgetNeverStarts(t *testing.T) {
+	withFastCheckWait(t, 50*time.Millisecond)
+	c, endpoints := newResumeServer(t, states(qbt.TorrentStateCheckingResumeData), states(qbt.TorrentStateDownloading))
+	if err := c.Resume(context.Background(), "h1"); err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	for _, e := range endpoints() {
+		if e == "start" || e == "resume" || e == "recheck" {
+			t.Fatalf("unexpected %s: %v", e, endpoints())
+		}
+	}
+}
+
+func TestResume_MissingFilesAfterStartIsError(t *testing.T) {
+	withFastCheckWait(t, time.Second)
+	c, _ := newResumeServer(t, states(qbt.TorrentStateStoppedDl), states(qbt.TorrentStateMissingFiles))
+	if err := c.Resume(context.Background(), "h1"); err == nil || !strings.Contains(err.Error(), "missingFiles") {
+		t.Fatalf("err = %v, want missingFiles error", err)
+	}
+}
+
+func TestMapEntry_Unhealthy(t *testing.T) {
+	c := &Client{}
+	unhealthy := []qbt.TorrentState{qbt.TorrentStateError, qbt.TorrentStateMissingFiles, qbt.TorrentStateCheckingUp, qbt.TorrentStateCheckingDl, qbt.TorrentStateCheckingResumeData, qbt.TorrentStateMoving}
+	healthy := []qbt.TorrentState{qbt.TorrentStateUploading, qbt.TorrentStateStalledUp, qbt.TorrentStateDownloading, qbt.TorrentStateStoppedUp, qbt.TorrentStatePausedDl, qbt.TorrentStateQueuedDl}
+	for _, s := range unhealthy {
+		if !c.mapEntry(&qbt.Torrent{State: s}, &qbt.TorrentProperties{}).Unhealthy {
+			t.Errorf("state %s: Unhealthy = false, want true", s)
+		}
+	}
+	for _, s := range healthy {
+		if c.mapEntry(&qbt.Torrent{State: s}, &qbt.TorrentProperties{}).Unhealthy {
+			t.Errorf("state %s: Unhealthy = true, want false", s)
+		}
+	}
+}
+
+func TestNewErrorHidesHostPassword(t *testing.T) {
+	for _, host := range []string{"http://u:SEC-qh@127.0.0.1:1", "http://u:SEC-q*h@127.0.0.1:1"} {
+		_, err := New(model.ManagerConfig{Host: host, Username: "u", Password: "p"})
+		if err == nil {
+			t.Fatalf("%s: want a connection error", host)
+		}
+		if msg := err.Error(); strings.Contains(msg, "SEC-") || !strings.Contains(msg, "127.0.0.1:1") {
+			t.Errorf("%s: error = %q, want host without password", host, msg)
+		}
+	}
+}
+
+func TestLaterCallErrorsHideHostPassword(t *testing.T) {
+	var noBasic atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, p, ok := r.BasicAuth(); !ok || u != "u" || p != "SEC-qh" {
+			noBasic.Add(1)
+		}
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sid", Path: "/"})
+			_, _ = w.Write([]byte("Ok."))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	host := "http://u:SEC-qh@" + strings.TrimPrefix(server.URL, "http://")
+	c, err := New(model.ManagerConfig{Host: host, Username: "admin", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.GetCategories(context.Background()); err == nil {
+		t.Fatal("want status error")
+	}
+	server.Close()
+	_, err = c.GetCategories(context.Background())
+	if err == nil {
+		t.Fatal("want transport error")
+	}
+	if strings.Contains(err.Error(), "SEC-") {
+		t.Errorf("error leaks host password: %q", err.Error())
+	}
+	if n := noBasic.Load(); n != 0 {
+		t.Errorf("%d requests without basic auth from host userinfo", n)
+	}
+}
+
+func TestLaterCallErrorsHideHostPasswordEmptyUser(t *testing.T) {
+	cases := []struct{ userinfo, wantUser, wantPass string }{
+		{":SEC-qe@", "", "SEC-qe"},
+		{"u@", "u", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.userinfo, func(t *testing.T) {
+			var noBasic atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if u, p, ok := r.BasicAuth(); !ok || u != tc.wantUser || p != tc.wantPass {
+					noBasic.Add(1)
+				}
+				if r.URL.Path == "/api/v2/auth/login" {
+					http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sid", Path: "/"})
+					_, _ = w.Write([]byte("Ok."))
+					return
+				}
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			host := "http://" + tc.userinfo + strings.TrimPrefix(server.URL, "http://")
+			c, err := New(model.ManagerConfig{Host: host, Username: "admin", Password: "p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = c.GetCategories(context.Background()); err == nil {
+				t.Fatal("want status error")
+			}
+			server.Close()
+			_, err = c.GetCategories(context.Background())
+			if err == nil {
+				t.Fatal("want transport error")
+			}
+			if strings.Contains(err.Error(), "SEC-") {
+				t.Errorf("error leaks host password: %q", err.Error())
+			}
+			if n := noBasic.Load(); n != 0 {
+				t.Errorf("%d requests without expected basic auth from host userinfo", n)
+			}
+		})
+	}
+}
+
+func TestEmptyUserBasicNotSentOnCrossHostRedirect(t *testing.T) {
+	var otherAuth, mainAuth atomic.Value
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		otherAuth.Store(r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer other.Close()
+	otherURL := strings.Replace(other.URL, "127.0.0.1", "localhost", 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sid", Path: "/"})
+			_, _ = w.Write([]byte("Ok."))
+			return
+		}
+		mainAuth.Store(r.Header.Get("Authorization"))
+		http.Redirect(w, r, otherURL+r.URL.Path, http.StatusFound)
+	}))
+	defer server.Close()
+	host := "http://:SEC-pw@" + strings.TrimPrefix(server.URL, "http://")
+	c, err := New(model.ManagerConfig{Host: host, Username: "admin", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.GetCategories(context.Background())
+	if got, _ := mainAuth.Load().(string); got != "Basic "+base64.StdEncoding.EncodeToString([]byte(":SEC-pw")) {
+		t.Errorf("origin Authorization = %q, want basic from host userinfo", got)
+	}
+	if got, _ := otherAuth.Load().(string); got != "" {
+		t.Errorf("cross-host redirect got Authorization %q, want none", got)
+	}
+}
+
+func TestEmptyUserBasicKeptOnSameHostRedirect(t *testing.T) {
+	var finalAuth atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "sid", Path: "/"})
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/categories":
+			http.Redirect(w, r, "/final", http.StatusFound)
+		default:
+			finalAuth.Store(r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte("{}"))
+		}
+	}))
+	defer server.Close()
+	host := "http://:SEC-pw@" + strings.TrimPrefix(server.URL, "http://")
+	c, err := New(model.ManagerConfig{Host: host, Username: "admin", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.GetCategories(context.Background())
+	if got, _ := finalAuth.Load().(string); got != "Basic "+base64.StdEncoding.EncodeToString([]byte(":SEC-pw")) {
+		t.Errorf("same-host redirect Authorization = %q, want basic", got)
 	}
 }

@@ -12,6 +12,7 @@ type CheckLogEntry struct {
 	Status        string
 	Error         string
 	ErrorStreak   int
+	KeepStreak    bool
 	Category      string
 	RecheckAt     *time.Time
 	ForceCheck    bool
