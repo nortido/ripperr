@@ -7,10 +7,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"ripperr/internal/metrics"
+	"ripperr/internal/system/logger"
 )
 
 func TestEventTextsDistinguishTypesAndCarrySubject(t *testing.T) {
@@ -20,10 +24,12 @@ func TestEventTextsDistinguishTypesAndCarrySubject(t *testing.T) {
 		wantKw  string
 		wantSub string
 	}{
-		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1", ""), "qBittorrent", "Some.Release.2026"},
+		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1", ""), "перекачана", "Some.Release.2026"},
 		{"broken", BrokenEvent("Broken.Release", "https://example.com/t2", 5), "игнор", "Broken.Release"},
 		{"tracker down", TrackerDownEvent("rutracker", "connection refused"), "недоступен", "rutracker"},
 		{"tracker up", TrackerUpEvent("rutracker"), "возобновлены", "rutracker"},
+		{"mirror digest", MirrorDigestEvent([]string{"kinozal: основной адрес kinozal.me вместо kinozal.tv", "rutor: убрать rutor.example (не отвечает)"}), "Зеркала трекеров", "rutor.example"},
+		{"mirror paused", MirrorPausedEvent("kinozal", "kinozal.xyz"), "на паузе", "kinozal.xyz"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -140,9 +146,8 @@ func TestNotifySkipsWhenDisabled(t *testing.T) {
 	n := New(Config{WebhookURL: srv.URL, Enabled: false}, "")
 	n.Notify(Event{Kind: KindUpdated, Text: "should not send"})
 
-	// wants() проверяется синхронно ещё до того, как Notify запустит горутину
-	// доставки, поэтому неблокирующее чтение доказывает, что ничего не запланировано,
-	// спать и ждать не нужно.
+	// wants() проверяется синхронно еще до горутины доставки, так что неблокирующего
+	// чтения хватает, ждать не нужно
 	select {
 	case <-hit:
 		t.Fatal("webhook was called while notifications are disabled")
@@ -321,8 +326,8 @@ func TestNotifyDoesNotRetryWebhookOn4xx(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("webhook was not called")
 	}
-	// 4xx is not retryable, so sendWithRetry never reaches the delay branch;
-	// короткого окна хватает, чтобы поймать ошибочный второй запрос
+	// 4xx не повторяется, до паузы sendWithRetry не доходит.
+	// Короткого окна хватит, чтобы поймать лишний второй запрос
 	select {
 	case <-hits:
 		t.Fatal("webhook was retried after 400")
@@ -347,9 +352,8 @@ func TestNotifyRetriesOnlyTheFailingTransport(t *testing.T) {
 	defer tgSrv.Close()
 	telegramAPIURL = tgSrv.URL + "/bot%s/sendMessage"
 
-	// слушатель, который принимает и тут же закрывает соединение, роняет
-	// клиент вебхука настоящей сетевой ошибкой (вообще без HTTP-статуса),
-	// не трогая при этом реальную сеть
+	// слушатель принимает и сразу закрывает соединение: настоящая сетевая ошибка
+	// без HTTP-статуса, и реальная сеть не нужна
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -771,5 +775,249 @@ func TestErrorsHideTelegramToken(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), token) {
 		t.Fatalf("token leaked into error: %s", err)
+	}
+}
+
+func countingServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+func waitHits(t *testing.T, hits *atomic.Int32, want int32) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for hits.Load() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("got %d hits, want %d", hits.Load(), want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestNotifyRoutesByChannelEvents(t *testing.T) {
+	origAPI := telegramAPIURL
+	defer func() { telegramAPIURL = origAPI }()
+
+	tg, tgHits := countingServer(t)
+	wh, whHits := countingServer(t)
+	telegramAPIURL = tg.URL + "/bot%s/sendMessage"
+
+	n := New(Config{
+		TelegramToken:  "tok",
+		TelegramChatID: "1",
+		TelegramEvents: []string{KindUpdated},
+		WebhookURL:     wh.URL,
+		Enabled:        true,
+	}, "")
+	n.Notify(TrackerDownEvent("rutracker", "boom"))
+	waitHits(t, whHits, 1)
+	time.Sleep(100 * time.Millisecond)
+	if tgHits.Load() != 0 {
+		t.Fatalf("telegram subscribed to updated only got tracker_down: %d hits", tgHits.Load())
+	}
+
+	n = New(Config{
+		TelegramToken:  "tok",
+		TelegramChatID: "1",
+		TelegramEvents: []string{KindTrackerDown},
+		WebhookURL:     wh.URL,
+		WebhookEvents:  []string{},
+		Enabled:        true,
+	}, "")
+	n.Notify(TrackerDownEvent("rutracker", "boom"))
+	waitHits(t, tgHits, 1)
+	time.Sleep(100 * time.Millisecond)
+	if whHits.Load() != 1 {
+		t.Fatalf("webhook with empty list must stay silent, hits %d", whHits.Load())
+	}
+}
+
+func TestNotifySlowChannelDoesNotDelayOthers(t *testing.T) {
+	origAPI := telegramAPIURL
+	defer func() { telegramAPIURL = origAPI }()
+
+	release := make(chan struct{})
+	tg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer tg.Close()
+	defer close(release)
+	telegramAPIURL = tg.URL + "/bot%s/sendMessage"
+
+	wh, whHits := countingServer(t)
+	n := New(Config{
+		TelegramToken:  "tok",
+		TelegramChatID: "1",
+		WebhookURL:     wh.URL,
+		Enabled:        true,
+	}, "")
+	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
+	waitHits(t, whHits, 1)
+}
+
+func TestNotifyCheckFailedNotInDefault(t *testing.T) {
+	for _, k := range DefaultEvents() {
+		if k == KindCheckFailed {
+			t.Fatal("check_failed must be off by default")
+		}
+	}
+	if !KnownEvent(KindCheckFailed) || !KnownEvent(KindMirrorSwitched) || KnownEvent(KindTest) || KnownEvent("nope") {
+		t.Fatal("KnownEvent must accept check_failed and mirror_switched and reject test and unknown kinds")
+	}
+	ev := CheckFailedEvent("Some.Release", "https://example.com/t1", "timeout")
+	if ev.Kind != KindCheckFailed || !strings.Contains(ev.plain(), "Some.Release") || !strings.Contains(ev.plain(), "timeout") || ev.URL == "" {
+		t.Fatalf("unexpected check_failed event: %+v", ev)
+	}
+
+	wh, whHits := countingServer(t)
+	New(Config{WebhookURL: wh.URL, Enabled: true}, "").Notify(ev)
+	time.Sleep(100 * time.Millisecond)
+	if whHits.Load() != 0 {
+		t.Fatal("check_failed reached a channel with no stored list")
+	}
+	New(Config{WebhookURL: wh.URL, WebhookEvents: []string{KindCheckFailed}, Enabled: true}, "").Notify(ev)
+	waitHits(t, whHits, 1)
+}
+
+func TestSendIgnoresEventLists(t *testing.T) {
+	wh, whHits := countingServer(t)
+	n := New(Config{WebhookURL: wh.URL, WebhookEvents: []string{}, Enabled: true}, "")
+	if err := n.Send(context.Background(), Event{Kind: KindTest, Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if whHits.Load() != 1 {
+		t.Fatalf("test event must bypass lists, hits %d", whHits.Load())
+	}
+}
+
+func TestMirrorSwitchedEvent(t *testing.T) {
+	ev := MirrorSwitchedEvent("rutracker", "rutracker.org", "rutracker.nl")
+	if ev.Kind != "mirror_switched" {
+		t.Errorf("kind = %q, want mirror_switched", ev.Kind)
+	}
+	for _, want := range []string{"rutracker", "rutracker.org", "rutracker.nl"} {
+		if !strings.Contains(ev.plain(), want) {
+			t.Errorf("text %q does not contain %q", ev.plain(), want)
+		}
+	}
+}
+
+func TestNotifyCountsNotifications(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(int(status.Load()))
+	}))
+	defer srv.Close()
+
+	waitFor := func(result string, want uint64) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for metrics.Notifications.Value("webhook", result) != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("webhook %s = %d, want %d", result, metrics.Notifications.Value("webhook", result), want)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	okBefore := metrics.Notifications.Value("webhook", "ok")
+	errBefore := metrics.Notifications.Value("webhook", "error")
+
+	n := New(Config{WebhookURL: srv.URL, Enabled: true}, "")
+	if err := n.Send(context.Background(), Event{Kind: KindUpdated, Text: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
+	waitFor("ok", okBefore+1)
+
+	status.Store(http.StatusBadRequest)
+	n.Notify(Event{Kind: KindUpdated, Text: "hi"})
+	waitFor("error", errBefore+1)
+	if got := metrics.Notifications.Value("webhook", "ok"); got != okBefore+1 {
+		t.Fatalf("ok = %d, want %d (Send must not count)", got, okBefore+1)
+	}
+}
+
+func TestErrorsHideWebhookURLSecrets(t *testing.T) {
+	defer withRetryDelay(time.Millisecond)()
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	host := strings.TrimPrefix(srv.URL, "http://")
+	srv.Close()
+
+	n := New(Config{WebhookURL: "http://wu:SEC-wp@" + host + "/SEC-wpath?t=SEC-wq", Enabled: true}, "")
+	err := n.Send(context.Background(), Event{Kind: KindTest, Text: "x"})
+	if err == nil {
+		t.Fatal("want error from closed server")
+	}
+	if strings.Contains(err.Error(), "SEC-") {
+		t.Fatalf("secret leaked into error: %s", err)
+	}
+	if !strings.Contains(err.Error(), host) {
+		t.Fatalf("host %s missing from error: %s", host, err)
+	}
+
+	n.Notify(Event{Kind: KindTest, Text: "x"})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range logger.Snapshot(100) {
+			if !strings.Contains(e.Message, "notify: webhook") || !strings.Contains(e.Message, host) {
+				continue
+			}
+			if strings.Contains(e.Message, "SEC-") {
+				t.Fatalf("secret leaked into log: %s", e.Message)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no notify: webhook log entry")
+}
+
+func TestMirrorSuggestedEvents(t *testing.T) {
+	if !KnownEvent(KindMirrorSuggested) || KindMirrorSuggested != "mirror_suggested" {
+		t.Fatal("mirror_suggested must be a known event kind")
+	}
+	if !slices.Contains(DefaultEvents(), KindMirrorSuggested) {
+		t.Fatalf("mirror_suggested must be in the default events: %v", DefaultEvents())
+	}
+	digest := MirrorDigestEvent([]string{"a: один", "b: два"})
+	if digest.Kind != KindMirrorSuggested || digest.Text != "Зеркала трекеров: a: один; b: два" {
+		t.Fatalf("digest = %+v", digest)
+	}
+	paused := MirrorPausedEvent("kinozal", "kinozal.xyz")
+	want := "Трекер kinozal на паузе: отвечает только новое зеркало kinozal.xyz. Подтвердите его в настройках трекера."
+	if paused.Kind != KindMirrorSuggested || paused.Text != want {
+		t.Fatalf("paused = %+v", paused)
+	}
+}
+
+func TestNotifySkipsDisabledChannel(t *testing.T) {
+	wh, whHits := countingServer(t)
+	n := New(Config{WebhookURL: wh.URL, WebhookDisabled: true, Enabled: true}, "")
+	n.Notify(Event{Kind: KindUpdated, Text: "x"})
+	time.Sleep(100 * time.Millisecond)
+	if whHits.Load() != 0 {
+		t.Fatalf("disabled webhook got %d hits", whHits.Load())
+	}
+
+	n = New(Config{WebhookURL: wh.URL, Enabled: true}, "")
+	n.Notify(Event{Kind: KindUpdated, Text: "x"})
+	waitHits(t, whHits, 1)
+}
+
+func TestSendIgnoresChannelDisabled(t *testing.T) {
+	wh, whHits := countingServer(t)
+	n := New(Config{WebhookURL: wh.URL, WebhookDisabled: true, Enabled: true}, "")
+	if err := n.Send(context.Background(), Event{Kind: KindTest, Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if whHits.Load() != 1 {
+		t.Fatalf("test message must reach a disabled channel, hits %d", whHits.Load())
 	}
 }

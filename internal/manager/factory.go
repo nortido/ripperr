@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"ripperr/internal/config"
+	"ripperr/internal/manager/client/deluge"
 	"ripperr/internal/manager/client/qbittorrent"
 	"ripperr/internal/manager/client/transmission"
 	"ripperr/internal/model"
@@ -14,24 +15,20 @@ import (
 type Client interface {
 	client
 	GetCategories(ctx context.Context) ([]string, error)
-	ForceRedownload(ctx context.Context, torrentHash string) error
+	ForceRedownload(ctx context.Context, torrentHash string, opts model.RedownloadOptions) error
 	SweepBlackhole(ctx context.Context)
 }
 
 const (
 	ClientQbit         = "qbit"
 	ClientTransmission = "transmission"
+	ClientDeluge       = "deluge"
 )
 
-// ErrUnknownClient сигнализирует вызывающему коду про вид клиента, который никогда не
-// подключится: в отличие от ошибки соединения, повторять попытку бессмысленно
-var ErrUnknownClient = errors.New("unknown manager client")
+var ErrUnknownClient = errors.New("unknown manager client") // такой клиент не подключится никогда, повторять бессмысленно
 
-// NormalizeClient проксирует config.NormalizeClient: реализация переехала в
-// config (нормализация значения конфига, а не менеджера), но сюда уже привязаны
-// все вызовы (run.go, web-обработчики), поэтому имя и сигнатуру в этом пакете
-// сохраняем, а саму нормализацию не дублируем.
 func NormalizeClient(kind string) string {
+	// нормализация живет в config, обертка осталась ради вызовов из run.go и web-обработчиков
 	return config.NormalizeClient(kind)
 }
 
@@ -43,7 +40,13 @@ func NewClient(kind string, cfg model.ManagerConfig) (Client, error) {
 		return qbittorrent.New(cfg)
 	case ClientTransmission:
 		return transmission.New(cfg)
+	case ClientDeluge:
+		return deluge.New(cfg)
 	default:
-		return nil, fmt.Errorf("%w: %q (must be %q or %q)", ErrUnknownClient, kind, ClientQbit, ClientTransmission)
+		return nil, fmt.Errorf("%w: %q (must be %q, %q or %q)", ErrUnknownClient, kind, ClientQbit, ClientTransmission, ClientDeluge)
 	}
+}
+
+func SupportsTags(kind string) bool {
+	return NormalizeClient(kind) != ClientDeluge
 }

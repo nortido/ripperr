@@ -2,6 +2,7 @@ package manager
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"ripperr/internal/model"
@@ -60,13 +61,41 @@ func TestNormalizeClient(t *testing.T) {
 }
 
 func TestNewClientMixedCaseKind(t *testing.T) {
-	// MANAGER_CLIENT=Transmission с чужим регистром и пробелами из env обязан
-	// уйти в ветку transmission, а не в ErrUnknownClient
+	// MANAGER_CLIENT из env бывает с другим регистром и пробелами, это все равно transmission
 	_, err := NewClient(" Transmission ", model.ManagerConfig{Host: "http://127.0.0.1:1"})
 	if err == nil {
 		t.Fatal("expected connection error for unreachable host")
 	}
 	if errors.Is(err, ErrUnknownClient) {
 		t.Fatalf("got ErrUnknownClient for a mixed-case known kind: %v", err)
+	}
+}
+
+func TestNewClientDelugeKnown(t *testing.T) {
+	_, err := NewClient(" Deluge ", model.ManagerConfig{Host: "http://127.0.0.1:1", Password: "p"})
+	if err == nil {
+		t.Fatal("expected connection error for unreachable host")
+	}
+	if errors.Is(err, ErrUnknownClient) {
+		t.Fatalf("got ErrUnknownClient for deluge: %v", err)
+	}
+	_, err = NewClient("bogus", model.ManagerConfig{})
+	if err == nil || !strings.Contains(err.Error(), ClientDeluge) {
+		t.Fatalf("unknown kind error = %v, want it to list %q", err, ClientDeluge)
+	}
+}
+
+func TestSupportsTags(t *testing.T) {
+	cases := map[string]bool{
+		"":                 true,
+		ClientQbit:         true,
+		ClientTransmission: true,
+		ClientDeluge:       false,
+		" Deluge ":         false,
+	}
+	for kind, want := range cases {
+		if got := SupportsTags(kind); got != want {
+			t.Errorf("SupportsTags(%q) = %v, want %v", kind, got, want)
+		}
 	}
 }

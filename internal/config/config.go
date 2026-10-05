@@ -9,12 +9,9 @@ import (
 	"github.com/sethvargo/go-envconfig"
 )
 
-// NormalizeClient приводит значение MANAGER_CLIENT (env, .env, БД настроек) к
-// одному каноническому виду в одном месте: env-переменные и старые записи
-// настроек попадаются в любом регистре и с пробелами (MANAGER_CLIENT=Transmission),
-// а manager, settings и web сравнивают его буквально с "qbit"/"transmission",
-// поэтому без нормализации такое значение уходит не в ту ветку.
 func NormalizeClient(kind string) string {
+	// env и старые настройки бывают в любом регистре и с пробелами,
+	// а manager, settings и web сравнивают с "qbit" буквально
 	return strings.ToLower(strings.TrimSpace(kind))
 }
 
@@ -23,7 +20,7 @@ type Log struct {
 }
 
 type Manager struct {
-	// Client выбирает активный клиент загрузок: "qbit" или "transmission"
+	// "qbit", "transmission" или "deluge"
 	Client      string `env:"MANAGER_CLIENT, default=qbit"`
 	QbitTorrent struct {
 		Host     string `env:"QBIT_URL, default=localhost:8068"`
@@ -32,10 +29,14 @@ type Manager struct {
 	}
 	Transmission struct {
 		Host string `env:"TRANSMISSION_URL, default=localhost:9091"`
-		// у Transmission аутентификация часто выключена, поэтому пустые логин
-		// и пароль это нормальное значение по умолчанию, в отличие от qbit
+		// у Transmission авторизацию часто выключают, так что пустые логин и пароль тут нормальный дефолт
 		Username string `env:"TRANSMISSION_USER, default="`
 		Password string `env:"TRANSMISSION_PASS, default="`
+	}
+	Deluge struct {
+		Host string `env:"DELUGE_URL, default=localhost:8112"`
+		// Web UI Deluge авторизует только паролем, логина у него нет
+		Password string `env:"DELUGE_PASS, default=deluge"`
 	}
 	PausedMaxRatio        float64  `env:"MANAGER_PAUSED_MAX_RATIO, default=2"`
 	DeleteEnabled         bool     `env:"MANAGER_DELETE_ENABLED, default=true"`
@@ -44,17 +45,18 @@ type Manager struct {
 	MinutesToReconnect    int      `env:"MANAGER_MINUTES_TO_RECONNECT, default=5"`
 }
 
-// TrackerItem это настройки одного трекера. Имена переменных окружения на трекер
-// собирает ApplyTrackerEnv из ключа (TRACKER_<KEY>_*); значения по умолчанию объявляет
-// сам пакет трекера в registry.Def, потому что общий тип не может нести разный
-// `default=` на экземпляр. `overwrite` даёт переменной окружения победить
-// предзаполненное значение (иначе go-envconfig пропускает поле, которое уже не нулевое).
 type TrackerItem struct {
+	// дефолты объявляет пакет трекера в registry.Def: общий тип не может нести разный
+	// default= на экземпляр. overwrite нужен, иначе go-envconfig пропустит уже заполненное поле
 	Name         string   `json:"name" env:"NAME, overwrite"`
 	Domain       string   `json:"domain" env:"DOMAIN, overwrite"`
 	ActiveDomain string   `json:"active_domain"` // переопределение только из БД
 	Mirrors      []string `json:"mirrors"`       // переопределение только из БД
+	Retired      []string `json:"retired"`
+	Unconfirmed  []string `json:"unconfirmed"`
 	Credentials  string   `json:"credentials" env:"CREDENTIALS, overwrite"`
+	Login        string   `json:"login"`
+	Password     string   `json:"password"`
 	Publicity    string   `json:"publicity" env:"PUBLICITY, overwrite"`
 	LoginURL     string   `json:"login_url" env:"LOGIN_URL, overwrite"`
 	DownloadURL  string   `json:"download_url" env:"DOWNLOAD_URL, overwrite"`
@@ -64,42 +66,36 @@ type TrackerItem struct {
 	Enabled      bool     `json:"enabled" env:"ENABLED, overwrite"`
 }
 
-// Tracker это набор настроек по ключу трекера. Состав набора задаёт реестр
-// (internal/tracker/registry), config о конкретных трекерах не знает: новый
-// трекер регистрирует себя сам и появляется здесь без правки этого файла.
 type Tracker map[string]*TrackerItem
 
 func (t Tracker) ByKey(key string) *TrackerItem {
 	return t[key]
 }
 
-// Clone нужен там, где App копируется по значению: набор это map, и без
-// собственной копии оверлей из БД писал бы в базовый конфиг навсегда.
 func (t Tracker) Clone() Tracker {
 	out := make(Tracker, len(t))
 	for key, it := range t {
 		item := *it
 		item.Mirrors = append([]string(nil), it.Mirrors...)
+		item.Retired = append([]string(nil), it.Retired...)
+		item.Unconfirmed = append([]string(nil), it.Unconfirmed...)
 		out[key] = &item
 	}
 	return out
 }
 
-// Keys отдаёт ключи в алфавитном порядке. Порядок для показа в UI задаёт реестр
-// (по id), здесь важна только повторяемость обхода.
 func (t Tracker) Keys() []string {
 	out := make([]string, 0, len(t))
 	for k := range t {
 		out = append(out, k)
 	}
+	// сортируем только ради повторяемости обхода, порядок в UI задает реестр
 	sort.Strings(out)
 	return out
 }
 
-// ApplyTrackerEnv накладывает переменные окружения на каждый трекер набора.
-// Отдельным проходом, а не тегом prefix на поле: имена ключей известны только в
-// рантайме, envconfig.Process сам такой набор не обойдёт.
 func ApplyTrackerEnv(ctx context.Context, t Tracker, l envconfig.Lookuper) error {
+	// ключи известны только в рантайме, envconfig.Process такой map сам не обойдет
 	for _, key := range t.Keys() {
 		prefix := "TRACKER_" + strings.ToUpper(key) + "_"
 		if err := envconfig.ProcessWith(ctx, &envconfig.Config{
@@ -113,7 +109,7 @@ func ApplyTrackerEnv(ctx context.Context, t Tracker, l envconfig.Lookuper) error
 }
 
 type Runner struct {
-	WatchTag              string `env:"RUNNER_TAG, default=watch"` // источник из окружения; действующий список в WatchTags
+	WatchTag              string `env:"RUNNER_TAG, default=watch"` // из окружения, действующий список в WatchTags
 	WatchTags             []string
 	MonthThresholdDays    int      `env:"RUNNER_FIRST_MONTH_UPDATE_THRESHOLD, default=1"`
 	HalfYearThresholdDays int      `env:"RUNNER_HALF_YEAR_UPDATE_THRESHOLD, default=7"`
@@ -129,29 +125,28 @@ type Runner struct {
 	CBMinutesToRetry      int      `env:"RUNNER_CB_MINUTES_TO_RETRY, default=60"`
 	AllowedCategories     []string `env:"RUNNER_ALLOWED_CATEGORIES, default="`
 	MagnetTimeout         int64    `env:"RUNNER_MAGNET_TIMEOUT, default=60"`
-	Timezone              string   // переопределение только из БД; empty = process local
+	MirrorConfirm         bool     `env:"RUNNER_MIRROR_CONFIRM, default=true"`
+	Timezone              string   // переопределение только из БД, пусто: локальная зона процесса
 }
 
-// Validate проверяет значения Runner, которые envconfig.Process берёт из
-// окружения как есть, без собственных границ (в отличие от того же поля из
-// БД: там ValidateSchedulePatch/ValidateSchedule режут 5..600). Битый
-// RUNNER_MAGNET_TIMEOUT (например, "1") иначе молча жжёт слот часового
-// лимита трекера на каждой записи без единой ошибки в логе; валим старт, как
-// главная функция уже поступает с ошибкой envconfig.Process, а не тихо
-// подгоняем значение к границе - неверный .env лучше увидеть сразу.
-// 0 не валим: go-envconfig подставляет default=60 только когда переменной нет
-// вовсе, а пустое присваивание (RUNNER_MAGNET_TIMEOUT= или ссылка на
-// незаданную переменную в compose) даёт found=true, val="" - то есть 0, и это
-// "не задано", а не мусор. handler.buildTorrentFromMagnet сам клампит такой
-// 0 до минуты, как и раньше
 func (r Runner) Validate() error {
+	// пустое присваивание (RUNNER_MAGNET_TIMEOUT= или пустая переменная в compose) дает 0,
+	// это "не задано". buildTorrentFromMagnet сам поднимет его до минуты
 	if r.MagnetTimeout == 0 {
 		return nil
 	}
+	// из env значение приходит без границ, а битый таймаут вроде 1 молча жег бы слот
+	// часового лимита трекера на каждой записи. Лучше упасть на старте
 	if r.MagnetTimeout < 5 || r.MagnetTimeout > 600 {
 		return fmt.Errorf("RUNNER_MAGNET_TIMEOUT=%d must be 5..600", r.MagnetTimeout)
 	}
 	return nil
+}
+
+type MirrorSource struct {
+	Type   string `env:"MIRROR_SOURCE, default=github"`
+	URL    string `env:"MIRROR_SOURCE_URL, default="`
+	Direct bool   `env:"MIRROR_SOURCE_DIRECT, default=false"`
 }
 
 type Flaresolverr struct {
@@ -160,7 +155,7 @@ type Flaresolverr struct {
 }
 
 type Storage struct {
-	// пусто означает, что DBPath() выведет его из ConfigDir
+	// пусто: DBPath() выведет путь из ConfigDir
 	Path string `env:"DB_PATH, default="`
 }
 
@@ -169,4 +164,24 @@ type Notifications struct {
 	TelegramChatID string `env:"NOTIFY_TELEGRAM_CHAT_ID, default="`
 	WebhookURL     string `env:"NOTIFY_WEBHOOK_URL, default="`
 	Enabled        bool   `env:"NOTIFY_ENABLED, default=true"`
+
+	// без env: задаются только через страницу интеграций и лежат в БД
+	// нулевое значение = канал включен, так старые БД и env-only настройки не меняются
+	TelegramDisabled bool
+	WebhookDisabled  bool
+	EmailDisabled    bool
+	PushoverDisabled bool
+	TelegramEvents   []string
+	WebhookEvents    []string
+	EmailHost        string
+	EmailPort        int
+	EmailSecurity    string
+	EmailUsername    string
+	EmailPassword    string
+	EmailFrom        string
+	EmailTo          string
+	EmailEvents      []string
+	PushoverToken    string
+	PushoverUser     string
+	PushoverEvents   []string
 }

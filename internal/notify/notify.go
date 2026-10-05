@@ -10,20 +10,27 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"ripperr/internal/helper"
+	"ripperr/internal/metrics"
 	"ripperr/internal/system/logger"
 )
 
 const (
-	KindUpdated     = "updated"
-	KindBroken      = "broken"
-	KindTrackerDown = "tracker_down"
-	KindTrackerUp   = "tracker_up"
-	KindTest        = "test"
+	KindUpdated         = "updated"
+	KindBroken          = "broken"
+	KindTrackerDown     = "tracker_down"
+	KindTrackerUp       = "tracker_up"
+	KindCheckFailed     = "check_failed"
+	KindMirrorSwitched  = "mirror_switched"
+	KindMirrorSuggested = "mirror_suggested"
+	KindTest            = "test"
 )
 
 const (
@@ -36,23 +43,38 @@ const (
 	posterUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
-// var, а не const: notify_test.go укорачивает это, чтобы не спать по-настоящему
+// не const: notify_test.go укорачивает паузу, чтобы не спать по-настоящему
 var notifyRetryDelay = 30 * time.Second
 
-// var, а не const: notify_test.go направляет это на сервер httptest
+// эти три адреса не const: notify_test.go подменяет их на httptest
 var telegramAPIURL = "https://api.telegram.org/bot%s/sendMessage"
 
-// var, а не const: notify_test.go направляет это на сервер httptest
 var telegramPhotoURL = "https://api.telegram.org/bot%s/sendPhoto"
 
-// var, а не const: notify_test.go направляет это на сервер httptest
 var telegramGetUpdatesURL = "https://api.telegram.org/bot%s/getUpdates"
 
 type Config struct {
-	TelegramToken  string
-	TelegramChatID string
-	WebhookURL     string
-	Enabled        bool
+	TelegramToken    string
+	TelegramChatID   string
+	WebhookURL       string
+	Enabled          bool
+	TelegramDisabled bool
+	WebhookDisabled  bool
+	EmailDisabled    bool
+	PushoverDisabled bool
+	TelegramEvents   []string
+	WebhookEvents    []string
+	EmailHost        string
+	EmailPort        int
+	EmailSecurity    string
+	EmailUsername    string
+	EmailPassword    string
+	EmailFrom        string
+	EmailTo          string
+	EmailEvents      []string
+	PushoverToken    string
+	PushoverUser     string
+	PushoverEvents   []string
 }
 
 type Event struct {
@@ -61,10 +83,40 @@ type Event struct {
 	Subject  string
 	URL      string
 	ImageURL string
+	// AppPath: хеш-маршрут в интерфейсе; AppLink: полная ссылка, ее собирает Notifier
+	AppPath string
+	AppLink string
 }
 
-// в telegram Subject уходит ссылкой на страницу трекера, в вебхуке и в остальных
-// каналах он просто дописывается к тексту отдельной строкой
+const (
+	pathTrackers = "#trackers"
+	appLinkLabel = "Открыть в Ripperr"
+	// router.js режет name до 200 знаков
+	maxLinkedName = 200
+)
+
+func dashboardPath(filter, name string) string {
+	q := url.Values{}
+	if filter != "" {
+		q.Set("filter", filter)
+	}
+	if name = helper.Substr(strings.TrimSpace(name), 0, maxLinkedName); name != "" {
+		q.Set("name", name)
+	}
+	if len(q) == 0 {
+		return "#dashboard"
+	}
+	// Encode сортирует ключи: filter идет перед name
+	return "#dashboard?" + q.Encode()
+}
+
+func Link(appURL, path string) string {
+	if appURL == "" || path == "" {
+		return ""
+	}
+	return appURL + "/" + path
+}
+
 func (e Event) plain() string {
 	if e.Subject == "" {
 		return e.Text
@@ -75,48 +127,122 @@ func (e Event) plain() string {
 func UpdatedEvent(name, url, imageURL string) Event {
 	return Event{
 		Kind:     KindUpdated,
-		Text:     "Раздача обновлена и перекачана в qBittorrent:",
+		Text:     "Раздача обновлена и перекачана в torrent-клиенте:",
 		Subject:  name,
 		URL:      url,
 		ImageURL: imageURL,
+		AppPath:  dashboardPath("", name),
 	}
 }
 
 func BrokenEvent(name, url string, streak int) Event {
 	return Event{
 		Kind:    KindBroken,
-		Text:    fmt.Sprintf("%d ошибок подряд, запись отправлена в игнор и больше не проверяется:", streak),
+		Text:    fmt.Sprintf("Ошибок подряд: %d. Раздача отправлена в игнор и больше не проверяется:", streak),
 		Subject: name,
 		URL:     url,
+		AppPath: dashboardPath("ignored", name),
 	}
 }
 
 func TrackerDownEvent(tracker, errMsg string) Event {
 	return Event{
-		Kind: KindTrackerDown,
-		Text: fmt.Sprintf("Трекер %s недоступен: %s\nАвтоматика предохранителя приостановила проверки этого трекера.", tracker, errMsg),
+		Kind:    KindTrackerDown,
+		Text:    fmt.Sprintf("Трекер %s недоступен: %s\nПроверки этого трекера приостановлены.", tracker, errMsg),
+		AppPath: pathTrackers,
 	}
 }
 
 func TrackerUpEvent(tracker string) Event {
 	return Event{
-		Kind: KindTrackerUp,
-		Text: fmt.Sprintf("Трекер %s снова доступен, проверки возобновлены.", tracker),
+		Kind:    KindTrackerUp,
+		Text:    fmt.Sprintf("Трекер %s снова доступен, проверки возобновлены.", tracker),
+		AppPath: pathTrackers,
 	}
 }
 
+func MirrorSwitchedEvent(tracker, from, to string) Event {
+	return Event{
+		Kind:    KindMirrorSwitched,
+		Text:    fmt.Sprintf("Трекер %s: %s не отвечает, проверки переключены на %s.", tracker, from, to),
+		AppPath: pathTrackers,
+	}
+}
+
+func MirrorDigestEvent(lines []string) Event {
+	return Event{
+		Kind:    KindMirrorSuggested,
+		Text:    "Зеркала трекеров: " + strings.Join(lines, "; "),
+		AppPath: pathTrackers,
+	}
+}
+
+func MirrorPausedEvent(tracker, host string) Event {
+	return Event{
+		Kind:    KindMirrorSuggested,
+		Text:    fmt.Sprintf("Трекер %s на паузе: отвечает только новое зеркало %s. Подтвердите его в настройках трекера.", tracker, host),
+		AppPath: pathTrackers,
+	}
+}
+
+func CheckFailedEvent(name, url, errMsg string) Event {
+	return Event{
+		Kind:    KindCheckFailed,
+		Text:    "Ошибка проверки раздачи: " + errMsg,
+		Subject: name,
+		URL:     url,
+		AppPath: dashboardPath("", name),
+	}
+}
+
+func DefaultEvents() []string {
+	// check_failed тут нет: шум от каждой ошибки включают руками
+	return []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched, KindMirrorSuggested}
+}
+
+func KnownEvent(kind string) bool {
+	switch kind {
+	case KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindCheckFailed, KindMirrorSwitched, KindMirrorSuggested:
+		return true
+	}
+	return false
+}
+
+func wants(events []string, kind string) bool {
+	if kind == KindTest {
+		return true
+	}
+	if events == nil {
+		events = DefaultEvents()
+	}
+	return slices.Contains(events, kind)
+}
+
 type Notifier struct {
-	cfg Config
-	hc  *http.Client
+	cfg    Config
+	hc     *http.Client
+	appURL string
 }
 
 func New(cfg Config, proxyURL string) *Notifier {
 	return &Notifier{cfg: cfg, hc: newHTTPClient(proxyURL)}
 }
 
-// api.telegram.org в РФ недоступен напрямую, поэтому уведомления ходят через тот же
-// прокси, что и трекеры; пустой адрес оставляет прямое соединение
+func (n *Notifier) WithAppURL(appURL string) *Notifier {
+	n.appURL = appURL
+	return n
+}
+
+func (n *Notifier) withLink(ev Event) Event {
+	if ev.AppLink == "" {
+		ev.AppLink = Link(n.appURL, ev.AppPath)
+	}
+	return ev
+}
+
 func newHTTPClient(proxyURL string) *http.Client {
+	// api.telegram.org из РФ напрямую не открывается, поэтому идем через прокси трекеров.
+	// Пустой адрес: прямое соединение
 	return &http.Client{Timeout: sendTimeout, Transport: helper.ProxyTransport(proxyURL)}
 }
 
@@ -124,7 +250,7 @@ func (n *Notifier) HasTransport() bool {
 	if n == nil {
 		return false
 	}
-	return n.telegramReady() || n.cfg.WebhookURL != ""
+	return n.telegramReady() || n.cfg.WebhookURL != "" || n.emailReady() || n.pushoverReady()
 }
 
 func (n *Notifier) telegramReady() bool {
@@ -135,37 +261,44 @@ func (n *Notifier) wants() bool {
 	return n.cfg.Enabled
 }
 
-// вызывающий это воркер трекера или предохранитель: медленный telegram не должен
-// держать ни того ни другого, поэтому отправка идёт отдельно и только жалуется в лог
 func (n *Notifier) Notify(ev Event) {
+	// сюда приходят из воркера трекера и предохранителя, их держать нельзя. Каждый канал
+	// шлет в своей горутине, ошибки только в лог
 	if !n.HasTransport() || !n.wants() {
 		return
 	}
+	ev = n.withLink(ev)
+	if !n.cfg.TelegramDisabled && n.telegramReady() && wants(n.cfg.TelegramEvents, ev.Kind) {
+		n.deliver(n.sendTelegram, ev, "telegram")
+	}
+	if !n.cfg.WebhookDisabled && n.cfg.WebhookURL != "" && wants(n.cfg.WebhookEvents, ev.Kind) {
+		n.deliver(n.sendWebhook, ev, "webhook")
+	}
+	if !n.cfg.EmailDisabled && n.emailReady() && wants(n.cfg.EmailEvents, ev.Kind) {
+		n.deliver(n.sendEmail, ev, "email")
+	}
+	if !n.cfg.PushoverDisabled && n.pushoverReady() && wants(n.cfg.PushoverEvents, ev.Kind) {
+		n.deliver(n.sendPushover, ev, "pushover")
+	}
+}
+
+func (n *Notifier) deliver(send func(context.Context, Event) error, ev Event, transport string) {
 	go func() {
 		// бюджет покрывает обе попытки плюс паузу между ними, чтобы медленная
 		// первая попытка не съедала окно повтора
 		ctx, cancel := context.WithTimeout(context.Background(), 2*sendTimeout+notifyRetryDelay)
 		defer cancel()
-		var errs []error
-		if n.telegramReady() {
-			if err := sendWithRetry(ctx, n.sendTelegram, ev, "telegram"); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		if n.cfg.WebhookURL != "" {
-			if err := sendWithRetry(ctx, n.sendWebhook, ev, "webhook"); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		if err := errors.Join(errs...); err != nil {
+		if err := sendWithRetry(ctx, send, ev, transport); err != nil {
 			logger.Warn("notify: " + err.Error())
+			metrics.Notifications.Inc(transport, "error")
+			return
 		}
+		metrics.Notifications.Inc(transport, "ok")
 	}()
 }
 
-// транспорты независимы (4xx от telegram не должен блокировать повтор вебхука),
-// поэтому повтор идёт на каждый транспорт отдельно, а не перезапуском всего Send
 func sendWithRetry(ctx context.Context, send func(context.Context, Event) error, ev Event, transport string) error {
+	// повторяем каждый транспорт отдельно: 4xx от telegram не должен мешать повтору вебхука
 	err := send(ctx, ev)
 	if err == nil {
 		return nil
@@ -185,12 +318,19 @@ func sendWithRetry(ctx context.Context, send func(context.Context, Event) error,
 }
 
 func isRetryable(err error) bool {
+	if errors.As(err, new(permanentError)) {
+		return false
+	}
 	var se *statusError
 	if errors.As(err, &se) {
 		return se.status >= http.StatusInternalServerError
 	}
-	// отсутствие статуса значит, что запрос вообще не получил HTTP-ответа
-	// (дозвон/таймаут/сброс соединения), стоит второй попытки
+	var te *textproto.Error
+	if errors.As(err, &te) {
+		return te.Code < 500
+	}
+	// нет статуса, значит HTTP-ответа не было вовсе (дозвон, таймаут, сброс).
+	// Стоит повторить
 	return true
 }
 
@@ -198,6 +338,7 @@ func (n *Notifier) Send(ctx context.Context, ev Event) error {
 	if !n.HasTransport() {
 		return errors.New("no notification transport configured")
 	}
+	ev = n.withLink(ev)
 	var errs []error
 	if n.telegramReady() {
 		if err := n.sendTelegram(ctx, ev); err != nil {
@@ -209,14 +350,23 @@ func (n *Notifier) Send(ctx context.Context, ev Event) error {
 			errs = append(errs, fmt.Errorf("webhook: %w", err))
 		}
 	}
+	if n.emailReady() {
+		if err := n.sendEmail(ctx, ev); err != nil {
+			errs = append(errs, fmt.Errorf("email: %w", err))
+		}
+	}
+	if n.pushoverReady() {
+		if err := n.sendPushover(ctx, ev); err != nil {
+			errs = append(errs, fmt.Errorf("pushover: %w", err))
+		}
+	}
 	return errors.Join(errs...)
 }
 
 func (n *Notifier) sendTelegram(ctx context.Context, ev Event) error {
 	if ev.ImageURL != "" {
-		// картинку Telegram скачивает сам и без наших кук: постер за хотлинк-защитой
-		// или с приватного трекера отдаст ошибку, и тогда шлём обычное сообщение,
-		// чтобы уведомление не пропало вовсе
+		// картинку Telegram качает сам и без наших кук. Постер за хотлинк-защитой или с приватного
+		// трекера даст ошибку, тогда шлем обычное сообщение, чтобы уведомление не пропало
 		err := n.sendTelegramPhoto(ctx, ev)
 		if err == nil {
 			return nil
@@ -239,34 +389,54 @@ func (n *Notifier) sendTelegram(ctx context.Context, ev Event) error {
 	return n.post(ctx, fmt.Sprintf(telegramAPIURL, n.cfg.TelegramToken), body)
 }
 
-// имя раздачи уходит ссылкой на её страницу, чтобы не дублировать адрес отдельной
-// строкой. Разметка только там, где есть и имя, и ссылка: без parse_mode скобки и
-// подчёркивания в именах релизов не пришлось бы экранировать, а в режиме HTML
-// экранирования требуют лишь & < >, чего html.EscapeString и добивается.
-// Лимит режет имя до сборки разметки, иначе обрезка порвала бы тег ссылки; сам
-// telegram считает длину по видимому тексту, а не по разметке
+func withLinkLine(text, line string, limit int) string {
+	// ссылка идет только целиком: текст ради нее не режем, а обрезанная ссылка не работает
+	text = helper.Substr(text, 0, limit)
+	if line == "" || len([]rune(text))+1+len([]rune(line)) > limit {
+		return text
+	}
+	return text + "\n" + line
+}
+
 func telegramText(ev Event, limit int) (text, parseMode string) {
+	linkLine := ""
+	if ev.AppLink != "" {
+		linkLine = appLinkLabel + ": " + ev.AppLink
+	}
+	// разметка только когда есть и имя, и ссылка. В HTML экранировать надо лишь & < >
 	if ev.Subject == "" || ev.URL == "" {
 		text = ev.plain()
 		if ev.URL != "" {
 			text += "\n" + ev.URL
 		}
-		return helper.Substr(text, 0, limit), ""
+		if linkLine == "" {
+			return helper.Substr(text, 0, limit), ""
+		}
+		return withLinkLine(text, linkLine, limit), ""
 	}
+	// режем имя до сборки разметки, иначе обрезка порвет тег ссылки.
+	// Telegram считает длину по видимому тексту
 	subject := ev.Subject
-	if room := limit - len([]rune(ev.Text)) - 1; room < len([]rune(subject)) {
-		subject = helper.Substr(subject, 0, room)
+	room := limit - len([]rune(ev.Text)) - 1
+	if ev.AppLink != "" {
+		room -= len([]rune(appLinkLabel)) + 1
 	}
-	return html.EscapeString(ev.Text) + "\n" +
-		`<a href="` + html.EscapeString(ev.URL) + `">` + html.EscapeString(subject) + `</a>`, "HTML"
+	if room < len([]rune(subject)) {
+		subject = helper.Substr(subject, 0, max(room, 0))
+	}
+	text = html.EscapeString(ev.Text) + "\n" +
+		`<a href="` + html.EscapeString(ev.URL) + `">` + html.EscapeString(subject) + `</a>`
+	if ev.AppLink != "" {
+		text += "\n" + `<a href="` + html.EscapeString(ev.AppLink) + `">` + appLinkLabel + `</a>`
+	}
+	return text, "HTML"
 }
 
 func (n *Notifier) sendTelegramPhoto(ctx context.Context, ev Event) error {
 	caption, parseMode := telegramText(ev, maxCaption)
-	// до части картиночных хостингов у Telegram нет доступа (fastpic на ссылку от
-	// него отвечает ошибкой), поэтому сначала пробуем забрать байты сами и отдать
-	// файлом, и только если картинка не скачалась, отдаём ссылку: бывает и
-	// наоборот, когда домен трекера закрыт для нас, но открыт для Telegram
+	// до части хостингов у Telegram нет доступа (fastpic ему отвечает ошибкой), поэтому
+	// сначала качаем сами и шлем файлом. Ссылку отдаем, только если не скачалось: бывает
+	// и наоброт, домен закрыт для нас, но открыт для Telegram
 	img, err := n.fetchImage(ctx, ev.ImageURL)
 	if err == nil {
 		return n.postPhotoUpload(ctx, img, caption, parseMode)
@@ -293,7 +463,6 @@ func (n *Notifier) fetchImage(ctx context.Context, imageURL string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	// хостинги постеров отдают картинку только браузероподобным клиентам
 	req.Header.Set("User-Agent", posterUserAgent)
 	res, err := n.hc.Do(req)
 	if err != nil {
@@ -345,7 +514,7 @@ func (n *Notifier) postPhotoUpload(ctx context.Context, img []byte, caption, par
 }
 
 func ResolveChatID(ctx context.Context, token, proxyURL string) (_ string, err error) {
-	defer func() { err = redactToken(err, token) }()
+	defer func() { err = redactToken(helper.RedactURLError(err), token) }()
 	hc := newHTTPClient(proxyURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(telegramGetUpdatesURL, token), nil)
 	if err != nil {
@@ -379,8 +548,8 @@ func ResolveChatID(ctx context.Context, token, proxyURL string) (_ string, err e
 		return "", fmt.Errorf("telegram getUpdates: %s (status %d)", msg, res.StatusCode)
 	}
 
-	// обновления бывают edited_message, channel_post, callback_query и прочие; только
-	// обычные сообщения несут нужный чат, и нам нужно самое свежее
+	// кроме message бывают edited_message, channel_post, callback_query и прочие.
+	// Нужный чат только в обычных сообщениях, берем самое свежее
 	var chatID int64
 	found := false
 	for _, u := range parsed.Result {
@@ -396,12 +565,16 @@ func ResolveChatID(ctx context.Context, token, proxyURL string) (_ string, err e
 }
 
 func (n *Notifier) sendWebhook(ctx context.Context, ev Event) error {
-	body, err := json.Marshal(map[string]string{
+	payload := map[string]string{
 		"event": ev.Kind,
 		"text":  ev.plain(),
 		"url":   ev.URL,
 		"time":  time.Now().Format(time.RFC3339),
-	})
+	}
+	if ev.AppLink != "" {
+		payload["app_url"] = ev.AppLink
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
@@ -413,7 +586,7 @@ func (n *Notifier) post(ctx context.Context, url string, body []byte) error {
 }
 
 func (n *Notifier) postBody(ctx context.Context, url, contentType string, body []byte) (err error) {
-	defer func() { err = redactToken(err, n.cfg.TelegramToken) }()
+	defer func() { err = redactToken(helper.RedactURLError(err), n.cfg.TelegramToken) }()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -441,12 +614,12 @@ func (e *statusError) Error() string {
 	return fmt.Sprintf("status %d: %s", e.status, e.body)
 }
 
-// токен лежит в пути telegram-адреса, а *url.Error печатает URL целиком, поэтому
-// без вырезания он утекал в лог и в ответ POST /api/integrations/test
 func redactToken(err error, token string) error {
 	if err == nil || token == "" {
 		return err
 	}
+	// токен лежит в пути telegram-адреса, а *url.Error печатает URL целиком.
+	// Без замены он утечет в лог и в ответ POST /api/integrations/test
 	msg := err.Error()
 	if !strings.Contains(msg, token) {
 		return err
