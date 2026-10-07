@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,14 +19,11 @@ const (
 	PublicityPublic = "public"
 )
 
-// TrackerConfig это настройки трекеров по ключу реестра; состав набора задаёт
-// реестр, а не этот тип, поэтому новый трекер тут ничего не меняет.
 type TrackerConfig map[string]Tracker
 
-// ITracker это всё, что ядро спрашивает у трекера. Интерфейс живёт здесь, а не в
-// tracker/client: реестр обязан знать его, а пакеты трекеров импортируют реестр,
-// и объявление в client замкнуло бы импорты в кольцо.
 type ITracker interface {
+	// лежит тут, потому что реестр его знает, а пакеты трекеров импортируют реестр.
+	// В tracker/client вышел бы цикл импортов
 	GetName() (name string)
 	GetDomain() (host string)
 	GetHost() (host string)
@@ -44,6 +42,30 @@ type ITracker interface {
 	ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID string)
 	ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string)
 	ParsePoster(b *bytes.Buffer, encoded bool) (poster string)
+	// хуки прямо в ITracker: обертки (клиент, domainOverride) прячут тип трекера,
+	// и проверка на отдельный интерфейс до него не достает
+	PickTorrent(b *bytes.Buffer, encoded bool, held Held) (pick Pick)
+	PageLink(link string) (page string)
+	// торрент в клиенте без комментария трекер ищет сам по хешу
+	AdoptLookup(name, hash string) (lookup string)
+	AdoptURL(b *bytes.Buffer) (url string)
+}
+
+type Held struct {
+	URL       string
+	TopicID   string
+	Stored    bool
+	Hash      string
+	Name      string
+	Timestamp *time.Time
+	// хеши других торрентов клиента с тем же адресом релиза: сохраненный TopicID мог записать любой из них
+	Siblings []string
+}
+
+type Pick struct {
+	DownloadID string
+	Date       *time.Time
+	Miss       string
 }
 
 type Tracker struct {
@@ -52,6 +74,8 @@ type Tracker struct {
 	Domain       string
 	ActiveDomain string
 	Mirrors      []string
+	Retired      []string
+	Unconfirmed  []string
 	Credentials  string
 	ProxyType    proxy.ProxyType
 	Publicity    string
@@ -111,6 +135,10 @@ func (t *Tracker) GetMirrors() []string {
 	return t.Mirrors
 }
 
+func (t *Tracker) GetUnconfirmed() []string {
+	return t.Unconfirmed
+}
+
 func (t *Tracker) GetActiveDomain() string {
 	return t.ActiveDomain
 }
@@ -125,11 +153,12 @@ func (t *Tracker) Detect(link string) bool {
 }
 
 func (t *Tracker) matchDomains() []string {
-	out := make([]string, 0, 1+len(t.Mirrors))
+	out := make([]string, 0, 2+len(t.Mirrors)+len(t.Retired))
 	if d := strings.TrimSpace(t.Domain); d != "" {
 		out = append(out, d)
 	}
-	for _, m := range t.Mirrors {
+	// убранный хост остается для сопоставления: комментарии старых торрентов несут его
+	for _, m := range slices.Concat(t.Mirrors, t.Retired) {
 		if m = strings.TrimSpace(m); m != "" {
 			out = append(out, m)
 		}
@@ -164,26 +193,44 @@ func (t *Tracker) ParseDownloadID(b *bytes.Buffer, encoded bool) (downloadID str
 	return
 }
 
+func (t *Tracker) PickTorrent(b *bytes.Buffer, encoded bool, held Held) (pick Pick) {
+	return
+}
+
+func (t *Tracker) PageLink(link string) (page string) {
+	return link
+}
+
+func (t *Tracker) AdoptLookup(name, hash string) (lookup string) {
+	return
+}
+
+func (t *Tracker) AdoptURL(b *bytes.Buffer) (url string) {
+	return
+}
+
 func (t *Tracker) ParseMagnet(b *bytes.Buffer, encoded bool) (magnet string) {
 	return
 }
 
-// разметка TorrentPier (rutracker, nnm, teamhd) помечает картинки поста
-// классом postImg: прижатая к правому краю это постер релиза, остальные в теле
-// поста это скриншоты. Ссылка лежит в title у <var> и в src у уже отрисованного
-// <img>, поэтому берём оба варианта
 var (
-	rxPostImg    = regexp.MustCompile(`<(?:var|img)[^>]*postImg[^>]*>`)
-	rxPostImgURL = regexp.MustCompile(`[\s"](?:title|src)="(https?://[^"]+)"`)
+	rxPostImg      = regexp.MustCompile(`<(?:var|img)[^>]*postImg[^>]*>`)
+	rxPostImgTitle = regexp.MustCompile(`[\s"]title="(https?://[^"]+)"`)
+	rxPostImgSrc   = regexp.MustCompile(`[\s"]src="(https?://[^"]+)"`)
 )
 
 func (t *Tracker) ParsePoster(b *bytes.Buffer, encoded bool) (poster string) {
 	for _, tag := range rxPostImg.FindAllString(helper.PageText(b, encoded), -1) {
-		matches := rxPostImgURL.FindStringSubmatch(tag)
+		// после FlareSolverr в src бывает заглушка битой картинки, живой адрес остается в title
+		matches := rxPostImgTitle.FindStringSubmatch(tag)
+		if len(matches) <= 1 {
+			matches = rxPostImgSrc.FindStringSubmatch(tag)
+		}
 		if len(matches) <= 1 {
 			continue
 		}
 		link := html.UnescapeString(matches[1])
+		// в TorrentPier прижатая вправо картинка это постер, остальные скриншоты
 		if strings.Contains(tag, "postImgAligned") {
 			return link
 		}
@@ -194,9 +241,8 @@ func (t *Tracker) ParsePoster(b *bytes.Buffer, encoded bool) (poster string) {
 	return
 }
 
-// в разметке трекеров адрес картинки бывает и относительным, и без схемы, а
-// Telegram скачивает постер сам и понимает только абсолютную ссылку
 func AbsoluteURL(host, src string) string {
+	// Telegram качает постер сам и понимает только абсолютную ссылку
 	switch {
 	case src == "", strings.HasPrefix(src, "http"):
 		return src

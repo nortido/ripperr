@@ -18,3 +18,11 @@ func SetComment(data []byte, comment string) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+func Comment(data []byte) (string, error) {
+	mi, err := metainfo.Load(bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	return mi.Comment, nil
+}

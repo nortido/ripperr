@@ -2,6 +2,7 @@ package registry_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/sethvargo/go-envconfig"
@@ -13,7 +14,10 @@ import (
 )
 
 func TestBuiltinTrackersRegistered(t *testing.T) {
-	want := []string{"rutracker", "kinozal", "rutor", "teamhd", "nnm"}
+	want := []string{
+		"rutracker", "kinozal", "rutor", "teamhd", "nnm",
+		"toloka", "tapochek", "riperam", "booktracker", "anidub", "animelayer", "selezen", "rustorka", "aniliberty", "newstudio",
+	}
 	got := registry.Keys()
 	if len(got) != len(want) {
 		t.Fatalf("keys = %v, want %v", got, want)
@@ -21,6 +25,39 @@ func TestBuiltinTrackersRegistered(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("keys = %v, want %v (order is by id and is what the UI shows)", got, want)
+		}
+	}
+}
+
+func TestNewTrackersDisabledByDefault(t *testing.T) {
+	tr := registry.ConfigDefaults()
+	for _, k := range []string{"toloka", "tapochek", "riperam", "booktracker", "anidub", "animelayer", "selezen", "rustorka", "aniliberty", "newstudio"} {
+		it := tr.ByKey(k)
+		if it == nil {
+			t.Errorf("%s has no defaults", k)
+			continue
+		}
+		if it.Enabled {
+			t.Errorf("%s is enabled by default", k)
+		}
+	}
+}
+
+func TestDefaultDomainsDoNotOverlap(t *testing.T) {
+	defs := registry.All()
+	for _, a := range defs {
+		it := a.Defaults
+		tr := a.New(trackerModel.Tracker{
+			Name: it.Name, Domain: it.Domain, Mirrors: it.Mirrors, Publicity: it.Publicity,
+			LoginURL: it.LoginURL, DownloadURL: it.DownloadURL,
+		})
+		for _, b := range defs {
+			if a.Key == b.Key {
+				continue
+			}
+			if tr.Detect("https://" + b.Defaults.Domain + "/x") {
+				t.Errorf("%s detects the default domain of %s (%s)", a.Key, b.Key, b.Defaults.Domain)
+			}
 		}
 	}
 }
@@ -56,10 +93,27 @@ func TestConfigDefaultsCarryTrackerValues(t *testing.T) {
 	if got := tr.ByKey("rutor"); got == nil || got.Publicity != "public" || got.ProxyType != 0 {
 		t.Fatalf("rutor defaults = %+v", got)
 	}
-	// набор должен быть копией: правка одного вызова не обязана видеться другому
+	// каждый вызов отдает свою копию, правка не должна протечь в следующий
 	tr.ByKey("rutracker").Domain = "mutated"
 	if registry.ConfigDefaults().ByKey("rutracker").Domain != "rutracker.org" {
 		t.Fatal("ConfigDefaults returns shared state")
+	}
+}
+
+func TestConfigDefaultsMirrors(t *testing.T) {
+	tr := registry.ConfigDefaults()
+	want := map[string][]string{
+		"rutor":      {"rutor.info"},
+		"kinozal":    {"kinozal.me", "kinozal.guru"},
+		"rutracker":  {"rutracker.net"},
+		"selezen":    {"www.selezen.club"},
+		"aniliberty": {"www.aniliberty.top"},
+	}
+	for key, mirrors := range want {
+		got := tr.ByKey(key)
+		if got == nil || !slices.Equal(got.Mirrors, mirrors) {
+			t.Errorf("%s mirrors = %+v, want %v", key, got, mirrors)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,10 +19,12 @@ import (
 )
 
 const (
-	MaxPageResponse     = 8 << 20  // 8 MiB HTML tracker pages
-	MaxDownloadResponse = 64 << 20 // 64 MiB .torrent downloads
-	maxErrorResponse    = 8 << 10  // 8 KiB error response snippets
+	MaxPageResponse     = 8 << 20  // 8 MiB, HTML страницы трекера
+	MaxDownloadResponse = 64 << 20 // 64 MiB, файлы .torrent
+	maxErrorResponse    = 8 << 10  // 8 KiB, кусок тела при ошибке
 )
+
+var ErrTrackerUnavailable = errors.New("tracker unavailable")
 
 func ReadLimited(dst *bytes.Buffer, r io.Reader, limit int64) error {
 	n, err := io.Copy(dst, io.LimitReader(r, limit+1))
@@ -66,10 +69,9 @@ type cookieCompletenessChecker interface {
 	CookiesIncomplete(cookies []*http.Cookie) bool
 }
 
-// loginAuthValidator реализуют только трекеры, у которых после входа через Flare
-// в клиенте обязаны быть куки авторизации (например uid/pass у kinozal). Сессионные
-// трекеры (rutracker) его не реализуют.
 type loginAuthValidator interface {
+	// только у трекеров, которым после входа через Flare нужны куки авторизации
+	// (uid/pass у kinozal). Сессионным вроде rutracker не нужен
 	LoginAuthIncomplete(cookies []*http.Cookie) bool
 	LoginAuthHint() string
 }
@@ -179,6 +181,9 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 	if c.header == nil {
 		err = fmt.Errorf("no header")
 		return
+	}
+	if !download {
+		link = c.PageLink(link)
 	}
 	link = c.pageRequestURL(link)
 	if download {
@@ -401,6 +406,11 @@ func (c *client) buildLoginRequest(ctx context.Context, body string) (req *http.
 func (c *client) tryHttp(ctx context.Context, req *http.Request, opts *proxyModel.Options, download bool) (res *http.Response, err error) {
 	err = c.cb.Call(func() (err error) {
 		res, err = c.doHttp(ctx, req, opts, download)
+		var se *StatusError
+		if NotFoundAnswer(ctx) && errors.As(err, &se) && se.Code == http.StatusNotFound {
+			// 404 тут значит, что у трекера такого нет. Брейкер его не считает и счетчик не сбрасывает
+			err = &helper.NeutralError{Err: err}
+		}
 		return
 	})
 	if err != nil {
@@ -433,15 +443,9 @@ func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxyModel
 }
 
 func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *proxyModel.Options, proxyType proxyModel.ProxyType) (res *http.Response, err error) {
-	// лечит самый частый разовый сбой интеропа с FlareSolverr: живая сессия
-	// Selenium осталась на чужой странице, и кука без домена (см.
-	// cookiesForFlare) не может быть привязана к текущему URL, add_cookie
-	// падает с invalid cookie domain. Сброс сессии и один повтор поднимают
-	// чистый браузер, в котором такой проблемы нет. Таймауты разгадывания
-	// (helper.IsFlareTimeout) сюда намеренно не входят: это не разовый сбой
-	// интеропа, а исчерпание отведённого времени, у него своя семантика через
-	// shouldReloginAfterFlare, и на нём повтор с уничтожением сессии только
-	// удвоил бы стоимость каждого таймаута
+	// частый разовый сбой FlareSolverr: сессия Selenium застряла на чужой странице, и кука
+	// без домена падает в add_cookie с invalid cookie domain. Сброс сессии и один повтор
+	// дают чистый браузер
 	res, err = c.px.Send(req, opts, proxyType)
 	if err == nil {
 		c.absorbFlareCookies(res)
@@ -460,8 +464,7 @@ func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *prox
 	}
 	if req.Body != nil {
 		if req.GetBody == nil {
-			// тело нечем перечитать: безопаснее отдать исходную ошибку, чем
-			// отправить обрезанное или пустое тело на повторе
+			// тело не перечитать. Отдаем исходную ошибку, на повторе ушло бы пустое тело
 			return
 		}
 		var body io.ReadCloser
@@ -481,14 +484,29 @@ func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *prox
 }
 
 func isFlareChallengeSolveFailure(err error) bool {
-	// узкий предикат специально под invalid cookie domain и подобные сбои
-	// именно разгадывания челленджа: helper.IsFlareTimeout шире (ловит ещё и
-	// таймауты по отведённому времени), и вешать на неё повтор с уничтожением
-	// сессии значило бы удваивать стоимость каждого таймаута
+	// helper.IsFlareTimeout не годится, он ловит и таймауты. У них своя логика в
+	// shouldReloginAfterFlare, а повтор со сбросом сессии удвоил бы цену каждого
 	if err == nil {
 		return false
 	}
 	return strings.Contains(err.Error(), "Error solving the challenge")
+}
+
+type StatusError struct {
+	Code int
+	Msg  string
+}
+
+func (e *StatusError) Error() string { return e.Msg }
+
+type notFoundAnswerKey struct{}
+
+func WithNotFoundAnswer(ctx context.Context) context.Context {
+	return context.WithValue(ctx, notFoundAnswerKey{}, true)
+}
+
+func NotFoundAnswer(ctx context.Context) bool {
+	return ctx.Value(notFoundAnswerKey{}) != nil
 }
 
 func (c *client) checkResponse(req *http.Request, res *http.Response, download bool) (err error) {
@@ -511,8 +529,8 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 		bodySize := b.Len()
 		logger.Debug(fmt.Sprintf("%s: unexpected status %d (type=%s, bytes=%d): %s",
 			c.GetName(), res.StatusCode, contentType, bodySize, helper.Substr(b.String(), 0, 500)))
-		err = fmt.Errorf("%s: unexpected status code %d (type=%s, bytes=%d)",
-			c.GetName(), res.StatusCode, contentType, bodySize)
+		err = &StatusError{Code: res.StatusCode, Msg: fmt.Sprintf("%s: unexpected status code %d (type=%s, bytes=%d)",
+			c.GetName(), res.StatusCode, contentType, bodySize)}
 		return
 	}
 	return

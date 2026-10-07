@@ -1,11 +1,14 @@
 package client
 
 import (
+	"errors"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"ripperr/internal/helper"
 	"ripperr/internal/model/tracker"
@@ -213,4 +216,93 @@ func TestBuildLoginRequest(t *testing.T) {
 			t.Fatalf("content-type = %q", req.Header.Get("Content-Type"))
 		}
 	})
+}
+
+type pageLinkTracker struct {
+	tracker.Tracker
+}
+
+func (pageLinkTracker) PageLink(link string) string {
+	return strings.Replace(link, "/release/", "/api/", 1)
+}
+
+func TestGetResponsePageLinkOnlyForPages(t *testing.T) {
+	jar, _ := cookiejar.New(nil)
+	var seen []string
+	hc := &http.Client{Jar: jar, Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		seen = append(seen, req.URL.Path)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody, Request: req}, nil
+	})}
+	c := &client{
+		ITracker:   &pageLinkTracker{Tracker: tracker.Tracker{Domain: "example.org"}},
+		hc:         hc,
+		downloadHC: hc,
+		cb:         helper.NewCircuitBreaker(&helper.CircuitBreakerConfig{}),
+		header:     &http.Header{},
+	}
+	for _, download := range []bool{false, true} {
+		if _, err := c.GetResponse(t.Context(), "https://example.org/release/x", download); err != nil {
+			t.Fatalf("download=%v: %v", download, err)
+		}
+	}
+	if len(seen) != 2 || seen[0] != "/api/x" || seen[1] != "/release/x" {
+		t.Fatalf("paths = %v, want [/api/x /release/x]", seen)
+	}
+}
+
+func TestNotFoundAnswerDoesNotTripBreaker(t *testing.T) {
+	hits := 0
+	status := http.StatusNotFound
+	hc := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		hits++
+		return &http.Response{
+			StatusCode: status,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader("{}")),
+			Request:    req,
+		}, nil
+	})}
+	newClient := func() *client {
+		return &client{
+			ITracker: &tracker.Tracker{Name: "test", Domain: "example.com"},
+			hc:       hc,
+			cb:       helper.NewCircuitBreaker(&helper.CircuitBreakerConfig{MaxFailures: 2, Timeout: time.Hour}),
+			header:   &http.Header{},
+		}
+	}
+
+	c := newClient()
+	ctx := WithNotFoundAnswer(t.Context())
+	for i := 0; i < 5; i++ {
+		_, err := c.GetResponse(ctx, "http://example.com/a", false)
+		var se *StatusError
+		if !errors.As(err, &se) || se.Code != http.StatusNotFound {
+			t.Fatalf("lookup #%d err = %v, want a 404 StatusError", i, err)
+		}
+	}
+	status = http.StatusOK
+	if _, err := c.GetResponse(ctx, "http://example.com/a", false); err != nil {
+		t.Fatalf("lookup after 404s err = %v, want nil (breaker closed)", err)
+	}
+	if hits != 6 {
+		t.Fatalf("server hits = %d, want 6", hits)
+	}
+
+	status = http.StatusNotFound
+	c = newClient()
+	for i := 0; i < 2; i++ {
+		_, _ = c.GetResponse(t.Context(), "http://example.com/a", false)
+	}
+	if _, err := c.GetResponse(t.Context(), "http://example.com/a", false); !errors.Is(err, helper.ErrCircuitOpen) {
+		t.Fatalf("plain 404s err = %v, want circuit open", err)
+	}
+
+	status = http.StatusBadGateway
+	c = newClient()
+	for i := 0; i < 2; i++ {
+		_, _ = c.GetResponse(ctx, "http://example.com/a", false)
+	}
+	if _, err := c.GetResponse(ctx, "http://example.com/a", false); !errors.Is(err, helper.ErrCircuitOpen) {
+		t.Fatalf("5xx err = %v, want circuit open", err)
+	}
 }

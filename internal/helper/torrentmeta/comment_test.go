@@ -80,3 +80,17 @@ func TestSetComment_InvalidData(t *testing.T) {
 		t.Fatal("expected error for invalid torrent data")
 	}
 }
+
+func TestCommentRead(t *testing.T) {
+	got, err := Comment(buildMinimalTorrent(t, "https://x/t1"))
+	if err != nil || got != "https://x/t1" {
+		t.Fatalf("Comment = %q, %v, want the stored comment", got, err)
+	}
+	got, err = Comment(buildMinimalTorrent(t, ""))
+	if err != nil || got != "" {
+		t.Fatalf("Comment of a comment-less file = %q, %v, want empty", got, err)
+	}
+	if _, err = Comment([]byte("not a torrent")); err == nil {
+		t.Fatal("expected error for invalid torrent data")
+	}
+}
