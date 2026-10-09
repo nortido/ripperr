@@ -1,5 +1,3 @@
-/* кнопки */
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -21,9 +19,8 @@
   white-space: nowrap;
 }
 
-/* display: block убирает зазор под базовой линией: строчный svg внутри
-   обёртки растягивал её с 16px до 19.5px, и flex-центрирование кнопки
-   поднимало саму иконку на 1.75px выше центра */
+/* block убирает зазор под базовой линией: строчный svg растягивал обертку
+   с 16px до 19.5px, и иконка вставала на 1.75px выше центра */
 .btn svg {
   display: block;
   width: var(--btn-icon-md);
@@ -41,7 +38,7 @@
 }
 
 .btn:focus-visible {
-  outline: 2px solid var(--accent-from);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -56,7 +53,6 @@
   height: var(--btn-icon-sm);
 }
 
-/* модификатор иконка+текст или только иконка: делает кнопку не уже квадрата для своей высоты */
 .btn-icon {
   min-width: var(--btn-h-md);
   padding: 0;
@@ -67,7 +63,7 @@
 }
 
 .btn-primary {
-  background: linear-gradient(90deg, var(--accent-from), var(--accent-grad-to));
+  background: var(--accent-from);
   color: #fff;
   border-color: transparent;
   box-shadow: var(--shadow-primary);
@@ -76,7 +72,6 @@
 @media (hover: hover) {
   .btn-primary:hover:not(:disabled) {
     filter: brightness(1.1);
-    box-shadow: 0 6px 20px rgba(4, 120, 87, 0.35);
   }
 }
 
@@ -169,11 +164,11 @@
   }
 }
 
-.btn-test-tracker {
+.btn-test {
   flex-shrink: 0;
 }
 
-.btn-test-tracker.is-spinning svg {
+.btn-test.is-spinning svg {
   animation: refresh-spin 0.8s linear infinite;
 }
 
@@ -187,6 +182,19 @@
   color: var(--danger);
   border-color: var(--danger);
   background: var(--danger-bg);
+}
+
+/* рядом с кнопкой Сохранить: квадрат той же высоты */
+.btn-group > .btn-test.btn-icon-only,
+.modal-foot > .btn-test.btn-icon-only {
+  min-width: var(--btn-h-md);
+  min-height: var(--btn-h-md);
+}
+
+.btn-group > .btn-test.btn-icon-only svg,
+.modal-foot > .btn-test.btn-icon-only svg {
+  width: var(--btn-icon-md);
+  height: var(--btn-icon-md);
 }
 
 .input-secure {
@@ -300,13 +308,24 @@
   padding: 4px;
 }
 
+.tracker-page-header {
+  align-items: center;
+}
+
+.input.tracker-filter {
+  width: 280px;
+  max-width: 100%;
+}
+
+.tracker-filter-empty {
+  margin-top: 8px;
+}
+
 .tracker-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.tracker-item {
+  /* одна сетка колонок на шапку и все строки: у каждой строки своя сетка, авто-колонки разъехались бы */
+  --trk-cols: 18px 38px 200px minmax(0, 1fr) 120px 110px 20px var(--btn-h-xs);
   background: var(--surface);
   border: 2px solid var(--border);
   border-radius: var(--radius-lg);
@@ -314,20 +333,53 @@
   overflow: hidden;
 }
 
-.tracker-item-disabled {
+/* минус 1px прячет линию последней видимой строки под рамку списка. При
+   фильтре последней бывает любая строка, так что :last-child не годится */
+.tracker-item {
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: -1px;
+}
+
+/* у выключенного трекера гасим только название. Настройки и тест работают,
+   их заполняют до включения, а бледная форма казалась сломанной */
+.tracker-item-disabled .tracker-row-main,
+.tracker-item-disabled .tracker-row-proxy,
+.tracker-item-disabled .tracker-row-limit {
   opacity: 0.55;
 }
 
-.tracker-item-disabled .tracker-panel-inner {
-  opacity: 0.65;
-  filter: saturate(0.65);
+.tracker-list-head {
+  display: grid;
+  grid-template-columns: var(--trk-cols);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.tracker-list-head > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracker-list-head > span:first-child {
+  grid-column: 3;
 }
 
 .tracker-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--trk-cols);
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 12px;
+  min-height: 52px;
+  padding: 6px 12px 6px 14px;
   cursor: pointer;
   transition: background var(--transition);
 }
@@ -338,13 +390,44 @@
   }
 }
 
+.tracker-row > .btn-test-tracker {
+  grid-column: 8;
+}
+
+.tracker-drag-handle {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.tracker-drag-handle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tracker-item.is-dragging {
+  opacity: 0.5;
+}
+
+/* visibility, чтобы колонка с ручкой осталась и строки не прыгали при вводе в фильтр */
+.tracker-list.is-filtered .tracker-drag-handle {
+  visibility: hidden;
+}
+
+/* вложенная сетка повторяет колонки "Трекер" и "Адрес" из --trk-cols */
 .tracker-row-main {
+  display: grid;
+  grid-column: 3 / 5;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
   min-width: 0;
-  flex: 1;
 }
 
 .tracker-row-name {
-  display: block;
+  min-width: 0;
   font-weight: 600;
   font-size: 15px;
   overflow: hidden;
@@ -353,75 +436,69 @@
 }
 
 .tracker-row-domain {
-  display: block;
-  font-size: 12px;
+  min-width: 0;
+  font-size: 13px;
   color: var(--text-muted);
-  margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* без вертикального расширения: на лейбле висит stopPropagation, и разогнанная
-   зона нажатия съедала полосу строки, которая должна раскрывать трекер */
+.tracker-row-domain[hidden] {
+  display: none;
+}
+
+.tracker-row-proxy,
+.tracker-row-limit {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracker-row-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--accent-subtle);
+  border-radius: 999px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* по вертикали зону нажатия не раздуваем: на лейбле stopPropagation, и она
+   съедала полосу строки, которая открывает настройки */
 .tracker-row-toggle {
   margin: 0;
   font-size: 0;
   flex-shrink: 0;
+  justify-self: start;
 }
 
-.tracker-chevron {
-  display: flex;
-  align-items: center;
-  color: var(--text-muted);
-  transition: transform 0.25s ease;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.tracker-chevron svg {
-  width: 20px;
-  height: 20px;
-}
-
-.tracker-item.is-open .tracker-chevron {
-  transform: rotate(180deg);
-}
-
-.tracker-panel {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.25s ease;
-}
-
-.tracker-item.is-open .tracker-panel {
-  grid-template-rows: 1fr;
-}
-
-.tracker-panel-inner {
-  overflow: hidden;
-  padding: 0 16px;
-}
-
-.tracker-item.is-open .tracker-panel-inner {
-  padding: 0 16px 16px;
-  border-top: 1px solid var(--border-subtle);
-}
-
+/* зазоры между рядами и группами дает gap колонки. Так скрытые расширенные
+   поля и свернутые подсказки их не ломают, и .form-row + .form-row тут не нужен */
 .tracker-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding-top: 14px;
 }
 
-.tracker-form .form-group {
-  margin-bottom: 7px;
+.tracker-form .form-group,
+.tracker-form > .form-row + .form-row {
+  margin: 0;
 }
 
 .tracker-form .form-label {
   margin-bottom: 4px;
-}
-
-.tracker-save-row {
-  margin-top: 18px;
 }
 
 .logs-card .card-header {
@@ -509,8 +586,8 @@
   border-color: transparent;
 }
 
-/* оба состояния кнопки игнора одного оттенка: цвет обозначает сам контрол,
-   а состояние несут форма глифа и подложка, а не смена hue */
+/* у кнопки игнора один цвет на оба состояния. Цвет говорит, что это за
+   контрол, а состояние видно по глифу и подложке */
 .btn-action-ignore.btn-ignore {
   color: var(--hue-cyan);
   background: transparent;
@@ -540,8 +617,8 @@
   }
 }
 
-/* подмена иконки на ховере: раньше правила были прибиты к кнопке игнора, теперь
-   работают везде, где разметка даёт пару .icon-idle и .icon-hover */
+/* подмена иконки на ховере для любой пары .icon-idle и .icon-hover, не только
+   у кнопки игнора */
 .icon-idle,
 .icon-hover {
   display: inline-flex;
@@ -562,9 +639,8 @@
     display: inline-flex;
   }
 
-  /* заливка приглушена, обводка остаётся сплошной: ховер подсвечивает нутро
-     иконки, а не перекрашивает её целиком. На контурных вариантах fill
-     остаётся none, поэтому правило их не задевает */
+  /* на ховере подсвечиваем только нутро иконки, обводка остается сплошной.
+     У контурных иконок fill none, их это не задевает */
   .btn:hover:not(:disabled) .icon-hover svg {
     fill-opacity: 0.35;
   }
@@ -598,12 +674,11 @@
   50% { opacity: 0.85; }
 }
 
-/* спиннеры не выключаем: вращение здесь единственный признак «идёт запрос»,
-   без него кнопка выглядит зависшей. Замедляем, чтобы движение не мельтешило.
-   Пульсация строки декоративная, строка и так приглушена, её снимаем */
+/* спиннер оставляем: без вращения не видно, что запрос идет, и кнопка кажется
+   зависшей. Только замедляем. Пульсация строки просто декор, ее снимаем */
 @media (prefers-reduced-motion: reduce) {
   .btn-refresh.is-spinning svg,
-  .btn-test-tracker.is-spinning svg,
+  .btn-test.is-spinning svg,
   .btn-action-redownload.is-spinning svg {
     animation-duration: 2.4s;
   }
@@ -704,13 +779,18 @@
 
 .form-submit-row {
   margin-top: 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
 }
 
-/* внутри .stack расстояние уже задаёт gap сетки, и собственный отступ ряда
-   складывался с ним: кнопка отходила от последней карточки заметно дальше,
-   чем карточки друг от друга */
-.stack > .form-submit-row {
-  margin-top: 0;
+.form-submit-row > .btn {
+  flex-shrink: 0;
+}
+
+.form-submit-row > .form-hint {
+  margin: 0;
+  min-width: 0;
 }
 
 .card-body > .btn-group,
@@ -718,18 +798,113 @@
   margin-top: 18px;
 }
 
-/* формы */
-
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--form-row-gap);
 }
 
-/* у самого ряда нет нижнего отступа, а у групп внутри он снят, поэтому два
-   ряда подряд слипаются: подписи второго упираются в поля первого */
+/* у ряда нет нижнего отступа, у групп внутри он снят. Без этого два ряда
+   слипаются и подписи второго упираются в поля первого */
 .form-row + .form-row {
   margin-top: 18px;
+}
+
+/* по той же причине группа после ряда липла к его полям */
+.notify-channel .form-row + .form-group,
+.notify-channel .form-row + .notify-events {
+  margin-top: 18px;
+}
+
+.notify-events {
+  position: relative;
+  margin-bottom: 18px;
+}
+
+.notify-events-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notify-events-row .form-label {
+  margin: 0;
+}
+
+.notify-events-count {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.notify-events-trigger {
+  margin-left: auto;
+}
+
+.notify-events-panel {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 300;
+  width: min(320px, 100%);
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+
+.notify-events-panel .form-hint {
+  margin: 0 0 8px;
+}
+
+html:not(.mobile-layout) .notify-events.open-up .notify-events-panel {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.notify-events-panel {
+  transform-origin: top left;
+}
+
+html:not(.mobile-layout) .notify-events.open-up .notify-events-panel {
+  transform-origin: bottom left;
+}
+
+.notify-events-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.notify-events-backdrop {
+  display: none;
+}
+
+/* шторка у нижнего края, как у панели фильтра истории */
+html.mobile-layout .notify-events-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  z-index: 400;
+  width: auto;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  border: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+html.mobile-layout .notify-events.open .notify-events-backdrop,
+html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 399;
+  background: rgba(0, 0, 0, 0.5);
+  transition: opacity 0.13s cubic-bezier(0.4, 0, 1, 1);
+}
+
+html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
+  opacity: 0;
 }
 
 .form-group {
@@ -740,10 +915,9 @@
   grid-column: 1 / -1;
 }
 
-/* поля прижаты к низу ячейки: подпись в две строки больше не сдвигает своё
-   поле вниз относительно соседей по ряду. Лишняя высота уходит над подписью.
-   margin-bottom внутри грида обнуляется: расстояние задаёт gap, а обнуление
-   этого margin только у :last-child сдвигало последнее поле ровно на 18px */
+/* поля прижаты к низу, чтобы подпись в две строки не опускала поле ниже соседей.
+   margin-bottom в гриде обнуляем у всех: зазор дает gap, а обнуление только
+   у :last-child сдвигало последнее поле на 18px */
 .form-row > .form-group {
   display: flex;
   flex-direction: column;
@@ -768,7 +942,7 @@
   font-family: inherit;
   color: var(--text);
   background: var(--input-bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   transition: border-color var(--transition), box-shadow var(--transition);
 }
@@ -819,8 +993,6 @@
   height: 18px;
 }
 
-/* кастомный селект */
-
 .custom-select {
   position: relative;
   width: 100%;
@@ -850,7 +1022,7 @@
   font-family: inherit;
   color: var(--text);
   background: var(--input-bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   cursor: pointer;
   text-align: left;
@@ -908,16 +1080,20 @@
   z-index: 300;
   max-height: 320px;
   overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-dropdown);
   padding: 4px;
 }
 
 .custom-select.open-up .custom-select-panel {
   top: auto;
   bottom: calc(100% + 4px);
+}
+
+.custom-select-panel {
+  transform-origin: top center;
+}
+
+.custom-select.open-up .custom-select-panel {
+  transform-origin: bottom center;
 }
 
 .custom-select-option {
@@ -969,23 +1145,34 @@
   margin-top: var(--form-hint-gap);
 }
 
+/* подсказка выровнена по тексту в поле. По рамке она казалась сдвинутой влево
+   из-за скругления и внутреннего отступа */
+.input ~ .form-hint,
+.select ~ .form-hint,
+.custom-select ~ .form-hint,
+.chip-input ~ .form-hint {
+  padding-left: var(--btn-pad-x-sm);
+}
+
 .form-divider {
   border: none;
   border-top: 1px solid var(--border-subtle);
   margin: 24px 0;
 }
 
+/* как заголовки колонок таблиц, чтобы не читалось как подпись еще одного поля */
 .form-section-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
   margin: 0 0 14px;
 }
 
-/* настоящий переключатель вместо нативного чекбокса с accent-color: он выпадал
-   из остальных кастомных контролов, а на тёмной карточке выключенное состояние
-   светилось белым квадратом. Заодно читается как «применяется сразу», в отличие
-   от полей формы рядом, которые ждут «Сохранить» */
+/* свой переключатель вместо чекбокса с accent-color: тот выбивался из кастомных
+   контролов, а на темной карточке горел белым квадратом. Заодно видно, что он
+   применяется сразу, без «Сохранить» */
 .form-switch {
   display: flex;
   align-items: center;
@@ -995,9 +1182,8 @@
   font-size: 15px;
 }
 
-/* бегунок нарисован фоном, а не ::after: input это replaced element, и Firefox
-   не генерирует на нём псевдоэлементы, там переключатель оставался пустой
-   пилюлей без бегунка. Фон работает во всех движках, ездит background-position */
+/* бегунок рисуем фоном: input это replaced element, Firefox не дает ему
+   ::after, и там была пустая пилюля без бегунка. Ездит background-position */
 .form-switch input {
   appearance: none;
   -webkit-appearance: none;
@@ -1005,7 +1191,7 @@
   width: 38px;
   height: 22px;
   margin: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   background-color: var(--seg-track-bg);
   background-image: radial-gradient(circle at 50% 50%, var(--text-muted) 0 8px, transparent 8px);
@@ -1024,7 +1210,7 @@
 }
 
 .form-switch input:focus-visible {
-  outline: 2px solid var(--accent-from);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -1043,8 +1229,6 @@
   }
 }
 
-/* поле с чипами */
-
 .chip-input {
   display: flex;
   flex-wrap: wrap;
@@ -1053,7 +1237,7 @@
   min-height: var(--btn-h-md);
   padding: 6px 10px;
   background: var(--input-bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   transition: border-color var(--transition), box-shadow var(--transition);
 }
@@ -1155,8 +1339,6 @@
   font-style: italic;
 }
 
-/* значки с именами трекеров */
-
 .tracker-badge {
   display: inline-block;
   max-width: 100%;
@@ -1201,8 +1383,6 @@
   color: var(--hue-pink);
 }
 
-/* разное */
-
 .text-muted {
   color: var(--text-muted);
 }
@@ -1236,20 +1416,24 @@
 }
 
 .test-result {
+  margin: 8px 0 0;
   font-size: 13px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  color: var(--danger);
+  overflow-wrap: anywhere;
 }
 
-.test-result svg {
-  width: 16px;
-  height: 16px;
+.test-result[hidden] {
+  display: none;
 }
 
+.modal-test-result {
+  margin: 0;
+  padding: 0 16px 12px;
+  flex-shrink: 0;
+}
 
-/* строка, которую воркер трекера взял в работу прямо сейчас: пульсирующая
-   полоса слева, тем же приёмом, что и у битых, чтобы не спорить с их окантовкой */
+/* строку прямо сейчас проверяет воркер трекера. Полоса слева сделана тем же
+   приемом, что у битых, чтобы не спорить с их окантовкой */
 .table-dash-releases tr.release-row-checking .col-name {
   box-shadow: inset 2px 0 0 var(--success);
   animation: release-row-checking-pulse 1.5s ease-in-out infinite;
@@ -1264,8 +1448,7 @@
   50% { box-shadow: inset 2px 0 0 transparent; }
 }
 
-/* запись стоит в очереди этого прохода: полоса приглушённая и без движения,
-   иначе десятки строк мигали бы разом */
+/* в очереди прохода полоса тусклая и без анимации, иначе десятки строк мигали бы разом */
 .table-dash-releases tr.release-row-queued .col-name {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--success) 45%, transparent);
 }
@@ -1281,32 +1464,64 @@
   white-space: nowrap;
 }
 
-/* расширенные настройки трекера прячет CSS, а не перерисовка карточки: поля
-   остаются в DOM, поэтому несохранённые правки в них не теряются */
-:root:not([data-advanced]) .tracker-advanced {
+/* расширенные настройки прячем через CSS без перерисовки карточки: поля
+   остаются в DOM и несохраненные правки не пропадают. Кнопка в шапке диалога
+   открывает их только в этом диалоге и лишняя, когда включены глобально */
+:root:not([data-advanced]) .modal:not(.tr-advanced-open) .tracker-advanced {
   display: none;
 }
 
+:root[data-advanced] .tr-advanced-toggle {
+  display: none;
+}
 
-/* логин с паролем стоят своим рядом на две колонки: в общей сетке карточки они
-   занимали по трети ширины, а подсказка соседа рвала выравнивание */
+.tr-advanced-toggle {
+  margin-left: auto;
+}
+
+.tr-advanced-toggle[aria-pressed="true"] {
+  background: var(--accent-subtle);
+}
+
+.tr-attn-note {
+  margin: 0;
+  font-style: normal;
+  color: var(--warning);
+}
+
+.tr-attn {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--warning);
+  outline-offset: 4px;
+  animation: tr-attn-fade 2s ease-out 0.3s forwards;
+}
+
+@keyframes tr-attn-fade {
+  to { outline-color: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tr-attn {
+    animation: none;
+  }
+}
+
+/* логин и пароль своим рядом в две колонки. В общей сетке они брали по трети
+   ширины, а подсказка соседа ломала выравнивание */
 .form-row-pair {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* подсказка ряда занимает всю его ширину отдельной ячейкой: внутри группы она
-   добавляла ей высоты, и соседние поля вставали выше по вертикали */
+/* подсказка ряда идет отдельной ячейкой во всю ширину. Внутри группы она
+   добавляла ей высоты и соседние поля уезжали вверх */
 .form-row > .form-row-hint {
   grid-column: 1 / -1;
-  /* ячейка грида отбита от полей всем row-gap ряда, поэтому подсказка стояла
-     втрое дальше от своего поля, чем подсказки внутри групп: гасим gap и
-     оставляем тот же отступ, что у них */
+  /* от полей ее отделял весь row-gap, втрое больше, чем у подсказок в группах */
   margin-top: calc(var(--form-hint-gap) - var(--form-row-gap));
 }
 
-/* поля расписания стоят по три в ряд: ряд из двух полей оставляет место
-   справа, а не растягивает их на всю ширину карточки. auto-fit этого не умеет,
-   он схлопывает пустые треки и делит ширину между тем, что есть */
+/* в расписании по три поля в ряд, и ряд из двух оставляет место справа.
+   auto-fit так не умеет: он схлопывает пустые треки и растягивает то, что есть */
 #view-schedule .form-row:not(.form-row-pair) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1315,4 +1530,217 @@
   #view-schedule .form-row:not(.form-row-pair) {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
+}
+
+/* пояснение под полем раскрывается кнопкой у подписи, по умолчанию скрыто */
+.form-hint.form-hint-collapsed {
+  display: none;
+}
+
+.hint-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  vertical-align: middle;
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
+}
+
+.hint-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* кнопка 22px выше строки подписи 13px: без отрицательных полей подпись с (i) выше соседней,
+   и поле в паре съезжает вниз */
+.form-label > .hint-toggle {
+  margin-block: -3px;
+}
+
+/* у переключателя (i) сосед текста во flex-строке label: внутри span он уходил на вторую строку */
+.form-switch > .hint-toggle {
+  flex: none;
+  margin-left: -4px;
+}
+
+.form-submit-row > .hint-toggle {
+  flex: none;
+  align-self: center;
+  margin-left: -6px;
+}
+
+html.mobile-layout .form-switch > .hint-toggle {
+  margin: -5px 0 -5px -4px;
+}
+
+html.mobile-layout .form-submit-row > .hint-toggle {
+  margin: 0 0 0 -6px;
+}
+
+.hint-toggle[aria-expanded="true"] {
+  color: var(--link);
+}
+
+@media (hover: hover) {
+  .hint-toggle:hover {
+    color: var(--text);
+    background: var(--hover);
+  }
+}
+
+.hint-toggle:focus {
+  outline: none;
+}
+
+.hint-toggle:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.btn-remove-tracker {
+  margin-right: auto;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+@media (hover: hover) {
+  .btn-remove-tracker:hover:not(:disabled) {
+    background: var(--danger-bg);
+  }
+}
+
+.btn-remove-tracker svg {
+  width: var(--btn-icon-sm);
+  height: var(--btn-icon-sm);
+}
+
+.input[readonly] {
+  color: var(--text-muted);
+}
+
+.tracker-row-badge {
+  position: relative;
+  grid-column: 7;
+  justify-self: center;
+  flex-shrink: 0;
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+/* зона наведения 20px: точка в 8px слишком мала, чтобы увидеть подсказку */
+.tracker-row-badge::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+
+.tracker-row-badge-paused {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-bg);
+}
+
+/* display:block у точки перебивает hidden */
+.tracker-row-badge[hidden] {
+  display: none;
+}
+
+.tr-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tr-suggestion-block {
+  background: var(--warning-bg);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.tr-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 12px;
+}
+
+.tr-suggestion + .tr-suggestion {
+  border-top: 1px solid color-mix(in srgb, var(--warning) 25%, transparent);
+}
+
+.tr-suggestion-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.tr-suggestion-reason {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  border-radius: 999px;
+}
+
+.tr-suggestion-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.tr-mirrors-pending {
+  color: var(--warning);
+}
+
+.tr-auto-line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.chip.chip-unconfirmed {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border: 1px dashed var(--warning);
+}
+
+.chip.chip-is-domain {
+  display: none;
+}
+
+.chip.chip-changed {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+}
+
+.tr-use-mirrors-group {
+  align-self: end;
+}
+
+.tr-use-mirrors-group .form-switch {
+  min-height: var(--btn-h-md);
+}
+
+/* перенос в подписи задан в тексте перевода */
+.tr-use-mirrors-group .form-switch > span {
+  white-space: pre-line;
+}
+
+html.mobile-layout .tr-address-row {
+  grid-template-columns: minmax(0, 1fr);
 }

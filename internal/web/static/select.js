@@ -1,17 +1,35 @@
+import { cancelClose, closeAnimated } from './components.js';
 import { ICONS, hydrateIcons, icon } from './icons.js';
 import { overlayBridge } from './state.js';
 import { html } from './util.js';
 
 export let openCustomSelect = null;
 
-export function closeOpenCustomSelect() {
+export function closeOpenCustomSelect(force) {
   if (!openCustomSelect) return;
-  const trigger = openCustomSelect.querySelector('.custom-select-trigger');
-  const panel = openCustomSelect.querySelector('.custom-select-panel');
-  openCustomSelect.classList.remove('open', 'open-up');
+  startSelectClose(openCustomSelect, force);
+}
+
+function finishSelectClose(wrap) {
+  cancelClose(wrap);
+  wrap.classList.remove('open', 'open-up');
+  const panel = wrap.querySelector('.custom-select-panel');
+  // hidden ставим после анимации выхода: ей нужна нарисованная панель
   if (panel) panel.hidden = true;
+}
+
+function startSelectClose(wrap, force) {
+  const trigger = wrap.querySelector('.custom-select-trigger');
+  const panel = wrap.querySelector('.custom-select-panel');
+  const wasOpen = wrap.classList.contains('open');
   if (trigger) trigger.setAttribute('aria-expanded', 'false');
-  openCustomSelect = null;
+  if (openCustomSelect === wrap) openCustomSelect = null;
+  wrap.classList.remove('open');
+  if (force || !wasOpen || !panel || panel.hidden) {
+    finishSelectClose(wrap);
+    return;
+  }
+  closeAnimated(wrap, function () { finishSelectClose(wrap); });
 }
 overlayBridge.getOpenCustomSelect = function () { return openCustomSelect; };
 overlayBridge.closeCustomSelect = closeOpenCustomSelect;
@@ -98,10 +116,7 @@ export function initCustomSelect(selectEl) {
   }
 
   function closePanel() {
-    wrap.classList.remove('open', 'open-up');
-    trigger.setAttribute('aria-expanded', 'false');
-    panel.hidden = true;
-    if (openCustomSelect === wrap) openCustomSelect = null;
+    startSelectClose(wrap);
   }
 
   function positionPanel() {
@@ -126,6 +141,7 @@ export function initCustomSelect(selectEl) {
 
   function openPanel() {
     closeOpenCustomSelect();
+    cancelClose(wrap);
     wrap.classList.add('open');
     trigger.setAttribute('aria-expanded', 'true');
     panel.hidden = false;

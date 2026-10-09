@@ -1,10 +1,11 @@
+import { confirmDialog } from './confirm.js';
 import { loadDashboard, stopDashboardPolling } from './dashboard.js';
-import { loadIntegrations } from './integrations.js';
+import { hasUnsavedIntegrations, loadIntegrations } from './integrations.js';
 import { closeMobileMenu } from './layout.js';
 import { loadLogs, stopLogsPolling } from './logs.js';
 import { loadSchedule } from './schedule.js';
 import { historyState } from './state.js';
-import { hasUnsavedTrackers, loadTrackers } from './trackers.js';
+import { closeTrackerDialog, hasUnsavedTrackers, loadTrackers } from './trackers.js';
 
 export const VIEW_HASH = {
   dashboard: '#dashboard',
@@ -24,6 +25,7 @@ export const HASH_VIEW = {
 
 
 export let currentView = null;
+let navConfirming = false;
 
 export function parseHash() {
   const raw = (location.hash || '').replace(/^#/, '');
@@ -118,6 +120,12 @@ export function setActiveNav(view) {
   if (target) target.classList.remove('hidden');
 }
 
+function unsavedWarning() {
+  if (currentView === 'trackers' && hasUnsavedTrackers()) return t('trackers.unsavedWarn');
+  if (currentView === 'integrations' && hasUnsavedIntegrations()) return t('integrations.unsavedWarn');
+  return '';
+}
+
 export function showView(view, updateHash) {
   if (currentView === 'dashboard' && view !== 'dashboard') stopDashboardPolling();
   if (currentView === 'logs' && view !== 'logs') stopLogsPolling();
@@ -128,17 +136,31 @@ export function showView(view, updateHash) {
       return;
     }
   }
-  // проверка стоит после обновления хеша, а не в начале функции: на клике по
-  // пункту меню showView вызывается дважды (сам клик и следом hashchange), и в
-  // начале функции подтверждение спрашивалось бы два раза.
-  // view не сравнивается с currentView: клик по уже активному пункту «Трекеры»
-  // хеш не меняет, доходит до loadTrackers() и точно так же стирает правки
-  if (currentView === 'trackers' && hasUnsavedTrackers() &&
-      !confirm(t('trackers.unsavedWarn'))) {
-    const back = buildHash('trackers');
-    if (location.hash !== back) history.replaceState(null, '', back);
+  // проверка после смены хеша: клик по меню вызывает showView дважды (клик и hashchange),
+  // и в начале функции confirm выскочил бы два раза. С currentView не сравниваем: клик по
+  // уже открытым «Трекерам» хеш не меняет, но loadTrackers() так же стирает правки
+  // пока висит подтверждение, другие переходы (кнопка "назад") игнорируются
+  if (navConfirming) return;
+  const warn = unsavedWarning();
+  if (warn) {
+    navConfirming = true;
+    const from = currentView;
+    confirmDialog({ text: warn, confirmLabel: t('trackers.discard'), danger: true }).finally(function () {
+      // и при отказе промиса: иначе флаг застрянет и навигация умрет
+      navConfirming = false;
+    }).then(function (ok) {
+      // хеш мог уйти за время вопроса: возвращаем тот, что соответствует ответу
+      const target = buildHash(ok ? view : from);
+      if (location.hash !== target) history.replaceState(null, '', target);
+      if (ok) enterView(view);
+    });
     return;
   }
+  enterView(view);
+}
+
+function enterView(view) {
+  if (currentView === 'trackers') closeTrackerDialog({ force: true });
   currentView = view;
   setActiveNav(view);
   closeMobileMenu();
@@ -166,10 +188,10 @@ export function initRouter() {
     }
   });
 
-  // закрытие вкладки и перезагрузка мимо showView не проходят.
-  // Safari, включая iOS, показывает диалог по returnValue, а не по preventDefault
+  // закрытие вкладки и перезагрузка идут мимо showView.
+  // Safari, и на iOS тоже, смотрит на returnValue, одного preventDefault ему мало
   window.addEventListener('beforeunload', function (e) {
-    if (currentView !== 'trackers' || !hasUnsavedTrackers()) return;
+    if (!unsavedWarning()) return;
     e.preventDefault();
     e.returnValue = '';
   });

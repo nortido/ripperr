@@ -1,5 +1,3 @@
-/* выпадающий фильтр истории */
-
 .hist-filter-select {
   position: relative;
   display: inline-flex;
@@ -58,8 +56,8 @@
   background: var(--danger-bg);
 }
 
-/* битые отделены от "не определено": --warning это тот же --hue-amber, поэтому
-   раньше оба фильтра красили кнопку одинаково и различить их было нечем */
+/* у битых свой цвет: --warning это тот же --hue-amber, и раньше оба фильтра
+   красили кнопку одинаково */
 .hist-filter-trigger.active-broken {
   color: var(--hue-violet);
   border-color: var(--hue-violet);
@@ -77,30 +75,23 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-dropdown);
 }
 
-/* `display: flex` выше перебивает `[hidden] { display: none }` из стилей
-   браузера (специфичность та же, авторские правила побеждают), поэтому без
-   этого hidden перестал работать */
+/* display: flex выше перебивает браузерный [hidden]: специфичность та же,
+   а авторские стили сильнее */
 .hist-filter-panel[hidden] {
   display: none;
 }
 
-/* сам max-height считается при каждом открытии в positionHistFilterPanel
-   (по реально доступному месту, а не фиксированному числу); здесь только
-   ширина плюс запасной предел на время до этого расчёта */
+/* настоящий max-height по свободному месту считает positionHistFilterPanel
+   при каждом открытии, тут запасной предел до этого расчета */
 html:not(.mobile-layout) .hist-filter-panel {
   width: 240px;
   max-height: 600px;
 }
 
-/* мобильные: нижняя шторка вместо выпадающего списка, привязана к вьюпорту,
-   а не к кнопке; positionHistFilterPanel() в этом режиме полностью пропускает
-   открытие вверх и инлайновый max-height, поэтому 80vh здесь единственный предел */
+/* на мобильных это нижняя шторка у вьюпорта. positionHistFilterPanel() тут
+   не ставит инлайновый max-height, так что предел только 80vh */
 html.mobile-layout .hist-filter-panel {
   position: fixed;
   left: 0;
@@ -119,7 +110,7 @@ html.mobile-layout .hist-filter-panel {
   display: none;
 }
 
-/* затемнение за шторкой; тап закрывает её (вешается в bindHistFilterSelect) */
+/* тап по затемнению закрывает шторку, обработчик в bindHistFilterSelect */
 html.mobile-layout .hist-filter-select.open .hist-filter-backdrop,
 html.mobile-layout .hist-filter-select.is-closing .hist-filter-backdrop {
   display: block;
@@ -138,9 +129,8 @@ html.mobile-layout .hist-filter-select.is-closing .hist-filter-backdrop {
   opacity: 0;
 }
 
-/* на десктопе мышь, а не палец: именно отступ в 8px под касание у опций и
-   строк групп выталкивает главный вид (7 строк статусов + трекер +
-   категория) за доступную высоту обычного окна */
+/* на десктопе мышь, отступ 8px под палец не нужен. С ним главный вид
+   (7 статусов, трекер, категория) не влезал по высоте в обычное окно */
 html:not(.mobile-layout) .hist-filter-option,
 html:not(.mobile-layout) .hist-filter-row {
   padding-top: 6px;
@@ -152,9 +142,8 @@ html:not(.mobile-layout) .hist-filter-row {
   bottom: calc(100% + 4px);
 }
 
-/* шапка на месте; прокручивается только тело, когда содержимое (в основном
-   список категорий) перерастает max-height панели, в остальных случаях высота
-   точно повторяет содержимое, без пустого места и без устаревшего содержимого за ним */
+/* шапка стоит, скроллится только тело, когда содержимое (обычно категории) не
+   влезает в max-height. В остальных случаях высота ровно по содержимому */
 .hist-filter-panel-head {
   display: flex;
   align-items: center;
@@ -190,10 +179,9 @@ html:not(.mobile-layout) .hist-filter-row {
   padding: 4px;
 }
 
-/* нижняя растушёвка показывает, что есть что прокручивать; полоса прокрутки
-   остаётся родной и видимой, это чисто декоративный слой над последней строкой.
-   is-scrolled-end (ставится в components.js) прячет её при прокрутке до конца,
-   что тривиально верно и когда переполнения нет вовсе */
+/* растушевка снизу намекает, что ниже есть еще. Полоса прокрутки своя, это
+   просто слой поверх последней строки. is-scrolled-end из histfilter.js прячет
+   его в конце списка и когда скроллить нечего */
 .hist-filter-panel-body::after {
   content: '';
   position: absolute;
@@ -252,84 +240,13 @@ html:not(.mobile-layout) .hist-filter-row {
   height: 14px;
 }
 
-@keyframes hist-filter-pop-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes hist-filter-pop-out {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.97);
-  }
-}
-
+/* keyframes и тайминги общие, лежат в overlays.css */
 .hist-filter-panel {
   transform-origin: top right;
 }
 
 .hist-filter-select.open-up .hist-filter-panel {
   transform-origin: bottom right;
-}
-
-.hist-filter-select.open .hist-filter-panel {
-  animation: hist-filter-pop-in 0.16s cubic-bezier(0.2, 0, 0.2, 1);
-}
-
-/* панель остаётся видимой при закрытии: JS откладывает `hidden` до конца
-   анимации (HIST_FILTER_CLOSE_MS в app.js) */
-.hist-filter-select.is-closing .hist-filter-panel {
-  animation: hist-filter-pop-out 0.13s cubic-bezier(0.4, 0, 1, 1) forwards;
-  pointer-events: none;
-}
-
-@keyframes hist-filter-sheet-in {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-@keyframes hist-filter-sheet-out {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(100%);
-  }
-}
-
-/* те же длительности и кривые, что у десктопного появления и исчезновения,
-   только сдвиг вместо масштаба, и эти два правила выигрывают по специфичности
-   у правил выше */
-html.mobile-layout .hist-filter-select.open .hist-filter-panel {
-  animation: hist-filter-sheet-in 0.16s cubic-bezier(0.2, 0, 0.2, 1);
-}
-
-html.mobile-layout .hist-filter-select.is-closing .hist-filter-panel {
-  animation: hist-filter-sheet-out 0.13s cubic-bezier(0.4, 0, 1, 1) forwards;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hist-filter-select.open .hist-filter-panel,
-  .hist-filter-select.is-closing .hist-filter-panel,
-  html.mobile-layout .hist-filter-select.open .hist-filter-panel,
-  html.mobile-layout .hist-filter-select.is-closing .hist-filter-panel {
-    animation-duration: 0.001ms;
-  }
 }
 
 .hist-filter-option {
@@ -428,8 +345,6 @@ html.mobile-layout .hist-filter-select.is-closing .hist-filter-panel {
   letter-spacing: 0.03em;
   color: var(--text-muted);
 }
-
-/* фильтр по колонке имени */
 
 .name-filter-wrap {
   display: flex;
@@ -629,8 +544,6 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
   height: 14px;
 }
 
-/* поиск по имени в мобильной панели карточки */
-
 .btn.btn-mobile-name-search {
   display: none;
   position: relative;
@@ -660,9 +573,8 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
   overflow: hidden;
 }
 
-/* пара кнопок поиска и закрытия: стопка с фиксированной позицией, перекрёстно
-   гаснет только иконка. Вынесена из .mobile-name-search-slot, чтобы геометрия
-   её собственного блока не зависела от (анимируемой) ширины слота. */
+/* вынесено из .mobile-name-search-slot, чтобы блок кнопок не зависел
+   от анимируемой ширины слота */
 .mobile-name-search-toggle {
   display: none;
 }
@@ -716,36 +628,9 @@ html:not(.mobile-layout) .name-filter-wrap.is-open .name-filter-inline {
   flex-shrink: 0;
 }
 
-/*
- * Мобильная панель шапки карточки релизов: анимация открытия и закрытия поиска по имени.
- *
- * Модель геометрии (все длины относительно .card-header-toolbar, единственного
- * корня позиционирования: .card-toolbar-post-search намеренно оставлен
- * `position: static`, чтобы никогда не стать альтернативным содержащим блоком):
- *
- *   T = ширина содержимого .card-header-toolbar
- *   buttons-w = btn-h-sm + gap + btn-h-sm            (кнопка поиска по имени + кнопка фильтра)
- *   content-right = buttons-w + gap                  (зарезервированная полоса справа)
- *   W = T - content-right                             (ширина едущих панелей)
- *
- * .card-header-toolbar-shift (заголовок/обновление/сортировка/форсировать всё) и
- * .mobile-name-search-slot (поле ввода поиска) всегда прибиты к одному и тому же
- * блоку (left: 0; right: content-right), в любом состоянии (покой, анимация,
- * раскрыто). Двигают их только `transform: translateX()` и `opacity`; ничто в их
- * блоке (position/left/right/width) не меняется, поэтому два состояния строго
- * обратны друг другу во времени, а края двух панелей остаются идеально
- * состыкованными (без нахлёста и без зазора) в каждой точке анимации, независимо
- * от кривой, потому что обе используют один и тот же резерв `right` и зеркальные
- * translateX(±100%).
- *
- * .mobile-name-search-toggle (кнопки поиска и закрытия, сложенные в одном месте)
- * и .hist-filter-select (кнопка фильтра) прибиты постоянным отступом `right` в
- * ЛЮБОМ состоянии. Кнопки поиска и закрытия не двигаются вообще: они занимают
- * один и тот же блок и перекрёстно гаснут только через opacity/visibility (без
- * подмены display, без сдвига раскладки). Кнопка фильтра единственный элемент с
- * фиксированной позицией, который сам уезжает анимацией (transform + opacity,
- * вынесен из потока в обоих состояниях, без max-width и flex).
- */
+/* шапка и поле поиска прибиты к одному блоку (left: 0; right: content-right) и ездят
+   только transform с зеркальным translateX(±100%), так края стыкуются на любой кривой.
+   .card-toolbar-post-search оставлен static, чтобы не стать вторым содержащим блоком */
 
 html.mobile-layout .releases-card-header .card-header-toolbar {
   --mobile-toolbar-buttons-w: calc(var(--btn-h-sm) + 8px + var(--btn-h-sm));
@@ -792,10 +677,8 @@ html.mobile-layout .releases-card-header .card-header-toolbar-shift {
     visibility 0s linear 0s;
 }
 
-/* .card-header-toolbar-shift втиснут в абсолютно позиционированный блок
-   фиксированной высоты (--btn-h-sm); без защиты nowrap длинный заголовок
-   карточки релиза переносился бы на вторую строку и обрезался вместо сжатия
-   flex-строки, поэтому здесь он обязан ужиматься многоточием в одну строку. */
+/* блок тут абсолютный и высотой в --btn-h-sm. Без nowrap длинный заголовок
+   уходил на вторую строку и обрезался, так что жмем его многоточием */
 html.mobile-layout .releases-card-header .card-header-toolbar-shift .card-title {
   white-space: nowrap;
   overflow: hidden;
@@ -850,9 +733,8 @@ html.mobile-layout .mobile-name-search-field .mobile-name-filter-input {
   min-width: 0;
 }
 
-/* кнопка фильтра: закреплена у правого края панели в любом состоянии; когда
-   поле поиска по имени открыто, она единственная уезжает, только через
-   transform + opacity (никогда max-width), и всегда вынесена из потока. */
+/* кнопка фильтра всегда у правого края и вне потока. При открытом поиске уезжает
+   только она, через transform и opacity, без max-width */
 html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select {
   position: absolute;
   top: 0;
@@ -874,18 +756,9 @@ html.mobile-layout .releases-card-header.is-search-expanded .card-toolbar-post-s
   opacity: 0;
 }
 
-/* is-closing держит подъём, пока панель уезжает анимацией: эта обёртка сама по
-   себе контекст наложения, поэтому возврат к z-index 2 посреди анимации увёл бы
-   панель под соседей по панели инструментов. transform: none тоже убран здесь,
-   потому что трансформированный предок становится содержащим блоком для
-   потомков с position: fixed, а это заперло бы нижнюю шторку внутри панели
-   вместо вьюпорта (по той же причине .app.page-scaled использует zoom, а не
-   transform). Именно transition: none делает это правдой в момент появления
-   класса: иначе тут всё ещё действует переход transform из базового правила,
-   и translateX(0) 0.32s плавно шёл бы к none, а всё это время вычисленное
-   значение это интерполированная матрица, а не ключевое слово none, что
-   держит обёртку содержащим блоком для шторки всю анимацию, отсюда и вспышка
-   узкой колонки. */
+/* is-closing держит z-index до конца анимации, иначе панель уйдет под соседей. С transform
+   предок становится содержащим блоком для fixed и запирает шторку, поэтому none сразу,
+   без transition: промежуточная матрица давала вспышку узкой колонки */
 html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.open,
 html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filter-select.is-closing {
   z-index: 301;
@@ -893,9 +766,8 @@ html.mobile-layout .releases-card-header .card-toolbar-post-search > .hist-filte
   transition: none;
 }
 
-/* кнопка поиска и кнопка закрытия: постоянная позиция в любом состоянии,
-   кнопка поиска не должна сдвинуться ни на пиксель. Обе кнопки сложены в
-   одном блоке; перекрёстно гаснет только иконка через opacity/visibility. */
+/* кнопка поиска не должна сдвинуться ни на пиксель, поэтому обе кнопки лежат
+   в одном блоке и меняются только opacity и visibility */
 html.mobile-layout .btn.btn-mobile-name-search {
   display: inline-flex;
 }
@@ -978,12 +850,9 @@ html.mobile-layout .releases-card-header.is-search-expanded .mobile-name-search-
     visibility 0s linear 0s;
 }
 
-/* Блокируем всё взаимодействие на время перехода. Эти селекторы обязаны
-   победить правила `pointer-events: auto` устойчивого состояния выше, несмотря
-   на равную специфичность: явно объявленное значение всегда бьёт унаследованное
-   от предка с .is-search-animating, поэтому каждая цель перечислена здесь явно
-   (а не берётся наследованием), и этот блок держится последним в каскаде,
-   чтобы выиграть при равенстве. */
+/* пока идет переход, клики блокируем. Наследование от .is-search-animating проиграло бы
+   явному pointer-events: auto выше, поэтому цели перечислены поштучно, а блок стоит
+   последним, чтобы выиграть при равной специфичности */
 html.mobile-layout .releases-card-header.is-search-animating .card-header-toolbar-shift,
 html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search-slot,
 html.mobile-layout .releases-card-header.is-search-animating .card-toolbar-post-search > .hist-filter-select,
@@ -1072,7 +941,7 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 }
 
 .seg-ctrl-btn:focus-visible {
-  outline: 2px solid var(--accent-from);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -1096,10 +965,9 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   table-layout: fixed;
 }
 
-/* две колонки, но склеенные: ширина у каждой под своё содержимое, а не доля
-   таблицы, поэтому между чипами остаётся зазор в 12px, а не пустой хвост колонки.
-   Мерка это максимум из самого длинного значения и заголовка: у трекера длиннее
-   имя (rutracker), у категории заголовок */
+/* ширина колонок по содержимому, а не доля таблицы, чтобы между чипами был зазор 12px
+   без пустого хвоста. Берем большее из самого длинного значения и заголовка: у трекера
+   длинее имя (rutracker), у категории заголовок */
 .table-dash-releases .col-tracker {
   width: 92px;
   max-width: 92px;
@@ -1200,10 +1068,9 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 }
 
-/* до 1200px колонки времени и статуса узкие (110 и 84), там мельче шрифт и
-   поджатые поля действительно нужны, иначе «ПОСЛЕДНЯЯ ПРОВЕРКА» не влезает.
-   С 1200px они становятся 130 и 100, всё помещается обычными 12px, и прежняя
-   граница 1440 давала только видимый скачок шрифта и сдвиг колонки влево */
+/* до 1200px колонки времени и статуса узкие (110 и 84), без мелкого шрифта
+   «ПОСЛЕДНЯЯ ПРОВЕРКА» не влезает. С 1200px они 130 и 100, все входит в 12px,
+   а старая граница 1440 давала только скачок шрифта и сдвиг колонки */
 @media (min-width: 561px) and (max-width: 1199px) {
   html:not(.mobile-layout) .table-dash-releases th.col-status,
   html:not(.mobile-layout) .table-dash-releases th.col-time,
@@ -1314,49 +1181,6 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 
 }
 
-@media (min-width: 901px) and (max-width: 1150px) {
-  .table-dash-releases th.col-status,
-  .table-dash-releases th.col-time,
-  .table-dash-releases th.plan-recheck-cell,
-  .table-dash-releases th.col-tracker,
-  .table-dash-releases th.col-category {
-    font-size: 10px;
-    letter-spacing: 0.01em;
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-
-  /* паддинг задан и для td: выше он сужается только у th, и чип трекера
-     оставался на исходных 20px, уезжая вправо от названия колонки */
-  .table-dash-releases .col-tracker {
-    width: 80px;
-    max-width: 80px;
-    padding-left: 8px;
-    padding-right: 0;
-  }
-
-  .table-dash-releases .col-category {
-    width: 88px;
-    max-width: 88px;
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-
-  .table-dash-releases .col-time {
-    width: 100px;
-    max-width: 100px;
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-
-  .table-dash-releases .plan-recheck-cell {
-    width: 118px;
-    max-width: 118px;
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-}
-
 @media (min-width: 901px) and (max-width: 980px) {
   .dash-page-header .page-header-row {
     flex-wrap: nowrap;
@@ -1381,63 +1205,63 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 }
 
 @media (min-width: 901px) and (max-width: 1200px) {
-  .stat-card-next-run .stat-card-body {
-    padding-right: 29px; /* icon right 12 + width 30 = 42 от края карточки, минус padding карточки 20 = нужно ещё 22, плюс 7 зазора = 29 */
+  .stat-card-next-run .stat-value {
+    padding-right: 29px; /* иконка: right 12 + ширина 30 = 42 от края, минус padding 20, плюс 7 зазора */
   }
 }
 
+/* между 901 и 1080 размеры плавно растут до обычных, ступенька на 1080 давала
+   скачок шрифта во всех четырех карточках. --stat-t идет от 0 до 1px, остальное
+   ниже линейно от него */
 @media (min-width: 901px) and (max-width: 1080px) {
+  :root {
+    --stat-t: calc((100vw - 901px) / 179);
+  }
+
   .stat-grid {
-    gap: 10px;
+    gap: calc(10px + 6 * var(--stat-t));
   }
 
   .stat-card {
-    padding: 14px 12px;
-    gap: 8px;
+    padding: calc(14px + 4 * var(--stat-t)) calc(12px + 8 * var(--stat-t));
+    gap: calc(8px + 4 * var(--stat-t));
   }
 
   .stat-value {
-    font-size: 22px;
+    font-size: calc(22px + 6 * var(--stat-t));
   }
 
   .stat-card-next-run .stat-value {
-    font-size: clamp(13px, 10.5cqi, 22px);
-    line-height: calc(22px * 1.2);
-  }
-
-  :root[lang="en"] .stat-card-next-run .stat-value {
-    font-size: clamp(13px, 8.5cqi, 22px);
+    --nr-max: calc(22px + 6 * var(--stat-t));
   }
 
   .stat-label {
-    font-size: 11px;
-    margin-top: 2px;
+    font-size: calc(11px + 2 * var(--stat-t));
+    margin-top: calc(2px + 2 * var(--stat-t));
   }
 
   .stat-icon {
-    width: 30px;
-    height: 30px;
+    width: calc(30px + 6 * var(--stat-t));
+    height: calc(30px + 6 * var(--stat-t));
   }
 
   .stat-icon svg {
-    width: 16px;
-    height: 16px;
+    width: calc(16px + 4 * var(--stat-t));
+    height: calc(16px + 4 * var(--stat-t));
   }
 
   .stat-card-next-run .stat-icon {
-    top: 12px;
-    right: 10px;
-    width: 26px;
-    height: 26px;
+    top: calc(12px + 2 * var(--stat-t));
+    right: calc(10px + 2 * var(--stat-t));
+    width: calc(26px + 4 * var(--stat-t));
+    height: calc(26px + 4 * var(--stat-t));
   }
 
-  .stat-card-next-run .stat-card-body {
-    padding-right: 31px; /* icon right 10 + width 26 = 36 от края карточки, минус padding карточки 12 = 24, плюс 7 зазора = 31 */
-  }
-
-  .stat-then-pill {
-    font-size: 10px;
-    padding: 2px 8px;
+  /* на 901px иконка 10 + 26 = 36 от края, минус padding 12, плюс 7 зазора = 31.
+     К 1080 выходит 29, как в правиле выше */
+  .stat-card-next-run .stat-value {
+    --nr-pad: calc(31px - 2 * var(--stat-t));
+    padding-right: var(--nr-pad);
   }
 }
 

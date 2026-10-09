@@ -1,5 +1,3 @@
-/* всплывающие уведомления */
-
 .toast-stack {
   position: fixed;
   bottom: 20px;
@@ -44,10 +42,8 @@
   }
 }
 
-/* баннер отсутствия связи */
-
-/* снизу, а не сверху: сверху баннер перекрыл бы кнопку мобильного меню и
-   держал бы её закрытой всё время, пока сервер недоступен */
+/* баннер снизу: сверху он закрыл бы кнопку мобильного меню на все время,
+   пока сервер недоступен */
 .offline-banner {
   position: fixed;
   left: 0;
@@ -84,19 +80,272 @@ body:has(.offline-banner.visible) .content {
   }
 }
 
-/* попап ошибки */
+:root {
+  --pop-in-dur: 0.16s;
+  --pop-out-dur: 0.13s;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pop-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes sheet-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* общий вид всплывающих панелей. Мобильные шторки перебивают border и radius
+   своими html.mobile-layout правилами */
+.hist-filter-panel,
+.custom-select-panel,
+.notify-events-panel,
+.error-popover {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-dropdown);
+}
 
 .error-popover {
   position: absolute;
   z-index: 1500;
   max-width: 28rem;
-  padding: 12px 16px;
+  padding: 10px 12px;
   font-size: 13px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-dropdown);
+  line-height: 1.45;
   word-break: break-word;
   white-space: pre-wrap;
+  transform-origin: top left;
 }
 
+.hint-popover {
+  max-width: min(280px, calc(100vw - 16px));
+  color: var(--text);
+  white-space: normal;
+  transform-origin: top center;
+}
+
+/* панели, что живут в DOM постоянно: вход по классу open, выход по is-closing.
+   Кадр закрытия держит closeAnimated (POP_CLOSE_MS в components.js), потом панель скрывают.
+   Новые узлы (поповеры, диалоги) играют вход сразу при вставке */
+.error-popover,
+.hist-filter-select.open .hist-filter-panel,
+.custom-select.open .custom-select-panel,
+.notify-events.open .notify-events-panel {
+  animation: pop-in var(--pop-in-dur) cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+html.mobile-layout .hist-filter-select.open .hist-filter-panel,
+html.mobile-layout .notify-events.open .notify-events-panel {
+  animation: sheet-in var(--pop-in-dur) cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.error-popover.is-closing,
+.hist-filter-select.is-closing .hist-filter-panel,
+.custom-select.is-closing .custom-select-panel,
+.notify-events.is-closing .notify-events-panel {
+  animation: pop-out var(--pop-out-dur) cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+html.mobile-layout .hist-filter-select.is-closing .hist-filter-panel,
+html.mobile-layout .notify-events.is-closing .notify-events-panel {
+  animation: sheet-out var(--pop-out-dur) cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pop-in-dur: 0.001ms;
+    --pop-out-dur: 0.001ms;
+  }
+}
+
+/* диалог живет в body вне .app, чтобы тосты (2000) и поповеры (1500) были выше него */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 640px;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dropdown);
+  outline: none;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.modal-title {
+  margin: 0;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+html.modal-open {
+  overflow: hidden;
+}
+
+.modal-overlay {
+  animation: overlay-in var(--pop-in-dur) cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.modal-overlay > .modal {
+  animation: pop-in var(--pop-in-dur) cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* is-closing вешает closeAnimated на подложку, пока DOM еще на месте */
+.modal-overlay.is-closing {
+  animation: overlay-out var(--pop-out-dur) cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+.modal-overlay.is-closing > .modal {
+  animation: pop-out var(--pop-out-dur) cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+/* полноэкранный диалог из mobile.css выезжает снизу, подтверждение остается карточкой */
+html.mobile-layout .modal-overlay:not(.confirm-overlay) > .modal {
+  animation: sheet-in var(--pop-in-dur) cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+html.mobile-layout .modal-overlay.is-closing:not(.confirm-overlay) > .modal {
+  animation: sheet-out var(--pop-out-dur) cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.modal-overlay.confirm-overlay {
+  z-index: 1100;
+}
+
+.confirm-modal {
+  max-width: 440px;
+}
+
+.confirm-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 20px 16px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.confirm-modal .btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+@media (hover: hover) {
+  .confirm-modal .btn-danger:hover:not(:disabled) {
+    background: var(--danger-bg);
+  }
+}
+
+/* перебивает полноэкранный диалог из mobile.css: подтверждение остается карточкой по центру */
+html.mobile-layout .modal-overlay.confirm-overlay {
+  padding: 16px;
+  align-items: center;
+}
+
+html.mobile-layout .modal.confirm-modal {
+  max-width: 440px;
+  max-height: calc(100dvh - 32px);
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+html.mobile-layout .confirm-modal .modal-foot {
+  padding-bottom: 12px;
+}
