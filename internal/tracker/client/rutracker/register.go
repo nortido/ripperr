@@ -13,6 +13,7 @@ func init() {
 		Defaults: config.TrackerItem{
 			Name:        "rutracker",
 			Domain:      "rutracker.org",
+			Mirrors:     []string{"rutracker.net"},
 			Publicity:   "private",
 			LoginURL:    "https://rutracker.org/forum/login.php",
 			DownloadURL: "https://rutracker.org/forum/dl.php?t=",

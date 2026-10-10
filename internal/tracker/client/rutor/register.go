@@ -13,6 +13,7 @@ func init() {
 		Defaults: config.TrackerItem{
 			Name:        "rutor",
 			Domain:      "rutor.is",
+			Mirrors:     []string{"rutor.info"},
 			Publicity:   "public",
 			DownloadURL: "https://d.rutor.info/download/",
 			HourLimit:   30,

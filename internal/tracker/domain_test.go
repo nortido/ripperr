@@ -141,6 +141,7 @@ func TestDomainOverrideParsePosterKeepsForeignHost(t *testing.T) {
 func TestDomainAliveWithKeepsCookiesOutOfSessionJar(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "mirror", Value: "1", Path: "/"})
+		_, _ = w.Write([]byte("<title>mirror</title>"))
 	}))
 	defer srv.Close()
 
@@ -178,7 +179,9 @@ func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error)
 }
 
 func TestDomainProbeKeepsFlareTrackerOffTrackerProxy(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<title>mirror</title>"))
+	}))
 	defer srv.Close()
 	target, err := url.Parse(srv.URL)
 	if err != nil {
@@ -200,5 +203,98 @@ func TestDomainProbeKeepsFlareTrackerOffTrackerProxy(t *testing.T) {
 	_ = probe(flare)(context.Background(), "mirror.invalid")
 	if rt.hits != 1 {
 		t.Fatalf("проба flare-трекера ушла транспортом трекера, hits=%d", rt.hits)
+	}
+}
+
+type suffixTracker struct {
+	trackerModel.Tracker
+}
+
+func (suffixTracker) DownloadLink(id string) string {
+	return "https://primary.example/torrent/" + id + "/download/"
+}
+
+func TestWithActiveDomainSuffixDownloadLink(t *testing.T) {
+	tr := &suffixTracker{Tracker: trackerModel.Tracker{Domain: "primary.example"}}
+	wrapped := withActiveDomain(tr, "mirror.example")
+	if got := wrapped.DownloadLink("abc"); got != "https://mirror.example/torrent/abc/download/" {
+		t.Fatalf("download = %q", got)
+	}
+}
+
+func probeStatus(t *testing.T, status int, body string) bool {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if status == http.StatusFound {
+			w.Header().Set("Location", "https://elsewhere.example/")
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc := &http.Client{
+		Transport:     &redirectTransport{host: target.Host},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	return domainAliveWith(hc)(context.Background(), "mirror.example")
+}
+
+func TestDomainAliveRejectsBlankOK(t *testing.T) {
+	bodies := []string{"", " \n\t", "<html><body> </body></html>"}
+	for _, status := range []int{http.StatusOK, http.StatusNoContent} {
+		for _, body := range bodies {
+			if probeStatus(t, status, body) {
+				t.Errorf("status %d body %q: want dead", status, body)
+			}
+		}
+	}
+}
+
+func TestDomainAliveRejectsServerError(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, 522} {
+		if probeStatus(t, status, "<title>error</title>") {
+			t.Errorf("status %d: want dead", status)
+		}
+	}
+}
+
+func TestDomainAliveKeepsLivePages(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+	}{
+		{http.StatusOK, "<title>RuTracker</title>"},
+		{http.StatusForbidden, "Just a moment..."},
+		{http.StatusFound, ""},
+	}
+	for _, c := range cases {
+		if !probeStatus(t, c.status, c.body) {
+			t.Errorf("status %d body %q: want alive", c.status, c.body)
+		}
+	}
+}
+
+func TestBlankPage(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", true},
+		{" \r\n\t", true},
+		{"<html><body> </body></html>", true},
+		{"<!-- x --> <br/>", true},
+		{"ok", false},
+		{"<p>text</p>", false},
+		{"<a", true},
+		{"a < b", false},
+	}
+	for _, c := range cases {
+		if got := blankPage([]byte(c.in)); got != c.want {
+			t.Errorf("blankPage(%q) = %v, want %v", c.in, got, c.want)
+		}
 	}
 }

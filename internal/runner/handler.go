@@ -9,11 +9,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"ripperr/internal/helper"
 	"ripperr/internal/helper/magnetmeta"
 	"ripperr/internal/helper/torrentmeta"
+	"ripperr/internal/metrics"
 	"ripperr/internal/model"
 	"ripperr/internal/model/proxy"
 	runnerModel "ripperr/internal/model/runner"
@@ -23,6 +25,7 @@ import (
 	storagePkg "ripperr/internal/storage"
 	"ripperr/internal/system/logger"
 	"ripperr/internal/tracker/client"
+	"ripperr/internal/tracker/registry"
 )
 
 const (
@@ -41,15 +44,16 @@ type trackerService interface {
 	GetHourLimit(ttid int) (limit int)
 	GetCachedClient(ctx context.Context, ttid int) (tc client.IClient, err error)
 	Response(ctx context.Context, ttid int, link string, download bool) (buf *bytes.Buffer, err error)
+	Adopt(ctx context.Context, name, hash string) (url string, err error)
 }
 
 type manager interface {
 	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	// SubmitMagnet больше не зовётся из runner (см. submit), метод остаётся в
-	// интерфейсе и у клиентов только ради подметальщика blackhole для старых
-	// magnet-пар, записанных прежней версией
+	// runner его больше не зовет (см. submit). Метод живет только ради чистки blackhole
+	// от magnet-пар, записанных прежней версией
 	SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
+	AttachComment(ctx context.Context, hash, comment string, fetch func(context.Context) ([]byte, error)) error
 }
 
 type storage interface {
@@ -61,6 +65,7 @@ type storage interface {
 	DeleteItem(ctx context.Context, urlHash string) error
 	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
+	ErrorMarks(ctx context.Context) (map[string]storageModel.ErrorMark, error)
 }
 
 type handler struct {
@@ -75,16 +80,25 @@ type handler struct {
 	state          *State
 	notifier       *notify.Notifier
 	gen            uint32
-	// magnetFetch добывает метаданные по магниту сам, без участия клиента
-	// загрузок; поле, а не прямой вызов magnetmeta.Fetch, чтобы тесты могли
-	// подменить его, тем же приёмом, что уже используют manager и trackerService
+	// метаданные по магниту качаем сами, без клиента загрузок. Поле, чтобы тесты могли
+	// его подменить, как уже делают с manager и trackerService
 	magnetFetch func(ctx context.Context, magnet string) (data []byte, err error)
+	// хеши, которым ссылку в комментарий уже пробовали записать в этом процессе
+	attached sync.Map
+	// хеши торрентов клиента по адресу релиза (URLHash) из последнего прогона
+	siblings atomic.Pointer[map[string][]string]
+	// хеш торрента -> retryState: его обновление не удалось, а строку истории он делит с соседями
+	retry sync.Map
 }
 
-// task несёт запись воркеру трекера. Ненулевой report значит, что запись
-// относится к холостому прогону и не должна ничего записывать.
+type retryState struct {
+	urlHash string
+	fails   int
+}
+
 type task struct {
-	entry  *model.Entry
+	entry *model.Entry
+	// не nil: холостой прогон, ничего не пишем
 	report *dryReport
 }
 
@@ -260,11 +274,13 @@ func (h *handler) initTrackerChannels() {
 }
 
 type pushPass struct {
-	dry    bool
-	forced map[string]struct{}
-	rep    *dryReport
-	items  map[string]*runnerModel.HistoryItem
-	ignore map[string]struct{}
+	dry     bool
+	forced  map[string]struct{}
+	rep     *dryReport
+	items   map[string]*runnerModel.HistoryItem
+	ignore  map[string]struct{}
+	adopted map[*model.Entry]struct{}
+	marks   map[string]storageModel.ErrorMark
 }
 
 func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}) (err error) {
@@ -279,10 +295,11 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 		defer rep.release()
 	}
 
-	rawEntries, entries, partial, err := h.collectEntries(ctx)
+	rawEntries, entries, adopted, partial, err := h.collectEntries(ctx)
 	if err != nil {
 		return err
 	}
+	h.storeSiblings(rawEntries, partial)
 
 	if !dry && forced == nil {
 		h.purgeDuplicateNames(ctx, entries)
@@ -295,21 +312,29 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 
 	var ignoreSet map[string]struct{}
 	if forced == nil {
-		// форсированный проход это явное действие пользователя над записью (кнопка "проверить сейчас"),
-		// поэтому он должен доставать и записи из списка игнора, включая автоигнорированные
+		// форс это явная кнопка "проверить сейчас", поэтому берем и записи из игнора,
+		// автоигнор тоже
 		if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
 			return err
 		}
 	}
 
+	var marks map[string]storageModel.ErrorMark
+	if !dry && forced == nil {
+		if marks, err = h.storage.ErrorMarks(ctx); err != nil {
+			logger.Warn(fmt.Sprintf("error backoff skipped: %v", err))
+			marks = nil
+		}
+	}
+
 	if err = h.enqueueEntries(ctx, entries, &pushPass{
-		dry: dry, forced: forced, rep: rep, items: items, ignore: ignoreSet,
+		dry: dry, forced: forced, rep: rep, items: items, ignore: ignoreSet, adopted: adopted, marks: marks,
 	}); err != nil {
 		return err
 	}
 
-	// форс-прогон тоже чистит: список торрентов он берёт целиком, тем же
-	// collectEntries, а пользователь жмёт кнопку как раз после удаления раздачи
+	// форс-прогон тоже чистит: список торрентов он берет целиком тем же collectEntries,
+	// а пользователь жмет кнопку как раз после удаления раздачи
 	if !dry {
 		if partial {
 			logger.Warn("history purge skipped: partial torrent list")
@@ -320,7 +345,7 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 	return nil
 }
 
-func (h *handler) collectEntries(ctx context.Context) (rawEntries, entries []*model.Entry, partial bool, err error) {
+func (h *handler) collectEntries(ctx context.Context) (rawEntries, entries []*model.Entry, adopted map[*model.Entry]struct{}, partial bool, err error) {
 	rawEntries, err = h.manager.GetEntries(ctx, model.FilterOptions{})
 	if err != nil {
 		if !errors.Is(err, model.ErrPartialList) {
@@ -331,8 +356,132 @@ func (h *handler) collectEntries(ctx context.Context) (rawEntries, entries []*mo
 		partial = true
 		err = nil
 	}
+	// те же указатели идут дальше в дедупликацию, очередь и чистку истории.
+	// Усыновляем все: чистке нужен адрес каждого
+	adopted = make(map[*model.Entry]struct{})
+	for _, e := range rawEntries {
+		if e.URL != "" {
+			continue
+		}
+		url, adoptErr := h.trackerService.Adopt(ctx, e.Name, e.Hash)
+		if adoptErr != nil {
+			logger.Warn(fmt.Sprintf("adopt %s: %v", e.Name, adoptErr))
+			partial = true
+			continue
+		}
+		e.URL = url
+		if url != "" {
+			adopted[e] = struct{}{}
+		}
+	}
 	entries = helper.DedupeEntriesByName(rawEntries)
 	return
+}
+
+func (h *handler) storeSiblings(rawEntries []*model.Entry, partial bool) {
+	byURL := make(map[string][]string)
+	present := make(map[string]struct{}, len(rawEntries))
+	for _, e := range rawEntries {
+		present[e.Hash] = struct{}{}
+		if e.URL != "" {
+			key := storagePkg.URLHash(e.URL)
+			byURL[key] = append(byURL[key], e.Hash)
+		}
+	}
+	h.siblings.Store(&byURL)
+	// в неполном списке торрента может не быть временно, его повтор не теряем
+	if partial {
+		return
+	}
+	h.retry.Range(func(hash, _ any) bool {
+		if _, ok := present[hash.(string)]; !ok {
+			h.retry.Delete(hash)
+		}
+		return true
+	})
+}
+
+func (h *handler) markRetry(ctx context.Context, e *model.Entry, cause error) {
+	if len(h.siblingHashes(e)) == 0 {
+		return
+	}
+	st := retryState{urlHash: e.URLHash, fails: 1}
+	if v, ok := h.retry.Load(e.Hash); ok {
+		st.fails = v.(retryState).fails + 1
+	}
+	// автоигнор сюда не дойдет: удачные проверки соседа сбрасывают общий
+	// error_streak строки, поэтому повторы считаем сами
+	limit := h.config.ErrorStreakThreshold
+	if limit < 1 {
+		limit = 3
+	}
+	if st.fails >= limit {
+		h.retry.Delete(e.Hash)
+		logger.Warn(fmt.Sprintf("update of %s (%s) failed %d times in a row, not retried until the topic changes again: %v",
+			e.Name, e.URL, st.fails, cause))
+		// флаг мог вернуть сосед при сохранении, без снятия повтор пойдет по кругу
+		if !h.retryPending(e.URLHash) {
+			if _, err := h.storage.SetForceCheck(ctx, e.URLHash, false); err != nil {
+				logger.Error(fmt.Sprintf("force_check clear failed: %v", err))
+			}
+		}
+		return
+	}
+	// сосед по строке истории сохранит новую дату и срок проверки и спрячет
+	// неудачное обновление этого торрента; force_check вернет его в проверку
+	h.retry.Store(e.Hash, st)
+	h.forceRow(ctx, e.URLHash)
+}
+
+func (h *handler) forceRow(ctx context.Context, urlHash string) {
+	if _, err := h.storage.SetForceCheck(ctx, urlHash, true); err != nil {
+		logger.Error(fmt.Sprintf("force_check set failed: %v", err))
+	}
+}
+
+func (h *handler) retryPending(urlHash string) (pending bool) {
+	h.retry.Range(func(_, v any) bool {
+		pending = v.(retryState).urlHash == urlHash
+		return !pending
+	})
+	return
+}
+
+func (h *handler) siblingHashes(e *model.Entry) (out []string) {
+	byURL := h.siblings.Load()
+	if byURL == nil || e.URL == "" {
+		return nil
+	}
+	for _, hash := range (*byURL)[storagePkg.URLHash(e.URL)] {
+		if hash != e.Hash {
+			out = append(out, hash)
+		}
+	}
+	return
+}
+
+func (h *handler) attachComment(ctx context.Context, e *model.Entry) {
+	if _, done := h.attached.LoadOrStore(e.Hash, struct{}{}); done {
+		return
+	}
+	hash, link := e.Hash, e.URL
+	fetch := func(ctx context.Context) ([]byte, error) {
+		id := h.trackerService.GetID(link)
+		tc, err := h.trackerService.GetCachedClient(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		b, err := h.trackerService.Response(ctx, id, tc.DownloadLink(hash), true)
+		if err != nil {
+			return nil, err
+		}
+		return b.Bytes(), nil
+	}
+	if err := h.manager.AttachComment(ctx, hash, link, fetch); err != nil {
+		logger.Warn(fmt.Sprintf("attach link to %s: %v", e.Name, err))
+		return
+	}
+	logger.Info(fmt.Sprintf("attached link to %s: %s", e.Name, link))
 }
 
 func (h *handler) purgeDuplicateNames(ctx context.Context, entries []*model.Entry) {
@@ -353,6 +502,12 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 	if p.forced != nil {
 		queue = h.pri
 	}
+	backedOff := 0
+	defer func() {
+		if backedOff > 0 {
+			logger.Info(fmt.Sprintf("%d entries in error backoff", backedOff))
+		}
+	}()
 	for i := range entries {
 		if entries[i].URL == "" {
 			continue
@@ -368,10 +523,21 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 		if len(h.config.WatchTags) > 0 && !entryMatchesWatchTags(entries[i].Tag, h.config.WatchTags) {
 			continue
 		}
+		// запись комментария трогает клиент (Transmission перезаливает торрент), поэтому
+		// только для тех, за кем следим. До проверки срока, как и раньше
+		if _, ok := p.adopted[entries[i]]; ok && !p.dry {
+			if _, ignored := p.ignore[storagePkg.URLHash(entries[i].URL)]; !ignored {
+				h.attachComment(ctx, entries[i])
+			}
+		}
 		if err = h.buildEntry(ctx, entries[i], p.dry, p.items); errors.Is(err, errSkipped) {
 			continue
 		} else if err != nil {
 			return err
+		}
+		if h.backedOff(p, entries[i]) {
+			backedOff++
+			continue
 		}
 		t := h.trackerService.GetID(entries[i].URL)
 		if t == 0 {
@@ -427,9 +593,8 @@ func (h *handler) purgeStaleHistory(ctx context.Context, allEntries []*model.Ent
 		logger.Warn("history purge skipped: no torrent URLs found")
 		return
 	}
-	// чистится вся история, а не только записи с наступившим recheck_at: торрент
-	// удалили из qBittorrent, значит следить не за чем, и ждать своей очереди
-	// такая запись может месяцами
+	// чистим всю историю, не только с наступившим recheck_at. Торрент удалили из qBittorrent,
+	// следить не за чем, а своей очереди такая запись ждала бы месяцами
 	for hash, item := range items {
 		if _, ok := present[hash]; ok {
 			continue
@@ -482,8 +647,7 @@ func (h *handler) getHistory(ctx context.Context, link string, dry bool, items m
 
 func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dryReport) (err error) {
 	var tc client.IClient
-	// блокировка на каждый трекер: записи разных трекеров обрабатываются параллельно,
-	// записи одного трекера строго друг за другом.
+	// лок на трекер: разные трекеры идут параллельно, записи одного трекера по очереди
 	mu := h.mx.Mutex(ttid)
 	mu.Lock()
 	defer mu.Unlock()
@@ -493,7 +657,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			logger.Info("processing interrupted")
 			return nil
 		}
-		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
+		h.logCheckStreak(ctx, e, ttid, "error", err.Error(), true, rep)
 		return
 	}
 	pc, err := h.checkPage(ctx, ttid, tc, e, rep)
@@ -502,11 +666,12 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			logger.Info("processing interrupted")
 			return nil
 		}
-		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
+		h.logCheckStreak(ctx, e, ttid, "error", err.Error(), isTrackerWide(err), rep)
 		return
 	}
 	if pc.dateMissing {
-		if rep == nil {
+		// флаг держит повтор неудачного обновления торрента этой строки, его не снимаем
+		if rep == nil && !h.retryPending(e.URLHash) {
 			if _, clearErr := h.storage.SetForceCheck(ctx, e.URLHash, false); clearErr != nil {
 				logger.Error(fmt.Sprintf("force_check clear failed: %v", clearErr))
 			}
@@ -528,10 +693,9 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		}
 		if errors.Is(err, model.ErrAlreadyAdded) {
 			logger.Info(fmt.Sprint("already in qbittorrent, skipped: ", e.Name))
-			// история пишется как при обычном unchanged: торрент с этим
-			// инфохешем уже стоит, значит релиз актуален. Иначе force_check
-			// остаётся взведённым, а дата в истории старой, и каждый прогон
-			// снова считает релиз обновлённым и снова упирается в already added
+			// историю пишем как при обычном unchanged: торрент с этим инфохешем уже стоит,
+			// релиз актуален. Иначе force_check останется взведенным со старой датой,
+			// и каждый прогон будет упираться в already added
 			if rep == nil {
 				if saveErr := h.saveHistory(ctx, ttid, e, pc.date); saveErr != nil {
 					h.logCheck(ctx, e, ttid, "error", saveErr.Error(), rep)
@@ -542,10 +706,8 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			return nil
 		}
 		if errors.Is(err, model.ErrHashUnchanged) {
-			// инфохеш не поменялся, торрент уже раздаётся: перезаливка не
-			// нужна, но дату обязательно фиксируем в истории, иначе на
-			// следующем прогоне снова увидим изменившуюся дату темы и
-			// снова упрёмся в этот же исход по кругу
+			// инфохеш не поменялся, торрент уже раздается, перезаливать не надо. Но дату в истории
+			// фиксируем иначе следующий прогон снова увидит новую дату темы и пойдет по кругу
 			logger.Info(fmt.Sprint("hash unchanged, torrent kept: ", e.Name))
 			if rep == nil {
 				if saveErr := h.saveHistory(ctx, ttid, e, pc.date); saveErr != nil {
@@ -553,13 +715,16 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 					return saveErr
 				}
 			}
-			// статус тот же, что у обычного unchanged: перезаливки не было,
-			// и в списке обновлённых такой записи делать нечего
+			// статус как у обычного unchanged: перезаливки не было, в списке обновленных
+			// этой записи делать нечего
 			h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 			return nil
 		}
 		err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
-		h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
+		if rep == nil {
+			h.markRetry(ctx, e, err)
+		}
+		h.logCheckStreak(ctx, e, ttid, "error", err.Error(), isTrackerWide(err), rep)
 		return
 	}
 	if rep == nil {
@@ -578,6 +743,15 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 }
 
 func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status, errMsg string, rep *dryReport) {
+	h.logCheckStreak(ctx, e, ttid, status, errMsg, false, rep)
+}
+
+func isTrackerWide(err error) bool {
+	// отказ всего трекера не вина записи: статус error пишем, серию не двигаем
+	return errors.Is(err, client.ErrTrackerUnavailable) || errors.Is(err, helper.ErrCircuitOpen) || errors.Is(err, model.ErrReplacePending)
+}
+
+func (h *handler) logCheckStreak(ctx context.Context, e *model.Entry, ttid int, status, errMsg string, keepStreak bool, rep *dryReport) {
 	if rep != nil {
 		rep.count(status)
 		verb := status
@@ -591,6 +765,10 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 		logger.Info(msg)
 		return
 	}
+	metrics.Checks.Inc(trackerLabel(ttid), status)
+	if status == "error" && !keepStreak {
+		h.notifier.Notify(notify.CheckFailedEvent(e.Name, e.URL, errMsg))
+	}
 	streak, logErr := h.storage.AddCheckLog(ctx, &storageModel.CheckLogEntry{
 		URLHash:       e.URLHash,
 		ItemName:      e.Name,
@@ -598,12 +776,13 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 		TrackerTypeID: ttid,
 		Status:        status,
 		Error:         errMsg,
+		KeepStreak:    keepStreak,
 	})
 	if logErr != nil {
 		logger.Error(fmt.Sprintf("check_log write failed: %v", logErr))
 		return
 	}
-	if status == "error" && h.config.ErrorStreakThreshold >= 1 && streak >= h.config.ErrorStreakThreshold {
+	if status == "error" && !keepStreak && h.config.ErrorStreakThreshold >= 1 && streak >= h.config.ErrorStreakThreshold {
 		if ignoreErr := h.storage.AddIgnore(ctx, e.URLHash, e.Name, e.URL); ignoreErr != nil {
 			logger.Error(fmt.Sprintf("auto-ignore failed for %s: %v", e.Name, ignoreErr))
 		} else {
@@ -630,17 +809,37 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 	if b, err = h.getPage(ctx, ttid, e.URL); err != nil {
 		return
 	}
-	downloadID = tc.ParseDownloadID(b, encoded)
+	pick := tc.PickTorrent(b, encoded, trackerModel.Held{
+		URL: e.URL, TopicID: e.TopicID, Stored: e.Update, Hash: e.Hash, Name: e.Name, Timestamp: e.Timestamp, Siblings: h.siblingHashes(e),
+	})
+	if pick.Miss != "" {
+		// как при ненайденной дате: релиз не определен, значит unknown, а не тихое "без изменений"
+		logger.Warn(fmt.Sprintf("torrent not picked for %s: %s", e.Name, pick.Miss))
+		pc.dateMissing = true
+		pc.sample = pick.Miss
+		return
+	}
+	if downloadID = pick.DownloadID; downloadID == "" {
+		downloadID = tc.ParseDownloadID(b, encoded)
+	}
 
+	// у части трекеров id вложения не равен id темы из комментария торрента. Дата
+	// от выбора трекера главнее смены id: id в общей строке истории мог записать
+	// соседний торрент того же релиза
+	if downloadID != "" && (!e.Update || pick.Date != nil) {
+		e.TopicID = downloadID
+	}
 	if e.Update && downloadID != "" && e.TopicID != downloadID {
 		e.TopicID = downloadID
 		curPtr := time.Now()
 		cur = &curPtr
-	} else if cur = tc.ParseDate(b, encoded); cur == nil {
-		logger.Warn(fmt.Sprintf("current time not found for %s", e.Name))
-		pc.dateMissing = true
-		pc.sample = pageSample(b, encoded)
-		return
+	} else if cur = pick.Date; cur == nil {
+		if cur = tc.ParseDate(b, encoded); cur == nil {
+			logger.Warn(fmt.Sprintf("current time not found for %s", e.Name))
+			pc.dateMissing = true
+			pc.sample = pageSample(b, encoded)
+			return
+		}
 	}
 	pc.changed = e.Timestamp.Before(*cur)
 	pc.date = cur
@@ -682,9 +881,8 @@ func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *mo
 		Comment:        entryTopicURL(tc, e),
 	}
 
-	// добыча метаданных по магниту идёт первой и не трогает клиент загрузок:
-	// решение "магнит не вышел, идём на трекер" обязано быть принято до того,
-	// как manager.Submit внутри себя удалит старый торрент и добавит новый
+	// магнит пробуем первым и клиент загрузок не трогаем. Решить "магнит не вышел, идем
+	// на трекер" надо до того, как manager.Submit удалит старый торрент и добавит новый
 	if e.Magnet != "" {
 		if data, buildErr := h.buildTorrentFromMagnet(ctx, e.Magnet, opts.Comment); buildErr == nil {
 			if err = h.manager.Submit(ctx, bytes.NewBuffer(data), opts); err != nil {
@@ -701,6 +899,15 @@ func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *mo
 	if err != nil {
 		return
 	}
+	// свое содержимое трекера не трогаем: ссылку пишем только в файл без
+	// комментария (AniLiberty), инфохеш от этого не меняется
+	if opts.Comment != "" {
+		if cur, cerr := torrentmeta.Comment(b.Bytes()); cerr == nil && cur == "" {
+			if withLink, serr := torrentmeta.SetComment(b.Bytes(), opts.Comment); serr == nil {
+				b = bytes.NewBuffer(withLink)
+			}
+		}
+	}
 	if err = h.manager.Submit(ctx, b, opts); err != nil {
 		err = fmt.Errorf("submit error: %w", err)
 	}
@@ -713,8 +920,8 @@ func (h *handler) buildTorrentFromMagnet(ctx context.Context, magnet, comment st
 	}
 	timeout := time.Duration(h.config.MagnetTimeout) * time.Second
 	if timeout <= 0 {
-		// ponytail: нулевой/отрицательный таймаут в конфиге не должен вешать
-		// раздачу навсегда, минута это разумный потолок по умолчанию
+		// нулевой или отрицательный таймаут в конфиге не должен вешать раздачу навсегда,
+		// берем минуту
 		timeout = time.Minute
 	}
 	fctx, cancel := context.WithTimeout(ctx, timeout)
@@ -765,6 +972,11 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur
 	}); err != nil {
 		return
 	}
+	// сохранение сбрасывает force_check, а неудачное обновление соседа еще ждет повтора
+	h.retry.Delete(e.Hash)
+	if h.retryPending(e.URLHash) {
+		h.forceRow(ctx, e.URLHash)
+	}
 	return
 }
 
@@ -798,4 +1010,11 @@ func NewRunner(tracker trackerService, manager manager, storage storage, config 
 		notifier:       notifier,
 		magnetFetch:    magnetmeta.Fetch,
 	}
+}
+
+func trackerLabel(ttid int) string {
+	if key := registry.Key(ttid); key != "" {
+		return key
+	}
+	return "unknown"
 }

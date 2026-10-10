@@ -13,6 +13,7 @@ func init() {
 		Defaults: config.TrackerItem{
 			Name:        "kinozal",
 			Domain:      "kinozal.tv",
+			Mirrors:     []string{"kinozal.me", "kinozal.guru"},
 			Publicity:   "private",
 			LoginURL:    "https://kinozal.tv/takelogin.php",
 			DownloadURL: "https://kinozal.tv/download.php?id=",

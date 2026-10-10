@@ -4,6 +4,8 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+
+	"ripperr/internal/system/logger"
 )
 
 type State struct {
@@ -23,13 +25,11 @@ func NewState() *State {
 	return &State{trigger: make(chan bool, 1), force: make(chan string, forceQueueSize)}
 }
 
-// forceQueueSize ограничивает, сколько форсированных релизов могут ждать, пока их
-// заберёт раннер; лишние отбрасываются, а не блокируют HTTP-обработчик, и
-// отброшенный релиз сохраняет флаг force_check до следующего прохода. Размер
-// рассчитан на "форсировать всё", ставящее в очередь весь отфильтрованный список разом, а не на клики.
+// лишние форсы отбрасываем, чтобы не блокировать HTTP-обработчик, флаг force_check
+// доживет до следующего прохода. Размер под "форсировать все" на весь фильтр, клики
+// столько не наберут
 const forceQueueSize = 4096
 
-// normalQueueSize ограничивает, сколько записей могут ждать в обычной очереди трекера.
 const normalQueueSize = 4096
 
 func (s *State) Running() bool {
@@ -38,7 +38,9 @@ func (s *State) Running() bool {
 
 func (s *State) Begin(gen uint32) {
 	if s != nil && gen == s.gen.Load() {
-		s.active.Add(1)
+		if s.active.Add(1) == 1 {
+			logger.Info("check pass started")
+		}
 	}
 }
 
@@ -48,8 +50,12 @@ func (s *State) End(gen uint32) {
 	}
 	// последняя запись прохода: очередь и текущие записи гасим здесь, иначе
 	// подсветка застряла бы на той, которой проход закончился
-	if s.active.Add(-1) <= 0 {
+	left := s.active.Add(-1)
+	if left <= 0 {
 		s.clearItems()
+	}
+	if left == 0 {
+		logger.Info("check pass finished")
 	}
 }
 
@@ -143,7 +149,9 @@ func (s *State) Reset() uint32 {
 		return 0
 	}
 	s.clearItems()
-	s.active.Store(0)
+	if s.active.Swap(0) != 0 {
+		logger.Info("check pass finished (reset)")
+	}
 	s.dry.Store(false)
 	s.stopping.Store(false)
 	return s.gen.Add(1)
@@ -172,9 +180,6 @@ func (s *State) DrainTrigger() {
 	}
 }
 
-// Enqueue помечает запись поставленной в очередь на проверку, Unqueue снимает
-// пометку, если поставить в очередь не удалось. Множество живёт только на время
-// прохода и нужно интерфейсу, чтобы показать, что ещё будет проверено.
 func (s *State) Enqueue(gen uint32, urlHash string) {
 	if s == nil || urlHash == "" || gen != s.gen.Load() {
 		return
@@ -196,14 +201,9 @@ func (s *State) Unqueue(gen uint32, urlHash string) {
 	delete(s.queued, urlHash)
 }
 
-// StartItem переводит запись из очереди в работу у воркера трекера ttid.
-// Прошлая запись этого трекера остаётся текущей до вызова StartItem со
-// следующей: между записями воркер выдерживает паузу лимита, и погасшая на неё
-// подсветка мигала бы вхолостую.
 func (s *State) StartItem(gen uint32, ttid int, urlHash string) {
-	// проверка поколения та же, что у Begin/End: воркер отменённого прохода
-	// может успеть взять запись уже после Reset, и без неё он подсветил бы
-	// запись, которую никто не проверяет
+	// проверка поколения как у Begin/End: воркер отмененного прохода может взять запись
+	// уже после Reset и подсветить то, что никто не проверяет
 	if s == nil || urlHash == "" || gen != s.gen.Load() {
 		return
 	}
@@ -213,6 +213,8 @@ func (s *State) StartItem(gen uint32, ttid int, urlHash string) {
 	if s.current == nil {
 		s.current = make(map[int]string)
 	}
+	// прошлая запись трекера остается текущей до следующего StartItem: между записями
+	// воркер ждет паузу лимита, и погасшая подсветка мигала бы зря
 	s.current[ttid] = urlHash
 }
 
@@ -230,15 +232,13 @@ func (s *State) CheckingItems() []string {
 	return out
 }
 
-// QueuedItems отдаёт не больше limit хешей плюс полный размер очереди: для
-// подсветки хватает того, что влезает на страницу, а по общему числу видно, длинный
-// проход впереди или одна запись.
 func (s *State) QueuedItems(limit int) (hashes []string, total int) {
 	if s == nil {
 		return nil, 0
 	}
 	s.itemsMu.Lock()
 	defer s.itemsMu.Unlock()
+	// для подсветки хватает страницы, а по total видно, длинный проход впереди или одна запись
 	total = len(s.queued)
 	if limit <= 0 {
 		return nil, total

@@ -2,6 +2,8 @@ package runner
 
 import (
 	"testing"
+
+	"ripperr/internal/system/logger"
 )
 
 func TestStateRunningCounter(t *testing.T) {
@@ -200,8 +202,8 @@ func TestStateItemQueueAndCurrent(t *testing.T) {
 		t.Fatalf("checking=%v, want [aaa]", cur)
 	}
 
-	// запись остаётся подсвеченной, пока воркер трекера не возьмёт следующую:
-	// между записями он спит паузу лимита, и гасить подсветку там не за что
+	// запись остается подсвеченной, пока воркер трекера не возьмет следующую.
+	// Между записями он спит паузу лимита, гасить подсветку там незачем
 	s.End(gen)
 	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "aaa" {
 		t.Fatalf("checking=%v after End, want [aaa]", cur)
@@ -277,5 +279,50 @@ func TestStateStartItemIgnoresStaleGeneration(t *testing.T) {
 	}
 	if _, total := s.QueuedItems(10); total != 0 {
 		t.Fatalf("queued total=%d after stale Enqueue, want 0", total)
+	}
+}
+
+func countLogged(msg string) int {
+	n := 0
+	for _, e := range logger.Snapshot(0) {
+		if e.Message == msg {
+			n++
+		}
+	}
+	return n
+}
+
+func TestStateLogsPassTransitions(t *testing.T) {
+	started0 := countLogged("check pass started")
+	finished0 := countLogged("check pass finished")
+	reset0 := countLogged("check pass finished (reset)")
+
+	s := NewState()
+	gen := s.Reset()
+	s.Begin(gen)
+	s.Begin(gen)
+	s.End(gen)
+	s.End(gen)
+	if got := countLogged("check pass started") - started0; got != 1 {
+		t.Fatalf("started lines = %d, want 1", got)
+	}
+	if got := countLogged("check pass finished") - finished0; got != 1 {
+		t.Fatalf("finished lines = %d, want 1", got)
+	}
+	if got := countLogged("check pass finished (reset)") - reset0; got != 0 {
+		t.Fatalf("reset lines after idle Reset = %d, want 0", got)
+	}
+
+	s.Begin(gen)
+	s.Reset()
+	if got := countLogged("check pass finished (reset)") - reset0; got != 1 {
+		t.Fatalf("reset lines = %d, want 1", got)
+	}
+
+	started1 := countLogged("check pass started")
+	finished1 := countLogged("check pass finished")
+	s.End(gen)
+	if countLogged("check pass started") != started1 || countLogged("check pass finished") != finished1 {
+		t.Fatal("stale End must not log")
 	}
 }

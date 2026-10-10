@@ -22,6 +22,8 @@ const TTL = time.Hour
 
 const maxStaleUses = 3
 
+var ErrMirrorUnconfirmed = errors.New("only an unconfirmed mirror answers")
+
 type db interface {
 	GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error)
 	SaveTracker(ctx context.Context, source *tracker.Tracker) (err error)
@@ -47,6 +49,8 @@ type service struct {
 	cbCfg              *helper.CircuitBreakerConfig
 	alerts             *breakeralerts.Registry
 	domainAlive        domainProbe
+	adopted            map[string]string
+	rot                mirrorRotation
 }
 
 func (s *service) GetID(link string) (id int) {
@@ -76,7 +80,10 @@ func (s *service) Response(ctx context.Context, ttid int, link string, download 
 		return
 	}
 	buf, err = s.readResponseBody(ctx, ttid, ct, link, download)
-	if err == nil || !download {
+	if !download {
+		return s.afterPage(ctx, ttid, ct, link, buf, err)
+	}
+	if err == nil {
 		return
 	}
 	name := s.handlerRegistry[ttid].GetName()
@@ -195,12 +202,19 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 		prev       *CachedTracker
 	)
 
+	// пауза главнее кеша и TTL: до ее конца в сеть не ходим, после нее домен выбираем заново
+	host, resume := s.pausedHost(id)
+	if host != "" && !resume {
+		err = pauseError(host)
+		return
+	}
+
 	s.mx.RLock()
 	ct, ok = s.clientIndex[id]
-	if ok && time.Since(ct.Created) < TTL {
+	if !resume && ok && time.Since(ct.Created) < TTL {
 		if ct.IClient == nil {
 			s.mx.RUnlock()
-			err = fmt.Errorf("tracker http error")
+			err = fmt.Errorf("%w: tracker http error", client.ErrTrackerUnavailable)
 			return
 		}
 		s.mx.RUnlock()
@@ -219,6 +233,11 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 
 func (s *service) refresh(ctx context.Context, id int, forceLogin bool, prev *CachedTracker) (ct *CachedTracker, err error) {
 	if err = s.cache(ctx, id, forceLogin); err != nil {
+		// старый клиент сидит на мертвом хосте, отдавать его в паузу нельзя
+		if errors.Is(err, ErrMirrorUnconfirmed) {
+			return nil, err
+		}
+		err = fmt.Errorf("%w: %w", client.ErrTrackerUnavailable, err)
 		name := fmt.Sprintf("%d", id)
 		if tr, ok := s.handlerRegistry[id]; ok {
 			name = tr.GetName()
@@ -271,9 +290,8 @@ func (s *service) destroyFlareSession(id int) {
 	}
 }
 
-// DestroyFlareSessions удаляет flare-сессии всех трекеров; вызывается при остановке,
-// чтобы у FlareSolverr не осталось осиротевших сессий браузера.
 func (s *service) DestroyFlareSessions() {
+	// зовется при остановке, чтобы в FlareSolverr не висели брошенные браузеры
 	for id := range s.handlerRegistry {
 		s.destroyFlareSession(id)
 	}
@@ -324,10 +342,16 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 		err = fmt.Errorf("tracker not exists")
 		return
 	}
-	active := trackerActiveDomain(tr)
+	active, paused := trackerActiveDomain(tr), ""
 	if active == "" {
-		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), s.domainAlive(tr))
+		active, paused = s.pickDomain(ctx, tid, tr)
 	}
+	if paused != "" {
+		s.setPause(tid, paused)
+		s.reportVerdict(tid, tr.GetName(), paused)
+		return pauseError(paused)
+	}
+	s.reportVerdict(tid, tr.GetName(), "")
 	if active != tr.GetDomain() {
 		logger.Info(fmt.Sprintf("tracker %s: using mirror %s", tr.GetName(), active))
 		tr = withActiveDomain(tr, active)
@@ -355,20 +379,34 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 
 func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLogin bool) (err error) {
 	var (
-		attrs      *tracker.Tracker
-		hadCookies bool
+		attrs        *tracker.Tracker
+		hadCookies   bool
+		credsChanged bool
 	)
 
 	if attrs, err = s.db.GetTracker(ctx, tid); err != nil {
 		return
 	}
 	hadCookies = attrs.Exists && len(attrs.Cookies) > 0
+	if attrs.Exists {
+		// логин берем из настроек, в БД только куки и последние рабочие данные.
+		// Пустой логин в настройках рабочий из БД не затирает
+		if cfgCreds := tc.GetCredentials(); cfgCreds != "" {
+			credsChanged = attrs.Credentials != cfgCreds
+			attrs.Credentials = cfgCreds
+		}
+		attrs.Publicity = tc.GetPublicity()
+		forceLogin = forceLogin || credsChanged
+	}
 	if err = tc.InitClient(ctx, attrs, forceLogin); err != nil {
 		return
 	}
 	if attrs.Exists {
-		if len(tc.Cookies()) > 0 && (forceLogin || !hadCookies || helper.CookiesString(attrs.Cookies) != helper.CookiesString(tc.Cookies())) {
-			attrs.Cookies = tc.Cookies()
+		cookiesStale := len(tc.Cookies()) > 0 && (forceLogin || !hadCookies || helper.CookiesString(attrs.Cookies) != helper.CookiesString(tc.Cookies()))
+		if credsChanged || cookiesStale {
+			if len(tc.Cookies()) > 0 {
+				attrs.Cookies = tc.Cookies()
+			}
 			attrs.Exists = true
 			if err = s.db.SaveTracker(ctx, attrs); err != nil {
 				return
@@ -413,4 +451,40 @@ func (s *service) newBreaker(name string) *helper.CircuitBreaker {
 	cb.TrackerName = name
 	cb.Alerts = s.alerts
 	return cb
+}
+
+func (s *service) Adopt(ctx context.Context, name, hash string) (url string, err error) {
+	s.mx.RLock()
+	url, ok := s.adopted[hash]
+	s.mx.RUnlock()
+	if ok {
+		return
+	}
+	for id, tr := range s.handlerRegistry {
+		lookup := tr.AdoptLookup(name, hash)
+		if lookup == "" {
+			continue
+		}
+		var buf *bytes.Buffer
+		if buf, err = s.Response(client.WithNotFoundAnswer(ctx), id, lookup, false); err != nil {
+			var se *client.StatusError
+			// сеть, 5xx и таймаут не запоминаем, повторим на следующем проходе
+			if !errors.As(err, &se) || se.Code != http.StatusNotFound {
+				return "", fmt.Errorf("%s: adopt lookup: %w", tr.GetName(), err)
+			}
+			err = nil
+		} else {
+			url = tr.AdoptURL(buf)
+		}
+		// 404 и ответ без релиза значат, что хеш трекеру незнаком. Промах помним
+		// пустым адресом, чистке истории он не мешает
+		s.mx.Lock()
+		if s.adopted == nil {
+			s.adopted = make(map[string]string)
+		}
+		s.adopted[hash] = url
+		s.mx.Unlock()
+		return
+	}
+	return
 }

@@ -3,10 +3,13 @@ package tracker
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"ripperr/internal/helper"
 	proxyModel "ripperr/internal/model/proxy"
@@ -14,48 +17,109 @@ import (
 	"ripperr/internal/tracker/client"
 )
 
-const domainProbeTimeout = 5 * time.Second
+const (
+	domainProbeTimeout = 5 * time.Second
+	probeBodyLimit     = 64 << 10
+)
 
 type domainAliveFunc func(ctx context.Context, domain string) bool
 
 type domainProbe func(tr client.ITracker) domainAliveFunc
 
-// проба зеркал идёт тем же клиентом, что и страницы трекера: своим она пошла бы
-// мимо прокси и признала мёртвым домен, закрытый только для прямого доступа
+type hostCheckFunc func(ctx context.Context, host string) (alive bool, location string)
+
 func domainAliveWith(hc *http.Client) domainAliveFunc {
-	// копия без банки кук: проба ходит по зеркалам, и Set-Cookie чужого домена не
-	// должен оседать там же, где живёт залогиненная сессия трекера
-	probe := *hc
-	probe.Jar = nil
+	check := hostCheckWith(hc)
 	return func(ctx context.Context, domain string) bool {
-		ctx, cancel := context.WithTimeout(ctx, domainProbeTimeout)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+domain, nil)
-		if err != nil {
-			return false
-		}
-		resp, err := probe.Do(req)
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return true
+		alive, _ := check(ctx, domain)
+		return alive
 	}
 }
 
-// у flare-трекера страницу тянет FlareSolverr со своим выходом в сеть, а не наш прокси:
-// пробу такого домена шлём напрямую, иначе прокси признаёт живым домен, на котором
-// FlareSolverr валится на каждом запросе, а до зеркал дело уже не доходит
-func domainProbeWith(hc *http.Client) domainProbe {
-	proxied := domainAliveWith(hc)
+func hostCheckWith(hc *http.Client) hostCheckFunc {
+	// клиент трекерный: свой пошел бы мимо прокси и похоронил домен, закрытый только
+	// для прямого доступа. Банку кук убираем, чтобы Set-Cookie с зеркал не смешивался
+	// с залогиненой сессией
+	probe := *hc
+	probe.Jar = nil
+	return func(ctx context.Context, domain string) (bool, string) {
+		ctx, cancel := context.WithTimeout(ctx, domainProbeTimeout)
+		defer cancel()
+		base := "https://" + domain
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base, nil)
+		if err != nil {
+			return false, ""
+		}
+		resp, err := probe.Do(req)
+		if err != nil {
+			return false, ""
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode >= 500 {
+			return false, ""
+		}
+		// 403 и 3xx считаем живыми. Капчу и челлендж отдает рабочий сайт, flare-трекеры их пройдут
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return true, redirectHost(base, resp)
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, probeBodyLimit))
+		return err == nil && !blankPage(body), ""
+	}
+}
+
+func redirectHost(base string, resp *http.Response) string {
+	loc := resp.Header.Get("Location")
+	if loc == "" || resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return ""
+	}
+	b, err := url.Parse(base + "/")
+	if err != nil {
+		return ""
+	}
+	u, err := b.Parse(loc)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+func HostChecker(hc *http.Client) func(ctx context.Context, host string, proxyType int) (alive bool, location string) {
+	proxied := hostCheckWith(hc)
+	// flare-трекер ходит через FlareSolverr: пробу шлем напрямую, через прокси домен казался бы живым
 	direct := *hc
 	direct.Transport = helper.DirectTransport()
-	viaFlare := domainAliveWith(&direct)
-	return func(tr client.ITracker) domainAliveFunc {
-		if tr.GetProxyType() == proxyModel.TypeFlare {
-			return viaFlare
+	viaFlare := hostCheckWith(&direct)
+	return func(ctx context.Context, host string, proxyType int) (bool, string) {
+		if proxyModel.ProxyType(proxyType) == proxyModel.TypeFlare {
+			return viaFlare(ctx, host)
 		}
-		return proxied
+		return proxied(ctx, host)
+	}
+}
+
+func blankPage(b []byte) bool {
+	inTag := false
+	for _, c := range b {
+		switch {
+		case c == '<':
+			inTag = true
+		case c == '>':
+			inTag = false
+		case !inTag && !unicode.IsSpace(rune(c)):
+			return false
+		}
+	}
+	return true
+}
+
+func domainProbeWith(hc *http.Client) domainProbe {
+	check := HostChecker(hc)
+	return func(tr client.ITracker) domainAliveFunc {
+		proxyType := int(tr.GetProxyType())
+		return func(ctx context.Context, domain string) bool {
+			alive, _ := check(ctx, domain, proxyType)
+			return alive
+		}
 	}
 }
 
@@ -63,22 +127,50 @@ func selectActiveDomain(ctx context.Context, primary string, mirrors []string, a
 	if len(mirrors) == 0 {
 		return primary
 	}
+	d, _ := answeringDomain(ctx, primary, mirrors, alive)
+	return d
+}
+
+func answeringDomain(ctx context.Context, primary string, mirrors []string, alive domainAliveFunc) (string, bool) {
 	if alive(ctx, primary) {
-		return primary
+		return primary, true
 	}
-	for _, m := range mirrors {
-		if m == "" {
+	if d := firstAnswering(ctx, mirrors, alive, ""); d != "" {
+		return d, true
+	}
+	return primary, false
+}
+
+func firstAnswering(ctx context.Context, hosts []string, alive domainAliveFunc, skip string) string {
+	for _, h := range hosts {
+		if h == "" || h == skip {
 			continue
 		}
-		if alive(ctx, m) {
-			return m
+		if alive(ctx, h) {
+			return h
 		}
 	}
-	return primary
+	return ""
+}
+
+func guardedDomain(ctx context.Context, tr client.ITracker, alive domainAliveFunc) (domain, paused string) {
+	confirmed, unconfirmed := confirmedMirrors(tr)
+	if len(unconfirmed) == 0 {
+		return selectActiveDomain(ctx, tr.GetDomain(), confirmed, alive), ""
+	}
+	domain, ok := answeringDomain(ctx, tr.GetDomain(), confirmed, alive)
+	if !ok {
+		paused = firstAnswering(ctx, unconfirmed, alive, "")
+	}
+	return domain, paused
 }
 
 type mirrorProvider interface {
 	GetMirrors() []string
+}
+
+type unconfirmedProvider interface {
+	GetUnconfirmed() []string
 }
 
 type activeDomainProvider interface {
@@ -92,6 +184,25 @@ func trackerMirrors(tr client.ITracker) []string {
 	return nil
 }
 
+func confirmedMirrors(tr client.ITracker) (confirmed, unconfirmed []string) {
+	mirrors := trackerMirrors(tr)
+	p, ok := tr.(unconfirmedProvider)
+	if !ok || len(p.GetUnconfirmed()) == 0 {
+		return mirrors, nil
+	}
+	pending := p.GetUnconfirmed()
+	for _, m := range mirrors {
+		if slices.ContainsFunc(pending, func(u string) bool {
+			return strings.EqualFold(strings.TrimSpace(u), strings.TrimSpace(m))
+		}) {
+			unconfirmed = append(unconfirmed, m)
+		} else {
+			confirmed = append(confirmed, m)
+		}
+	}
+	return confirmed, unconfirmed
+}
+
 func trackerActiveDomain(tr client.ITracker) string {
 	if p, ok := tr.(activeDomainProvider); ok {
 		return strings.TrimSpace(p.GetActiveDomain())
@@ -101,17 +212,16 @@ func trackerActiveDomain(tr client.ITracker) string {
 
 type domainOverride struct {
 	client.ITracker
-	domain      string
-	host        string
-	loginURL    string
-	downloadURL string
+	domain   string
+	host     string
+	loginURL string
 }
 
 func (d *domainOverride) GetDomain() string { return d.domain }
 func (d *domainOverride) GetHost() string   { return d.host }
 func (d *domainOverride) LoginLink() string { return d.loginURL }
 func (d *domainOverride) DownloadLink(id string) string {
-	return d.downloadURL + id
+	return trackerModel.ReplaceURLHost(d.ITracker.DownloadLink(id), d.domain)
 }
 
 func (d *domainOverride) PrimaryDomain() string { return d.ITracker.GetDomain() }
@@ -139,19 +249,16 @@ func withActiveDomain(tr client.ITracker, domain string) client.ITracker {
 		return tr
 	}
 	return &domainOverride{
-		ITracker:    tr,
-		domain:      domain,
-		host:        "https://" + domain,
-		loginURL:    trackerModel.ReplaceURLHost(tr.LoginLink(), domain),
-		downloadURL: trackerModel.ReplaceURLHost(tr.DownloadLink(""), domain),
+		ITracker: tr,
+		domain:   domain,
+		host:     "https://" + domain,
+		loginURL: trackerModel.ReplaceURLHost(tr.LoginLink(), domain),
 	}
 }
 
-// адрес постера трекеры вида kinozal собирают из своего домена, а он у клиента
-// подменён на живое зеркало: без подмены ссылка ведёт на домен, который и был
-// признан недоступным
 func (d *domainOverride) ParsePoster(b *bytes.Buffer, encoded bool) string {
 	poster := d.ITracker.ParsePoster(b, encoded)
+	// kinozal и похожие собирают адрес постера из своего домена, а он мертвый, раз мы на зеркале
 	u, err := url.Parse(poster)
 	if err != nil || u.Host != d.ITracker.GetDomain() {
 		return poster

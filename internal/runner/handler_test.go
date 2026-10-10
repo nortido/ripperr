@@ -3,11 +3,14 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 
 	"ripperr/internal/helper"
+	"ripperr/internal/metrics"
 	"ripperr/internal/model"
 	proxyModel "ripperr/internal/model/proxy"
 	runnerModel "ripperr/internal/model/runner"
@@ -23,6 +27,7 @@ import (
 	"ripperr/internal/notify"
 	storagePkg "ripperr/internal/storage"
 	"ripperr/internal/tracker/client"
+	"ripperr/internal/tracker/registry"
 )
 
 func timePtr(t time.Time) *time.Time { return &t }
@@ -33,6 +38,8 @@ type fakeStorage struct {
 	deleted     []string
 	checkStreak int
 	ignoreCalls []string
+	marks       map[string]storageModel.ErrorMark
+	marksErr    error
 }
 
 func (f *fakeStorage) SaveItem(context.Context, *runnerModel.HistoryItem) error { return nil }
@@ -84,6 +91,7 @@ type fakeManager struct {
 	allErr          error
 	partialList     bool
 	getEntriesCalls int
+	attached        []string
 }
 
 func (f *fakeManager) GetEntries(_ context.Context, _ model.FilterOptions) ([]*model.Entry, error) {
@@ -125,6 +133,7 @@ func (f *fakeTracker) GetCachedClient(context.Context, int) (client.IClient, err
 func (f *fakeTracker) Response(context.Context, int, string, bool) (*bytes.Buffer, error) {
 	return nil, nil
 }
+func (f *fakeTracker) Adopt(context.Context, string, string) (string, error) { return "", nil }
 
 func TestEntryMatchesWatchTags(t *testing.T) {
 	cases := []struct {
@@ -611,6 +620,9 @@ func (f *safeFakeTracker) GetCachedClient(context.Context, int) (client.IClient,
 func (f *safeFakeTracker) Response(context.Context, int, string, bool) (*bytes.Buffer, error) {
 	return nil, nil
 }
+func (f *safeFakeTracker) Adopt(context.Context, string, string) (string, error) {
+	return "", nil
+}
 
 func TestRunConsumeRestartStartsPush(t *testing.T) {
 	state := NewState()
@@ -722,24 +734,30 @@ func (l *loggingStorage) SaveItem(_ context.Context, item *runnerModel.HistoryIt
 
 type mockPageClient struct{}
 
-func (mockPageClient) GetName() string                                          { return "mock" }
-func (mockPageClient) GetDomain() string                                        { return "mock" }
-func (mockPageClient) GetHost() string                                          { return "mock" }
-func (mockPageClient) GetProxyType() proxyModel.ProxyType                       { return proxyModel.TypeNone }
-func (mockPageClient) GetPublicity() string                                     { return "" }
-func (mockPageClient) GetHourLimit() int                                        { return 1 }
-func (mockPageClient) GetCookies() []*http.Cookie                               { return nil }
-func (mockPageClient) GetCredentials() string                                   { return "" }
-func (mockPageClient) GetMirrors() []string                                     { return nil }
-func (mockPageClient) LoginLink() string                                        { return "" }
-func (mockPageClient) DownloadLink(string) string                               { return "" }
-func (mockPageClient) TopicLink(string) string                                  { return "" }
-func (mockPageClient) Detect(string) bool                                       { return true }
-func (mockPageClient) Headers() *http.Header                                    { return &http.Header{} }
-func (mockPageClient) ParseDate(*bytes.Buffer, bool) *time.Time                 { return nil }
-func (mockPageClient) ParseDownloadID(*bytes.Buffer, bool) string               { return "" }
-func (mockPageClient) ParsePoster(*bytes.Buffer, bool) string                   { return "" }
-func (mockPageClient) ParseMagnet(*bytes.Buffer, bool) string                   { return "" }
+func (mockPageClient) GetName() string                            { return "mock" }
+func (mockPageClient) GetDomain() string                          { return "mock" }
+func (mockPageClient) GetHost() string                            { return "mock" }
+func (mockPageClient) GetProxyType() proxyModel.ProxyType         { return proxyModel.TypeNone }
+func (mockPageClient) GetPublicity() string                       { return "" }
+func (mockPageClient) GetHourLimit() int                          { return 1 }
+func (mockPageClient) GetCookies() []*http.Cookie                 { return nil }
+func (mockPageClient) GetCredentials() string                     { return "" }
+func (mockPageClient) GetMirrors() []string                       { return nil }
+func (mockPageClient) LoginLink() string                          { return "" }
+func (mockPageClient) DownloadLink(string) string                 { return "" }
+func (mockPageClient) TopicLink(string) string                    { return "" }
+func (mockPageClient) Detect(string) bool                         { return true }
+func (mockPageClient) Headers() *http.Header                      { return &http.Header{} }
+func (mockPageClient) ParseDate(*bytes.Buffer, bool) *time.Time   { return nil }
+func (mockPageClient) ParseDownloadID(*bytes.Buffer, bool) string { return "" }
+func (mockPageClient) ParsePoster(*bytes.Buffer, bool) string     { return "" }
+func (mockPageClient) ParseMagnet(*bytes.Buffer, bool) string     { return "" }
+func (mockPageClient) PickTorrent(*bytes.Buffer, bool, tracker.Held) tracker.Pick {
+	return tracker.Pick{}
+}
+func (mockPageClient) AdoptLookup(string, string) string                        { return "" }
+func (mockPageClient) AdoptURL(*bytes.Buffer) string                            { return "" }
+func (mockPageClient) PageLink(link string) string                              { return link }
 func (mockPageClient) Cookies() []*http.Cookie                                  { return nil }
 func (mockPageClient) InitClient(context.Context, *tracker.Tracker, bool) error { return nil }
 func (mockPageClient) GetResponse(context.Context, string, bool) (*http.Response, error) {
@@ -973,8 +991,8 @@ type errAlreadyAddedManager struct {
 }
 
 func (m *errAlreadyAddedManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
-	// submit больше не зовёт SubmitMagnet вовсе, а h.magnetFetch в этом тесте
-	// не задан, поэтому запись реально уходит файловым путём через Submit
+	// submit SubmitMagnet уже не зовет, а h.magnetFetch тут не задан,
+	// так что запись уходит файлом через Submit
 	return fmt.Errorf("%w: test", model.ErrAlreadyAdded)
 }
 
@@ -1020,9 +1038,8 @@ func (m *errHashUnchangedManager) Submit(context.Context, *bytes.Buffer, model.M
 }
 
 func TestWorkerSavesHistoryOnHashUnchangedWithoutErrorStreak(t *testing.T) {
-	// сентинел ErrHashUnchanged из Submit это нормальный исход, а не ошибка:
-	// история обязана сохраниться с новой датой, иначе следующий прогон снова
-	// увидит изменившуюся дату темы и снова упрётся в тот же исход по кругу
+	// ErrHashUnchanged из Submit это нормальный исход. История должна сохраниться с новой
+	// датой, иначе следующий прогон снова увидит новую дату темы и пойдет по кругу
 	page := bytes.NewBufferString(strings.Repeat("x", 60))
 	store := &loggingStorage{}
 	old := time.Now().Add(-48 * time.Hour)
@@ -1090,15 +1107,13 @@ func (m *submitTrackingManager) Submit(context.Context, *bytes.Buffer, model.Man
 	return nil
 }
 
-// magnetTrackingManager различает, каким путём ушла раздача (Submit файлом с
-// уже собранными байтами или ветка SubmitMagnet, которую submit теперь вовсе
-// не зовёт) и запоминает переданные Submit байты, чтобы тест мог проверить
-// комментарий внутри них.
 type magnetTrackingManager struct {
 	fakeManager
-	submitCalled       bool
+	submitCalled bool
+	// submit SubmitMagnet больше не зовет, флаг ловит возврат старого пути
 	submitMagnetCalled bool
-	lastSubmitData     []byte
+	// по этим байтам проверяем комментарий
+	lastSubmitData []byte
 }
 
 func (m *magnetTrackingManager) Submit(_ context.Context, buf *bytes.Buffer, _ model.ManagerAddFileOptions) error {
@@ -1135,8 +1150,8 @@ func TestSubmit_MagnetMetadataSuccessUsesFileSubmitWithComment(t *testing.T) {
 		manager: mgr,
 		config:  model.HandlerConfig{MagnetTimeout: 5},
 		magnetFetch: func(context.Context, string) ([]byte, error) {
-			// комментарий здесь не тот, что должен оказаться в файле после submit:
-			// его подставляет torrentmeta.SetComment внутри buildTorrentFromMagnet
+			// комментарий тут сырой, в файл его потом ставит torrentmeta.SetComment
+			// внутри buildTorrentFromMagnet
 			return buildTestTorrentBytes(t, "raw"), nil
 		},
 	}
@@ -1423,11 +1438,10 @@ func TestPushDryRunLimitsAndSkipsWrites(t *testing.T) {
 	}
 }
 
-// barrierTracker держит каждый Response, пока их не окажется два одновременно.
-// При блокировке на трекер два воркера встречаются на барьере; при одной глобальной
-// блокировке второй не заходит вовсе и тест падает по таймауту.
 type barrierTracker struct {
 	safeFakeTracker
+	// с локом на трекер два воркера встретятся на барьере. С одним глобальным локом
+	// второй не войдет, и тест упадет по таймауту
 	arrive  chan struct{}
 	proceed chan struct{}
 }
@@ -1591,8 +1605,8 @@ func TestWorkerSavesHistoryOnAlreadyAdded(t *testing.T) {
 	if err := h.worker(context.Background(), 1, e, nil); err != nil {
 		t.Fatal(err)
 	}
-	// без записи истории force_check остаётся взведённым, а запись каждый прогон
-	// снова считается обновлённой и снова упирается в already added
+	// без записи истории force_check остается взведенным, и каждый прогон снова
+	// считает запись обновленной и упирается в already added
 	if len(store.saved) != 1 {
 		t.Fatalf("saved = %d, want 1", len(store.saved))
 	}
@@ -1601,10 +1615,9 @@ func TestWorkerSavesHistoryOnAlreadyAdded(t *testing.T) {
 	}
 }
 
-// notifyProbe ловит вебхук вместо телеграма: транспорт не важен, важно, ушло
-// уведомление или нет
 func notifyProbe(t *testing.T) (*notify.Notifier, <-chan struct{}) {
 	t.Helper()
+	// транспорт не важен, смотрим только, ушло ли уведомление
 	hits := make(chan struct{}, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -1631,14 +1644,13 @@ func hashUnchangedHandler(t *testing.T, mgr manager, n *notify.Notifier) (*handl
 	return h, &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc", Timestamp: &old}
 }
 
-// инфохеш не поменялся, торрент оставили на месте: перезаливки не было, значит
-// и сообщать пользователю не о чем, хотя в check_log исход и пишется как updated
 func TestWorkerHashUnchangedDoesNotNotify(t *testing.T) {
 	n, hits := notifyProbe(t)
 	h, e := hashUnchangedHandler(t, &errHashUnchangedManager{}, n)
 	if err := h.worker(context.Background(), 1, e, nil); err != nil {
 		t.Fatal(err)
 	}
+	// в check_log исход пишется как updated, но перезаливки не было, сообщать не о чем
 	select {
 	case <-hits:
 		t.Fatal("уведомление ушло, хотя торрент не перезаливался")
@@ -1646,9 +1658,8 @@ func TestWorkerHashUnchangedDoesNotNotify(t *testing.T) {
 	}
 }
 
-// контрольная половина: та же связка с настоящей перезаливкой обязана уведомить,
-// иначе первый тест зелёный просто потому, что транспорт не работает
 func TestWorkerRealUpdateNotifies(t *testing.T) {
+	// контроль: без него тест выше был бы зеленым и при сломанном транспорте
 	n, hits := notifyProbe(t)
 	h, e := hashUnchangedHandler(t, &fakeManager{}, n)
 	if err := h.worker(context.Background(), 1, e, nil); err != nil {
@@ -1658,5 +1669,764 @@ func TestWorkerRealUpdateNotifies(t *testing.T) {
 	case <-hits:
 	case <-time.After(5 * time.Second):
 		t.Fatal("уведомление о перезаливке не ушло")
+	}
+}
+
+type downloadIDPageClient struct {
+	mockPageClient
+	date time.Time
+}
+
+func (c downloadIDPageClient) ParseDate(*bytes.Buffer, bool) *time.Time { return &c.date }
+func (downloadIDPageClient) ParseDownloadID(*bytes.Buffer, bool) string { return "715427" }
+func (downloadIDPageClient) DownloadLink(id string) string {
+	return "https://nnm.example/download.php?id=" + id
+}
+
+type downloadIDTracker struct {
+	pageTracker
+	date  time.Time
+	links []string
+	flags []bool
+}
+
+func (p *downloadIDTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	return downloadIDPageClient{date: p.date}, nil
+}
+
+func (p *downloadIDTracker) Response(_ context.Context, _ int, link string, download bool) (*bytes.Buffer, error) {
+	p.links = append(p.links, link)
+	p.flags = append(p.flags, download)
+	if download {
+		return bytes.NewBufferString("torrent"), nil
+	}
+	return p.page, nil
+}
+
+func newDownloadIDHandler(date time.Time) (*handler, *loggingStorage, *downloadIDTracker) {
+	store := &loggingStorage{}
+	tr := &downloadIDTracker{
+		pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: bytes.NewBufferString(strings.Repeat("x", 60))},
+		date:        date,
+	}
+	h := &handler{
+		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:        store,
+		manager:        &fakeManager{},
+		trackerService: tr,
+		mx:             helper.KeyedMutex{},
+	}
+	return h, store, tr
+}
+
+func TestWorkerFirstSeenDownloadsByPageDownloadID(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	h, store, tr := newDownloadIDHandler(time.Now())
+	e := &model.Entry{URL: "https://nnm.example/t/830137", Name: "test", URLHash: "abc", TopicID: "830137", Timestamp: &old}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.links) != 2 || !tr.flags[1] || tr.links[1] != "https://nnm.example/download.php?id=715427" {
+		t.Fatalf("links = %v flags = %v, want download by id=715427", tr.links, tr.flags)
+	}
+	if len(store.saved) != 1 || store.saved[0].TopicID != "715427" {
+		t.Fatalf("saved = %+v, want one item with TopicID 715427", store.saved)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "updated" {
+		t.Fatalf("logs = %+v, want one updated", store.logs)
+	}
+}
+
+func TestWorkerFirstSeenUnchangedKeepsPageDownloadID(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	h, store, tr := newDownloadIDHandler(time.Now().Add(-72 * time.Hour))
+	e := &model.Entry{URL: "https://nnm.example/t/830137", Name: "test", URLHash: "abc", TopicID: "830137", Timestamp: &old}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.links) != 1 || tr.flags[0] {
+		t.Fatalf("links = %v flags = %v, want only the page fetch", tr.links, tr.flags)
+	}
+	if len(store.saved) != 1 || store.saved[0].TopicID != "715427" {
+		t.Fatalf("saved = %+v, want one item with TopicID 715427", store.saved)
+	}
+}
+
+type failingPageTracker struct {
+	pageTracker
+	getErr  error
+	respErr error
+}
+
+func (p *failingPageTracker) GetCachedClient(ctx context.Context, ttid int) (client.IClient, error) {
+	if p.getErr != nil {
+		return nil, p.getErr
+	}
+	return p.pageTracker.GetCachedClient(ctx, ttid)
+}
+
+func (p *failingPageTracker) Response(context.Context, int, string, bool) (*bytes.Buffer, error) {
+	return nil, p.respErr
+}
+
+func runFailingWorker(t *testing.T, tr *failingPageTracker) *loggingStorage {
+	t.Helper()
+	store := &loggingStorage{fakeStorage: fakeStorage{checkStreak: 5}}
+	tr.safeFakeTracker = safeFakeTracker{id: 1}
+	h := &handler{
+		config:         model.HandlerConfig{ErrorStreakThreshold: 3, ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:        store,
+		trackerService: tr,
+		mx:             helper.KeyedMutex{},
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
+	_ = h.worker(context.Background(), 1, e, nil)
+	return store
+}
+
+func TestWorkerTrackerWideErrorKeepsStreak(t *testing.T) {
+	cases := map[string]*failingPageTracker{
+		"get cached client": {getErr: errors.New("test skip")},
+		"circuit open":      {respErr: fmt.Errorf("mock error: %w", helper.ErrCircuitOpen)},
+		"unavailable":       {respErr: fmt.Errorf("%w: login failed", client.ErrTrackerUnavailable)},
+	}
+	for name, tr := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := runFailingWorker(t, tr)
+			if len(store.logs) != 1 || store.logs[0].Status != "error" || !store.logs[0].KeepStreak {
+				t.Fatalf("logs = %+v, want one error with KeepStreak", store.logs)
+			}
+			if len(store.ignoreCalls) != 0 {
+				t.Fatalf("ignoreCalls = %v, want none", store.ignoreCalls)
+			}
+		})
+	}
+}
+
+func TestWorkerPerItemErrorCountsStreak(t *testing.T) {
+	store := runFailingWorker(t, &failingPageTracker{respErr: errors.New("mock: unexpected status code 404")})
+	if len(store.logs) != 1 || store.logs[0].Status != "error" || store.logs[0].KeepStreak {
+		t.Fatalf("logs = %+v, want one error without KeepStreak", store.logs)
+	}
+	if len(store.ignoreCalls) != 1 || store.ignoreCalls[0] != "abc" {
+		t.Fatalf("ignoreCalls = %v, want [abc]", store.ignoreCalls)
+	}
+}
+
+type errReplacePendingManager struct {
+	fakeManager
+}
+
+func (m *errReplacePendingManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
+	return fmt.Errorf("submit error: %w", model.ErrReplacePending)
+}
+
+func TestWorkerReplacePendingKeepsStreak(t *testing.T) {
+	// незаконченная замена не вина записи: пока пару не разберет подметальщик,
+	// пишем error без истории, но в автоигнор не уводим
+	store := &loggingStorage{fakeStorage: fakeStorage{checkStreak: 5}}
+	old := time.Now().Add(-48 * time.Hour)
+	h := &handler{
+		config:  model.HandlerConfig{ErrorStreakThreshold: 3, ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage: store,
+		manager: &errReplacePendingManager{},
+		trackerService: &updatingPageTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: bytes.NewBufferString(strings.Repeat("x", 60))},
+		},
+		mx: helper.KeyedMutex{},
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc", Timestamp: &old}
+	_ = h.worker(context.Background(), 1, e, nil)
+	if len(store.logs) != 1 || store.logs[0].Status != "error" || !store.logs[0].KeepStreak {
+		t.Fatalf("logs = %+v, want one error with KeepStreak", store.logs)
+	}
+	if len(store.ignoreCalls) != 0 || len(store.saved) != 0 {
+		t.Fatalf("ignoreCalls = %v, saved = %d, want none", store.ignoreCalls, len(store.saved))
+	}
+}
+
+type pickPageClient struct {
+	mockPageClient
+	pick tracker.Pick
+	held *tracker.Held
+}
+
+func (c pickPageClient) PickTorrent(_ *bytes.Buffer, _ bool, held tracker.Held) tracker.Pick {
+	if c.held != nil {
+		*c.held = held
+	}
+	return c.pick
+}
+
+func (pickPageClient) DownloadLink(id string) string { return "https://pick.example/dl/" + id }
+
+type pickTracker struct {
+	downloadIDTracker
+	client pickPageClient
+}
+
+func (p *pickTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	return p.client, nil
+}
+
+func newPickHandler(c pickPageClient) (*handler, *loggingStorage, *pickTracker) {
+	store := &loggingStorage{}
+	tr := &pickTracker{
+		downloadIDTracker: downloadIDTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: bytes.NewBufferString(strings.Repeat("x", 60))},
+		},
+		client: c,
+	}
+	h := &handler{
+		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:        store,
+		manager:        &fakeManager{},
+		trackerService: tr,
+		mx:             helper.KeyedMutex{},
+	}
+	return h, store, tr
+}
+
+func TestWorkerPickOverridesDownloadIDAndDate(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	d := time.Now().Add(-time.Hour)
+	const id = "45155|f|1 GB"
+	h, store, tr := newPickHandler(pickPageClient{pick: tracker.Pick{DownloadID: id, Date: &d}})
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: id, Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.links) != 2 || !tr.flags[1] || tr.links[1] != "https://pick.example/dl/"+id {
+		t.Fatalf("links = %v flags = %v, want download by %q", tr.links, tr.flags, id)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "updated" {
+		t.Fatalf("logs = %+v, want one updated", store.logs)
+	}
+}
+
+func TestWorkerPickMissIsUnknown(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	h, store, tr := newPickHandler(pickPageClient{pick: tracker.Pick{Miss: "2 torrents"}})
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "unknown" || store.logs[0].Error != "2 torrents" {
+		t.Fatalf("logs = %+v, want one unknown with the miss text", store.logs)
+	}
+	if len(tr.links) != 1 || tr.flags[0] {
+		t.Fatalf("links = %v flags = %v, want only the page fetch", tr.links, tr.flags)
+	}
+	if len(store.saved) != 0 {
+		t.Fatalf("saved = %+v, want none", store.saved)
+	}
+}
+
+func TestWorkerPickGetsHeld(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	var got tracker.Held
+	h, _, _ := newPickHandler(pickPageClient{pick: tracker.Pick{Miss: "m"}, held: &got})
+	e := &model.Entry{URL: "https://pick.example/t/7", Name: "held name", Hash: "abcdef", URLHash: "abc", TopicID: "7", Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got.URL != e.URL || got.TopicID != "7" || !got.Stored || got.Hash != "abcdef" || got.Name != "held name" {
+		t.Fatalf("held = %+v", got)
+	}
+	if got.Timestamp == nil || !got.Timestamp.Equal(old) {
+		t.Fatalf("held.Timestamp = %v, want %v", got.Timestamp, old)
+	}
+}
+
+func TestWorkerPickDateEqualTimestampIsUnchanged(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	same := old
+	h, store, tr := newPickHandler(pickPageClient{pick: tracker.Pick{Date: &same}})
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "unchanged" {
+		t.Fatalf("logs = %+v, want one unchanged", store.logs)
+	}
+	if len(tr.links) != 1 || tr.flags[0] {
+		t.Fatalf("links = %v flags = %v, want no download", tr.links, tr.flags)
+	}
+	if len(store.saved) != 1 || store.saved[0].CreatedAt == nil || !store.saved[0].CreatedAt.Equal(old) {
+		t.Fatalf("saved = %+v, want one item dated %v", store.saved, old)
+	}
+}
+
+type adoptTracker struct {
+	fakeTracker
+	url   string
+	err   error
+	calls []string
+}
+
+func (a *adoptTracker) Adopt(_ context.Context, name, hash string) (string, error) {
+	a.calls = append(a.calls, name+"|"+hash)
+	return a.url, a.err
+}
+
+func submitPageBytes(t *testing.T, comment, entryURL string) (sent, orig []byte) {
+	t.Helper()
+	orig = buildTestTorrentBytes(t, comment)
+	mgr := &magnetTrackingManager{}
+	h := &handler{
+		manager:        mgr,
+		trackerService: &pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: bytes.NewBuffer(append([]byte(nil), orig...))},
+	}
+	e := &model.Entry{Name: "test", URL: entryURL, TopicID: "123"}
+	if err := h.submit(context.Background(), 1, mockPageClient{}, e, nil); err != nil {
+		t.Fatalf("submit err = %v", err)
+	}
+	if !mgr.submitCalled {
+		t.Fatal("expected Submit to be called")
+	}
+	return mgr.lastSubmitData, orig
+}
+
+func TestSubmitDownloadAddsMissingComment(t *testing.T) {
+	sent, orig := submitPageBytes(t, "", "https://aniliberty.top/anime/releases/release/x")
+	mi, err := metainfo.Load(bytes.NewReader(sent))
+	if err != nil {
+		t.Fatalf("submitted data is not a valid torrent: %v", err)
+	}
+	if mi.Comment != "https://mock/anime/releases/release/x" {
+		t.Errorf("comment = %q, want the release URL", mi.Comment)
+	}
+	want, _ := metainfo.Load(bytes.NewReader(orig))
+	if mi.HashInfoBytes() != want.HashInfoBytes() {
+		t.Errorf("infohash changed: %s, want %s", mi.HashInfoBytes(), want.HashInfoBytes())
+	}
+}
+
+func TestSubmitDownloadKeepsTrackerComment(t *testing.T) {
+	sent, orig := submitPageBytes(t, "https://x/t1", "https://other.example/t/9")
+	if !bytes.Equal(sent, orig) {
+		t.Errorf("a tracker comment must pass byte for byte, got a rewritten file")
+	}
+}
+
+func TestCollectEntriesAdoptsEmptyComment(t *testing.T) {
+	const url = "https://aniliberty.top/anime/releases/release/x"
+	tr := &adoptTracker{fakeTracker: fakeTracker{id: 1}, url: url}
+	e := &model.Entry{Name: "X - AniLiberty [WEB-DL]", Hash: "h1"}
+	h := &handler{manager: &fakeManager{all: []*model.Entry{e}}, storage: &fakeStorage{}, trackerService: tr}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case tk := <-h.idx[1]:
+		if tk.entry.URL != url {
+			t.Fatalf("queued URL %q, want %q", tk.entry.URL, url)
+		}
+	default:
+		t.Fatal("adopted entry was not queued")
+	}
+	if len(tr.calls) != 1 || tr.calls[0] != "X - AniLiberty [WEB-DL]|h1" {
+		t.Fatalf("Adopt calls = %v", tr.calls)
+	}
+}
+
+func TestAdoptErrorSkipsPurge(t *testing.T) {
+	const gone = "https://rutracker.org/forum/viewtopic.php?t=1"
+	goneHash := storagePkg.URLHash(gone)
+	store := &fakeStorage{items: map[string]*runnerModel.HistoryItem{goneHash: {URLHash: goneHash, Name: "gone"}}}
+	tr := &adoptTracker{fakeTracker: fakeTracker{id: 1}, err: errors.New("api down")}
+	h := &handler{
+		manager: &fakeManager{all: []*model.Entry{
+			{URL: "https://rutracker.org/forum/viewtopic.php?t=2", Name: "alive"},
+			{Name: "X - AniLiberty [WEB-DL]", Hash: "h1"},
+		}},
+		storage:        store,
+		trackerService: tr,
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.calls) != 1 {
+		t.Fatalf("Adopt calls = %v, want 1", tr.calls)
+	}
+	if len(store.deleted) != 0 {
+		t.Fatalf("history purged after a failed adoption: %v", store.deleted)
+	}
+}
+
+func TestCommentedEntryNeverAdopted(t *testing.T) {
+	tr := &adoptTracker{fakeTracker: fakeTracker{id: 1}, url: "https://x/other"}
+	h := &handler{
+		manager:        &fakeManager{all: []*model.Entry{{URL: "https://x/t1", Name: "X - AniLiberty", Hash: "h1"}}},
+		storage:        &fakeStorage{},
+		trackerService: tr,
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.calls) != 0 {
+		t.Fatalf("Adopt called for a commented entry: %v", tr.calls)
+	}
+}
+
+func TestAdoptDefinitiveMissKeepsPurge(t *testing.T) {
+	const gone = "https://rutracker.org/forum/viewtopic.php?t=1"
+	goneHash := storagePkg.URLHash(gone)
+	store := &fakeStorage{items: map[string]*runnerModel.HistoryItem{goneHash: {URLHash: goneHash, Name: "gone"}}}
+	tr := &adoptTracker{fakeTracker: fakeTracker{id: 1}}
+	h := &handler{
+		manager: &fakeManager{all: []*model.Entry{
+			{URL: "https://rutracker.org/forum/viewtopic.php?t=2", Name: "alive"},
+			{Name: "X - AniLiberty [WEB-DL]", Hash: "h1"},
+		}},
+		storage:        store,
+		trackerService: tr,
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != goneHash {
+		t.Fatalf("deleted = %v, want the stale item purged after a definitive miss", store.deleted)
+	}
+}
+
+func TestWorkerPickDateWinsOverStoredID(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	same := old
+	h, store, tr := newPickHandler(pickPageClient{pick: tracker.Pick{DownloadID: "own", Date: &same}})
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "a", URLHash: "abc", TopicID: "sibling", Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "unchanged" {
+		t.Fatalf("logs = %+v, want one unchanged", store.logs)
+	}
+	if len(tr.links) != 1 || tr.flags[0] {
+		t.Fatalf("links = %v flags = %v, want no download", tr.links, tr.flags)
+	}
+	if len(store.saved) != 1 || store.saved[0].TopicID != "own" {
+		t.Fatalf("saved = %+v, want TopicID own", store.saved)
+	}
+}
+
+func TestWorkerPickGetsSiblings(t *testing.T) {
+	const url = "https://pick.example/t/1"
+	var got tracker.Held
+	h, _, _ := newPickHandler(pickPageClient{pick: tracker.Pick{Miss: "m"}, held: &got})
+	h.manager = &fakeManager{all: []*model.Entry{
+		{URL: url, Name: "a", Hash: "ha"},
+		{URL: url, Name: "b", Hash: "hb"},
+		{URL: "https://pick.example/t/2", Name: "c", Hash: "hc"},
+	}}
+	h.state = NewState()
+	h.initTrackerChannels()
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"a": "hb", "b": "ha", "c": ""}
+	for len(h.idx[1]) > 0 {
+		tk := <-h.idx[1]
+		if err := h.worker(context.Background(), 1, tk.entry, nil); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got.Siblings, ",") != want[tk.entry.Name] {
+			t.Errorf("%s: Siblings = %v, want %q", tk.entry.Name, got.Siblings, want[tk.entry.Name])
+		}
+		delete(want, tk.entry.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("not queued: %v", want)
+	}
+}
+
+type failSubmitManager struct {
+	fakeManager
+	fail string
+}
+
+func (m *failSubmitManager) Submit(_ context.Context, _ *bytes.Buffer, opts model.ManagerAddFileOptions) error {
+	if opts.Hash == m.fail {
+		return errors.New("client down")
+	}
+	return nil
+}
+
+type forceStorage struct {
+	loggingStorage
+	events []string
+}
+
+func (s *forceStorage) SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error) {
+	s.events = append(s.events, fmt.Sprintf("force %s %v", urlHash, force))
+	_, _ = s.fakeStorage.SetForceCheck(ctx, urlHash, force)
+	return true, nil
+}
+
+func (s *forceStorage) SaveItem(ctx context.Context, item *runnerModel.HistoryItem) error {
+	s.events = append(s.events, "save "+item.URLHash)
+	return s.loggingStorage.SaveItem(ctx, item)
+}
+
+func TestSiblingSubmitFailureKeepsForceCheck(t *testing.T) {
+	const url = "https://pick.example/t/1"
+	urlHash := storagePkg.URLHash(url)
+	run := func(order ...string) (*handler, *forceStorage, *failSubmitManager, map[string]*model.Entry) {
+		old := time.Now().Add(-48 * time.Hour)
+		now := time.Now()
+		h, _, _ := newPickHandler(pickPageClient{pick: tracker.Pick{DownloadID: "1", Date: &now}})
+		store := &forceStorage{}
+		mgr := &failSubmitManager{fail: "ha"}
+		h.storage, h.manager = store, mgr
+		entries := map[string]*model.Entry{}
+		for _, hash := range []string{"ha", "hb"} {
+			entries[hash] = &model.Entry{URL: url, Name: hash, Hash: hash, URLHash: urlHash, TopicID: "1", Timestamp: &old, Update: true}
+		}
+		h.storeSiblings([]*model.Entry{entries["ha"], entries["hb"]}, false)
+		for _, hash := range order {
+			_ = h.worker(context.Background(), 1, entries[hash], nil)
+		}
+		return h, store, mgr, entries
+	}
+	want := "force " + urlHash + " true"
+	for _, order := range [][]string{{"ha", "hb"}, {"hb", "ha"}} {
+		_, store, _, _ := run(order...)
+		if len(store.events) == 0 || store.events[len(store.events)-1] != want {
+			t.Errorf("order %v: events = %v, want the row left with force_check", order, store.events)
+		}
+	}
+
+	h, store, mgr, entries := run("ha")
+	mgr.fail = ""
+	old := time.Now().Add(-48 * time.Hour)
+	entries["ha"].Timestamp = &old
+	_ = h.worker(context.Background(), 1, entries["ha"], nil)
+	_ = h.worker(context.Background(), 1, entries["hb"], nil)
+	if last := store.events[len(store.events)-1]; last != "save "+urlHash {
+		t.Errorf("events = %v, want no force_check after the retry succeeded", store.events)
+	}
+}
+
+func TestSiblingMissKeepsRetryForceCheck(t *testing.T) {
+	const url = "https://pick.example/t/1"
+	urlHash := storagePkg.URLHash(url)
+	added := time.Now().Add(-48 * time.Hour)
+	saved := time.Now().Add(time.Hour)
+	h, _, tr := newPickHandler(pickPageClient{})
+	store := &forceStorage{}
+	store.items = map[string]*runnerModel.HistoryItem{urlHash: {
+		URLHash: urlHash, TrackerTypeID: 1, TopicID: "1", Exists: true, CreatedAt: &saved, RecheckAt: &saved,
+	}}
+	mgr := &failSubmitManager{fail: "ha"}
+	h.storage, h.manager, h.state = store, mgr, NewState()
+	h.initTrackerChannels()
+	newEntries := func() []*model.Entry {
+		return []*model.Entry{
+			{URL: url, Name: "a", Hash: "ha", Timestamp: timePtr(added)},
+			{URL: url, Name: "b", Hash: "hb", Timestamp: timePtr(added)},
+		}
+	}
+	first := newEntries()
+	for _, e := range first {
+		e.URLHash, e.TopicID, e.Update = urlHash, "1", true
+	}
+	h.storeSiblings(first, false)
+
+	now := time.Now()
+	tr.client.pick = tracker.Pick{DownloadID: "1", Date: &now}
+	_ = h.worker(context.Background(), 1, first[0], nil)
+	tr.client.pick = tracker.Pick{Miss: "unknown"}
+	_ = h.worker(context.Background(), 1, first[1], nil)
+	if last := store.events[len(store.events)-1]; last != "force "+urlHash+" true" {
+		t.Fatalf("events = %v, want force_check kept after the sibling's miss", store.events)
+	}
+
+	mgr.fail = ""
+	mgr.all = newEntries()
+	tr.client.pick = tracker.Pick{DownloadID: "1", Date: &now}
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	store.logs = nil
+	for len(h.idx[1]) > 0 {
+		if tk := <-h.idx[1]; tk.entry.Hash == "ha" {
+			_ = h.worker(context.Background(), 1, tk.entry, nil)
+		}
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "updated" {
+		t.Fatalf("logs = %+v, want A retried and updated on the next run", store.logs)
+	}
+}
+
+func TestSiblingRetryStopsAtErrorThreshold(t *testing.T) {
+	const url = "https://pick.example/t/1"
+	urlHash := storagePkg.URLHash(url)
+	for _, tc := range []struct {
+		threshold, runs int
+		order           []string
+	}{
+		{0, 3, []string{"hb", "ha"}},
+		{0, 3, []string{"ha", "hb"}},
+		{2, 2, []string{"hb", "ha"}},
+	} {
+		now := time.Now()
+		h, _, _ := newPickHandler(pickPageClient{pick: tracker.Pick{DownloadID: "1", Date: &now}})
+		h.config.ErrorStreakThreshold = tc.threshold
+		store := &forceStorage{}
+		h.storage, h.manager = store, &failSubmitManager{fail: "ha"}
+		entries := map[string]*model.Entry{}
+		var raw []*model.Entry
+		for _, hash := range []string{"ha", "hb"} {
+			entries[hash] = &model.Entry{URL: url, Name: hash, Hash: hash, URLHash: urlHash, TopicID: "1", Update: true}
+			raw = append(raw, entries[hash])
+		}
+		h.storeSiblings(raw, false)
+		runs := 0
+		for forced := true; forced && runs < 10; runs++ {
+			for _, hash := range tc.order {
+				old := time.Now().Add(-48 * time.Hour)
+				entries[hash].Timestamp = &old
+				_ = h.worker(context.Background(), 1, entries[hash], nil)
+			}
+			forced = false
+			for _, ev := range store.events {
+				forced = ev == "force "+urlHash+" true"
+			}
+		}
+		if runs != tc.runs || h.retryPending(urlHash) {
+			t.Errorf("threshold %d order %v: runs = %d pending = %v, want %d runs and no pending retry",
+				tc.threshold, tc.order, runs, h.retryPending(urlHash), tc.runs)
+		}
+	}
+}
+
+func TestSiblingRetryKeptOnPartialList(t *testing.T) {
+	const url = "https://pick.example/t/1"
+	urlHash := storagePkg.URLHash(url)
+	now := time.Now()
+	h, _, _ := newPickHandler(pickPageClient{pick: tracker.Pick{DownloadID: "1", Date: &now}})
+	store := &forceStorage{}
+	mgr := &failSubmitManager{fail: "ha"}
+	h.storage, h.manager, h.state = store, mgr, NewState()
+	h.initTrackerChannels()
+	old := time.Now().Add(-48 * time.Hour)
+	a := &model.Entry{URL: url, Name: "a", Hash: "ha", URLHash: urlHash, TopicID: "1", Timestamp: &old, Update: true}
+	b := &model.Entry{URL: url, Name: "b", Hash: "hb", URLHash: urlHash, TopicID: "1", Timestamp: &old, Update: true}
+	h.storeSiblings([]*model.Entry{a, b}, false)
+	_ = h.worker(context.Background(), 1, a, nil)
+
+	mgr.all = []*model.Entry{{URL: url, Name: "b", Hash: "hb"}}
+	mgr.partialList = true
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !h.retryPending(urlHash) {
+		t.Fatal("retry dropped after a partial list without the torrent")
+	}
+	mgr.partialList = false
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if h.retryPending(urlHash) {
+		t.Fatal("retry kept after a complete list without the torrent")
+	}
+}
+
+func (f *fakeStorage) ErrorMarks(context.Context) (map[string]storageModel.ErrorMark, error) {
+	return f.marks, f.marksErr
+}
+
+func TestLogCheckErrorSendsCheckFailed(t *testing.T) {
+	var kinds []string
+	var mu sync.Mutex
+	got := make(chan struct{}, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Event string `json:"event"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		kinds = append(kinds, body.Event)
+		mu.Unlock()
+		got <- struct{}{}
+	}))
+	defer srv.Close()
+
+	newHandler := func(events []string) *handler {
+		return &handler{
+			config:   model.HandlerConfig{ErrorStreakThreshold: 100},
+			storage:  &loggingStorage{},
+			notifier: notify.New(notify.Config{WebhookURL: srv.URL, WebhookEvents: events, Enabled: true}, ""),
+		}
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
+	ctx := context.Background()
+	seen := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), kinds...)
+	}
+
+	// без подписки (nil-список) check_failed не уходит
+	newHandler(nil).logCheckStreak(ctx, e, 1, "error", "boom", false, nil)
+	select {
+	case <-got:
+		t.Fatal("check_failed delivered without subscription")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	h := newHandler([]string{notify.KindCheckFailed})
+	h.logCheckStreak(ctx, e, 1, "error", "boom", true, nil)
+	h.logCheckStreak(ctx, e, 1, "error", "boom", false, &dryReport{})
+	h.logCheckStreak(ctx, e, 1, "unchanged", "", false, nil)
+	select {
+	case <-got:
+		t.Fatalf("unexpected event for tracker-wide, dry-run or non-error: %v", seen())
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	h.logCheckStreak(ctx, e, 1, "error", "boom", false, nil)
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("check_failed not delivered to subscribed webhook")
+	}
+	if k := seen(); len(k) != 1 || k[0] != notify.KindCheckFailed {
+		t.Fatalf("events = %v, want [check_failed]", k)
+	}
+}
+
+func TestLogCheckCountsMetric(t *testing.T) {
+	const ttid = 99001
+	registry.Register(registry.Def{ID: ttid, Key: "metrics_probe", New: func(tracker.Tracker) tracker.ITracker { return nil }})
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
+	h := &handler{config: model.HandlerConfig{ErrorStreakThreshold: 100}, storage: &loggingStorage{}}
+
+	known := metrics.Checks.Value("metrics_probe", "unchanged")
+	unknown := metrics.Checks.Value("unknown", "error")
+
+	h.logCheck(context.Background(), e, ttid, "unchanged", "", nil)
+	if got := metrics.Checks.Value("metrics_probe", "unchanged"); got != known+1 {
+		t.Fatalf("known tracker counter = %d, want %d", got, known+1)
+	}
+	h.logCheckStreak(context.Background(), e, 424242, "error", "boom", true, nil)
+	if got := metrics.Checks.Value("unknown", "error"); got != unknown+1 {
+		t.Fatalf("unregistered tracker counter = %d, want %d", got, unknown+1)
+	}
+
+	h.logCheck(context.Background(), e, ttid, "unchanged", "", &dryReport{})
+	if got := metrics.Checks.Value("metrics_probe", "unchanged"); got != known+1 {
+		t.Fatalf("dry-run must not count, got %d want %d", got, known+1)
 	}
 }
