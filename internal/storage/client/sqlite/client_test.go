@@ -22,7 +22,7 @@ func newTestClient(t *testing.T) *Client {
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 
-	c := New(db)
+	c := New(db, testBox(t))
 	if err := c.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -60,6 +60,43 @@ func TestAddCheckLogErrorStreak(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("rows for h1 = %d, want 1 (re-check updates in place)", count)
+	}
+}
+
+func TestAddCheckLogKeepStreak(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	entry := &storage.CheckLogEntry{URLHash: "h1", ItemName: "Release A", Status: "error", Error: "first"}
+	for want := 1; want <= 2; want++ {
+		if streak, err := c.AddCheckLog(ctx, entry); err != nil || streak != want {
+			t.Fatalf("error: streak=%d err=%v, want %d nil", streak, err, want)
+		}
+	}
+	entry.KeepStreak = true
+	entry.Error = "tracker unavailable"
+	if streak, err := c.AddCheckLog(ctx, entry); err != nil || streak != 2 {
+		t.Fatalf("keep: streak=%d err=%v, want 2 nil", streak, err)
+	}
+	var status, errText string
+	if err := c.db.QueryRowContext(ctx, "SELECT status, error FROM check_log WHERE url_hash = ?", "h1").Scan(&status, &errText); err != nil {
+		t.Fatal(err)
+	}
+	if status != "error" || errText != "tracker unavailable" {
+		t.Fatalf("row = %q %q, want error \"tracker unavailable\"", status, errText)
+	}
+	entry.KeepStreak = false
+	if streak, err := c.AddCheckLog(ctx, entry); err != nil || streak != 3 {
+		t.Fatalf("error after keep: streak=%d err=%v, want 3 nil", streak, err)
+	}
+	entry.Status = "unchanged"
+	if streak, err := c.AddCheckLog(ctx, entry); err != nil || streak != 0 {
+		t.Fatalf("non-error: streak=%d err=%v, want 0 nil", streak, err)
+	}
+
+	fresh := &storage.CheckLogEntry{URLHash: "h2", ItemName: "Release B", Status: "error", KeepStreak: true}
+	if streak, err := c.AddCheckLog(ctx, fresh); err != nil || streak != 0 {
+		t.Fatalf("fresh keep: streak=%d err=%v, want 0 nil", streak, err)
 	}
 }
 
@@ -272,8 +309,8 @@ func TestPurgeDuplicateNames(t *testing.T) {
 	if err := c.AddItem(ctx, &storage.Item{URLHash: "loser2", Name: " same release "}); err != nil {
 		t.Fatal(err)
 	}
-	// check_log сам обеспечивает уникальность имени, поэтому заранее существующая проигравшая строка
-	// заводится там напрямую, в обход логики upsert и самоочистки в AddCheckLog
+	// check_log сам держит имя уникальным, поэтому старую проигравшую строку вставляем
+	// напрямую, мимо upsert и самоочистки в AddCheckLog
 	if _, err := c.db.ExecContext(ctx, `INSERT INTO check_log (url_hash, item_name, status) VALUES (?, ?, 'updated')`, "old-hash", "Same Release"); err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +599,7 @@ func TestPurgeCategoriesExcept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// h4 с пустой категорией остаётся: она не выключена, она неизвестна
+	// h4 с пустой категорией остается: она не выключена, она неизвестна
 	if got, want := hashesOf(entries), []string{"h1", "h2", "h4"}; !slices.Equal(got, want) {
 		t.Fatalf("check_log = %v, want %v", got, want)
 	}
@@ -572,5 +609,31 @@ func TestPurgeCategoriesExcept(t *testing.T) {
 	}
 	if len(items) != 3 {
 		t.Fatalf("history has %d rows, want 3", len(items))
+	}
+}
+
+func TestDeleteTrackerRemovesRow(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	if err := c.AddTracker(ctx, &storage.Tracker{TypeID: 1, Name: "one", Domain: "one.example", Credentials: "SEC-c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddTracker(ctx, &storage.Tracker{TypeID: 2, Name: "two", Domain: "two.example", Credentials: "SEC-c", Cookies: "SEC-k"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.DeleteTracker(ctx, 2); err != nil {
+		t.Fatalf("DeleteTracker(2): %v", err)
+	}
+	if tr, err := c.GetTracker(ctx, 2); err != nil || tr.Exists {
+		t.Fatalf("GetTracker(2) exists=%v err=%v, want false nil", tr.Exists, err)
+	}
+	if err := c.DeleteTracker(ctx, 99); err != nil {
+		t.Fatalf("DeleteTracker(99): %v, want nil", err)
+	}
+	tr, err := c.GetTracker(ctx, 1)
+	if err != nil || !tr.Exists || tr.Credentials != "SEC-c1" {
+		t.Fatalf("GetTracker(1) exists=%v creds=%q err=%v, want true SEC-c1 nil", tr.Exists, tr.Credentials, err)
 	}
 }

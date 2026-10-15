@@ -8,6 +8,7 @@ import (
 	"ripperr/internal/model/runner"
 	"ripperr/internal/model/storage"
 	"ripperr/internal/model/tracker"
+	"ripperr/internal/secrets"
 	"ripperr/internal/storage/client/sqlite"
 )
 
@@ -15,8 +16,8 @@ type Service struct {
 	*sqlite.Client
 }
 
-// GetTracker перекрывает метод встроенного sqlite.Client: он возвращает *tracker.Tracker, а не *storage.Tracker.
 func (s *Service) GetTracker(ctx context.Context, trackerID int) (res *tracker.Tracker, err error) {
+	// перекрывает метод встроенного sqlite.Client, тот отдает *storage.Tracker
 	var sttr *storage.Tracker
 
 	if sttr, err = s.Client.GetTracker(ctx, trackerID); err != nil {
@@ -94,6 +95,6 @@ func (s *Service) SaveItem(ctx context.Context, item *runner.HistoryItem) (err e
 	return s.AddItem(ctx, dbItem)
 }
 
-func New(db *sql.DB) *Service {
-	return &Service{sqlite.New(db)}
+func New(db *sql.DB, box *secrets.Box) *Service {
+	return &Service{sqlite.New(db, box)}
 }

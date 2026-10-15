@@ -12,20 +12,20 @@ import (
 	"golang.org/x/net/http/httpproxy"
 )
 
-// адрес плюс NO_PROXY: правила зашиваются в транспорт на момент сборки, а notify.New
-// зовут на каждый переход предохранителя и на каждый тест интеграции, и без кеша
-// каждый вызов заводил бы свой пул на сотню незакрываемых соединений
 var proxyTransports sync.Map
 
 var localSuffixes = []string{".local", ".lan", ".internal", ".home", ".home.arpa"}
 
-// возвращает интерфейсный nil, а не типизированный *http.Transport: присвоенный
-// в http.Client.Transport типизированный nil паникует вместо отката на DefaultTransport
 func ProxyTransport(raw string) http.RoundTripper {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
+		// интерфейсный nil: типизированный *http.Transport в http.Client.Transport
+		// паникует вместо отката на DefaultTransport
 		return nil
 	}
+	// NO_PROXY в ключе, потому что правила зашиваются в транспорт при сборке. Без кеша
+	// каждый notify.New (а его зовут на каждом переходе предохранителя) заводил бы
+	// свой пул соединений, которые никто не закрывает
 	key := raw + "\x00" + noProxyEnv()
 	if tr, ok := proxyTransports.Load(key); ok {
 		return tr.(http.RoundTripper)
@@ -37,16 +37,15 @@ func ProxyTransport(raw string) http.RoundTripper {
 func buildProxyTransport(raw string) http.RoundTripper {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	if u, err := url.Parse(raw); err != nil || u.Host == "" {
-		// на битом адресе отказываем, а не откатываемся на прямое соединение: адрес
-		// задан осознанно, и молчаливый выход с реального IP хуже отказа с ошибкой
+		// на битом адресе каждый запрос падает с ошибкой. Раз прокси задан, тихо
+		// уйти напрямую с реального IP хуже
 		tr.Proxy = func(*http.Request) (*url.URL, error) {
-			return nil, fmt.Errorf("invalid proxy url %q", raw)
+			return nil, fmt.Errorf("invalid proxy url %s", RedactURL(raw))
 		}
 		return tr
 	}
-	// через httpproxy, а не через http.ProxyURL напрямую: тот отправляет в прокси
-	// вообще всё, а здесь остаются исключения самого Go (localhost, loopback) и
-	// NO_PROXY, которым пользователь выводит из-под прокси свои локальные адреса
+	// http.ProxyURL гнал бы в прокси вообще все. httpproxy оставляет исключения Go
+	// (localhost, loopback) и NO_PROXY, через который пользователь убирает свои локальные адреса
 	proxyFunc := (&httpproxy.Config{
 		HTTPProxy:  raw,
 		HTTPSProxy: raw,
@@ -61,23 +60,23 @@ func buildProxyTransport(raw string) http.RoundTripper {
 	return tr
 }
 
-// первая непустая, как это делает сам Go, а не склейка обеих: no_proxy=* из базового
-// образа иначе перебивал бы NO_PROXY пользователя и глушил прокси целиком
 func noProxyEnv() string {
+	// как в самом Go, берем первую непустую. Если склеить обе, no_proxy=* из базового
+	// образа перебьет NO_PROXY пользователя и выключит прокси совсем
 	if v := os.Getenv("NO_PROXY"); v != "" {
 		return v
 	}
 	return os.Getenv("no_proxy")
 }
 
-// httpproxy исключает только localhost и loopback, а рядом с приложением живут ещё
-// вебхук на домашний сервер и соседи по docker-сети: гнать их через внешний прокси
-// незачем, а отдавать его оператору имена раздач из тела вебхука тем более
 func isLocalTarget(host string) bool {
+	// httpproxy пропускает мимо только localhost и loopback. А рядом еще вебхук на домашний
+	// сервер и соседи по docker-сети, гнать их через внешний прокси незачем, тем более
+	// светить его оператору имена раздач из тела вебхука
 	if ip, err := netip.ParseAddr(host); err == nil {
 		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 	}
-	// имя без точки в публичном DNS не живёт: это сосед по docker-сети или /etc/hosts
+	// имя без точки в публичном DNS не живет: это сосед по docker-сети или /etc/hosts
 	if !strings.Contains(host, ".") {
 		return true
 	}
@@ -89,11 +88,12 @@ func isLocalTarget(host string) bool {
 	return false
 }
 
-// локальные сервисы (flaresolverr, торрент-клиент) стоят рядом с приложением и через
-// прокси не ходят: из HTTP(S)_PROXY Go исключает только localhost, но не имена хостов
-// в docker-сети, поэтому прямое соединение задаём явно, а не надеемся на пустое окружение
+func IsLocalHost(host string) bool { return isLocalTarget(host) }
+
 func DirectTransport() *http.Transport {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	// flaresolverr и торрент-клиент стоят рядом и через прокси не ходят. Из HTTP(S)_PROXY
+	// Go исключает только localhost, имена из docker-сети нет, поэтому выключаем явно
 	tr.Proxy = nil
 	return tr
 }

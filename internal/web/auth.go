@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,8 +22,9 @@ import (
 )
 
 const (
-	authCookieName  = "trackerr_session"
+	authCookieName  = "ripperr_session"
 	authSessionTTL  = 30 * 24 * time.Hour
+	authRenewAfter  = 24 * time.Hour
 	pbkdf2Iter      = 600000
 	pbkdf2KeyLen    = 32
 	authSaltLen     = 32
@@ -30,6 +32,8 @@ const (
 	minPasswordLen  = 8
 	maxLoginFails   = 5
 	loginLockWindow = time.Minute
+	pbkdf2Slots     = 2
+	maxThrottleKeys = 1024
 )
 
 type authDoc struct {
@@ -59,26 +63,42 @@ func (c *authCache) set(doc *authDoc) {
 	c.loaded = true
 }
 
+func (c *authCache) fill(doc *authDoc) *authDoc {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// чтение, начатое до setup, не должно затереть сохраненный аккаунт устаревшим nil
+	if c.loaded {
+		return c.doc
+	}
+	c.doc = doc
+	c.loaded = true
+	return doc
+}
+
 func (s *Server) loadAuth(ctx context.Context) (*authDoc, error) {
-	// loaded истинно даже когда doc нулевой: "авторизация не настроена" это тоже
-	// закешированное состояние, а не промах кеша.
+	// loaded true и при нулевом doc: "авторизация не настроена" тоже лежит в кеше
 	if doc, loaded := s.authCache.get(); loaded {
 		return doc, nil
 	}
+	doc, err := s.readAuth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.authCache.fill(doc), nil
+}
 
+func (s *Server) readAuth(ctx context.Context) (*authDoc, error) {
 	raw, ok, err := s.db.GetSetting(ctx, sqlite.SettingAuth)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		s.authCache.set(nil)
 		return nil, nil
 	}
 	var doc authDoc
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, err
 	}
-	s.authCache.set(&doc)
 	return &doc, nil
 }
 
@@ -114,34 +134,53 @@ func signSession(secret []byte, username string, exp time.Time) string {
 	return msg + "." + hmacB64
 }
 
-func verifySession(secret []byte, username, value string) bool {
+func sessionExpiry(secret []byte, username, value string) (time.Time, bool) {
 	parts := strings.Split(value, ".")
 	if len(parts) != 3 {
-		return false
+		return time.Time{}, false
 	}
 	expStr, usernameB64, hmacB64 := parts[0], parts[1], parts[2]
 
 	usernameBytes, err := base64.RawURLEncoding.DecodeString(usernameB64)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	if username != string(usernameBytes) {
-		return false
+		return time.Time{}, false
 	}
 
 	expUnix, err := strconv.ParseInt(expStr, 10, 64)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	if time.Now().Unix() >= expUnix {
-		return false
+		return time.Time{}, false
 	}
 
 	expectedSig := hmac.New(sha256.New, secret)
 	expectedSig.Write([]byte(expStr + "." + usernameB64))
 	expectedHmacB64 := base64.RawURLEncoding.EncodeToString(expectedSig.Sum(nil))
 
-	return hmac.Equal([]byte(hmacB64), []byte(expectedHmacB64))
+	if !hmac.Equal([]byte(hmacB64), []byte(expectedHmacB64)) {
+		return time.Time{}, false
+	}
+	return time.Unix(expUnix, 0), true
+}
+
+func requestScheme(r *http.Request) (secure, known bool) {
+	if r.TLS != nil {
+		return true, true
+	}
+	// за прокси keenetic TLS снимается до нас, схему видно только по Origin или Referer браузера
+	src := r.Header.Get("Origin")
+	if src == "" {
+		src = r.Header.Get("Referer")
+	}
+	u, err := url.Parse(src)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false, false
+	}
+	return u.Scheme == "https", true
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, doc *authDoc) error {
@@ -152,7 +191,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, doc *a
 	exp := time.Now().Add(authSessionTTL)
 	value := signSession(secret, doc.Username, exp)
 
-	secure := r.TLS != nil
+	secure, _ := requestScheme(r)
 	http.SetCookie(w, &http.Cookie{
 		Name:     authCookieName,
 		Value:    value,
@@ -181,22 +220,54 @@ func (s *Server) webConfig() config.Web {
 }
 
 func (s *Server) clientIP(r *http.Request) net.IP {
-	if s.webConfig().TrustedProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			if len(parts) > 0 {
-				if ip := net.ParseIP(strings.TrimSpace(parts[0])); ip != nil {
-					return ip
-				}
-			}
-		}
-	}
-
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	return net.ParseIP(host)
+	remote := net.ParseIP(host)
+	if !s.webConfig().TrustedProxy || !isLocalIP(remote) {
+		return remote
+	}
+
+	values := r.Header.Values("X-Forwarded-For")
+	if len(values) == 0 {
+		return remote
+	}
+	// левые записи пишет клиент, верим только последней: ее дописал наш прокси
+	last := values[len(values)-1]
+	if i := strings.LastIndexByte(last, ','); i >= 0 {
+		last = last[i+1:]
+	}
+	return net.ParseIP(strings.TrimSpace(last))
+}
+
+func isLocalHost(hostport string, allowed []string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = normalizeHost(strings.Trim(host, "[]"))
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil || !strings.Contains(host, ".") {
+		return true
+	}
+	for _, suffix := range []string{".local", ".lan", ".home.arpa", ".internal"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	for _, entry := range allowed {
+		if normalizeHost(entry) == host {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 }
 
 func isLocalIP(ip net.IP) bool {
@@ -208,75 +279,128 @@ func isLocalIP(ip net.IP) bool {
 
 type loginThrottle struct {
 	mu    sync.Mutex
+	now   func() time.Time
 	fails map[string]*loginFailure
 }
 
 type loginFailure struct {
+	first time.Time
 	count int
 	until time.Time
 }
 
-var loginFails = &loginThrottle{fails: map[string]*loginFailure{}}
-
-func (t *loginThrottle) locked(key string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	rec, ok := t.fails[key]
-	if !ok {
-		return false
-	}
-	if time.Now().Before(rec.until) {
-		return true
-	}
-	delete(t.fails, key)
-	return false
+func newLoginThrottle() *loginThrottle {
+	return &loginThrottle{now: time.Now, fails: map[string]*loginFailure{}}
 }
 
-func (t *loginThrottle) fail(key string) {
+func (t *loginThrottle) reserve(key string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	now := t.now()
 	rec, ok := t.fails[key]
-	if !ok {
-		rec = &loginFailure{}
+	if ok && now.Before(rec.until) {
+		return false
+	}
+	if !ok || !rec.until.IsZero() || !now.Before(rec.first.Add(loginLockWindow)) {
+		if !ok && len(t.fails) >= maxThrottleKeys {
+			t.prune(now)
+		}
+		rec = &loginFailure{first: now}
 		t.fails[key] = rec
 	}
 	rec.count++
 	if rec.count >= maxLoginFails {
-		rec.until = time.Now().Add(loginLockWindow)
-		rec.count = 0
+		rec.until = now.Add(loginLockWindow)
+	}
+	return true
+}
+
+func (t *loginThrottle) prune(now time.Time) {
+	for key, rec := range t.fails {
+		if !now.Before(rec.first.Add(loginLockWindow)) && !now.Before(rec.until) {
+			delete(t.fails, key)
+		}
 	}
 }
 
-func (t *loginThrottle) reset(key string) {
+func (t *loginThrottle) success(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.fails, key)
 }
 
-func (s *Server) authorized(r *http.Request, doc *authDoc) bool {
-	if doc == nil {
+func (s *Server) acquireHashSlot() bool {
+	select {
+	case s.hashSlots <- struct{}{}:
 		return true
+	default:
+		return false
 	}
+}
 
-	if s.webConfig().LanBypass && isLocalIP(s.clientIP(r)) {
-		return true
+func (s *Server) releaseHashSlot() {
+	<-s.hashSlots
+}
+
+func (s *Server) authorized(r *http.Request, doc *authDoc) bool {
+	_, ok := s.session(r, doc)
+	return ok
+}
+
+func (s *Server) session(r *http.Request, doc *authDoc) (time.Time, bool) {
+	if doc == nil {
+		return time.Time{}, false
 	}
 
 	cookie, err := r.Cookie(authCookieName)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 
 	secret, err := base64.RawURLEncoding.DecodeString(doc.Secret)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 
-	return verifySession(secret, doc.Username, cookie.Value)
+	return sessionExpiry(secret, doc.Username, cookie.Value)
+}
+
+func safeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+}
+
+func sameOrigin(r *http.Request, allowed []string) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	// прокси keenetic подменяет Host на адрес бэкенда, так что имена из WEB_ALLOWED_HOSTS сверяем с самим Origin
+	host := normalizeHost(u.Hostname())
+	if host == "" {
+		return false
+	}
+	for _, entry := range allowed {
+		if normalizeHost(entry) == host {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !safeMethod(r.Method) && !sameOrigin(r, s.webConfig().AllowedHosts) {
+			writeError(w, http.StatusForbidden, "cross-origin request")
+			return
+		}
+
 		if !strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/api/auth/") {
 			next.ServeHTTP(w, r)
 			return
@@ -290,10 +414,23 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, "auth error")
 			return
 		}
+		if doc == nil {
+			writeError(w, http.StatusUnauthorized, "account setup required")
+			return
+		}
 
-		if !s.authorized(r, doc) {
+		exp, ok := s.session(r, doc)
+		if !ok {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
+		}
+
+		// без схемы продление могло бы заменить Secure куку обычной
+		if _, known := requestScheme(r); known && time.Until(exp) < authSessionTTL-authRenewAfter {
+			if err := s.setSessionCookie(w, r, doc); err != nil {
+				writeError(w, http.StatusInternalServerError, "auth error")
+				return
+			}
 		}
 
 		next.ServeHTTP(w, r)
@@ -312,17 +449,15 @@ func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
 
 	configured := doc != nil
 	authenticated := s.authorized(r, doc)
-	lanBypass := doc != nil && s.webConfig().LanBypass && isLocalIP(s.clientIP(r))
 
 	username := ""
-	if doc != nil {
+	if authenticated {
 		username = doc.Username
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"configured":    configured,
 		"authenticated": authenticated,
-		"lan_bypass":    lanBypass,
 		"username":      username,
 	})
 }
@@ -340,12 +475,32 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doc, err := s.loadAuth(ctx)
+	// слот до authMu: так за замком ждут не больше pbkdf2Slots запросов
+	if !s.acquireHashSlot() {
+		writeError(w, http.StatusTooManyRequests, "too many login attempts at once, try later")
+		return
+	}
+	defer s.releaseHashSlot()
+
+	// без аккаунта сюда может постучаться страница с чужого домена через DNS rebinding,
+	// она шлет свой домен в Host
+	if !isLocalHost(r.Host, s.webConfig().AllowedHosts) {
+		writeError(w, http.StatusForbidden, "account setup is allowed only from a local address")
+		return
+	}
+
+	// проверка "аккаунта нет" и запись под одним замком, иначе параллельные setup создадут несколько
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+
+	// читаем базу мимо кеша: в кеше может лежать устаревший nil
+	doc, err := s.readAuth(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
 	}
 	if doc != nil {
+		s.authCache.set(doc)
 		writeError(w, http.StatusConflict, "auth already configured")
 		return
 	}
@@ -424,7 +579,15 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		ipStr = ip.String()
 	}
 
-	if loginFails.locked(ipStr) {
+	// отказ по слоту не проверял пароль, поэтому слот берем до reserve
+	if !s.acquireHashSlot() {
+		writeError(w, http.StatusTooManyRequests, "too many login attempts at once, try later")
+		return
+	}
+	defer s.releaseHashSlot()
+
+	// попытку учитываем до хеширования, иначе параллельные запросы проскочат лимит
+	if !s.loginFails.reserve(ipStr) {
 		writeError(w, http.StatusTooManyRequests, "too many attempts, try later")
 		return
 	}
@@ -447,12 +610,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	passwordMatch := subtle.ConstantTimeCompare(computedHash, storedHash) == 1
 
 	if !usernameMatch || !passwordMatch {
-		loginFails.fail(ipStr)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
-	loginFails.reset(ipStr)
+	s.loginFails.success(ipStr)
 
 	if err := s.setSessionCookie(w, r, doc); err != nil {
 		writeError(w, http.StatusInternalServerError, "auth error")
@@ -463,6 +625,40 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	doc, err := s.loadAuth(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+
+	// без живой сессии только чистим куку, иначе разлогинить владельца сможет кто угодно
+	if s.authorized(r, doc) {
+		if err := s.rotateSecret(ctx); err != nil {
+			writeError(w, http.StatusInternalServerError, "auth error")
+			return
+		}
+	}
+
 	clearSessionCookie(w)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) rotateSecret(ctx context.Context) error {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+
+	doc, err := s.readAuth(ctx)
+	if err != nil || doc == nil {
+		return err
+	}
+	secret, err := randomBytes(authSecretLen)
+	if err != nil {
+		return err
+	}
+	nd := *doc
+	nd.Secret = base64.RawURLEncoding.EncodeToString(secret)
+	return s.saveAuth(ctx, &nd)
 }

@@ -1,6 +1,5 @@
 export let authState = null;
 export let authRedirecting = false;
-export const AUTH_SETUP_SKIP_KEY = 'trackerr.auth.setupSkipped';
 
 export function gotoLogin() {
   if (authRedirecting) return;
@@ -17,19 +16,9 @@ export async function loadAuthState() {
   } catch (_) {
     return;
   }
-  if (!authState.configured && !authSetupSkipped()) { gotoLogin(); return; }
+  if (!authState.configured) { gotoLogin(); return; }
   const logoutBtn = document.getElementById('logout-btn');
-  // при обходе для LAN выход ничего не даёт: кука очищается, но запрос всё равно
-  // пропускается по IP, поэтому кнопку прячем, а не оставляем мёртвой
-  if (logoutBtn) logoutBtn.classList.toggle('hidden', !(authState && authState.configured && !authState.lan_bypass));
-}
-
-export function authSetupSkipped() {
-  try {
-    return localStorage.getItem(AUTH_SETUP_SKIP_KEY) === '1';
-  } catch (_) {
-    return false;
-  }
+  if (logoutBtn) logoutBtn.classList.toggle('hidden', !authState.configured);
 }
 
 export function bindLogout() {
@@ -38,10 +27,7 @@ export function bindLogout() {
   btn.addEventListener('click', async function () {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (_) { /* ponytail: по возможности, без гарантий */ }
-    try {
-      localStorage.setItem(AUTH_SETUP_SKIP_KEY, '1');
-    } catch (_) { /* ponytail: по возможности, без гарантий */ }
+    } catch (_) { /* не дошло, ну и ладно */ }
     location.reload();
   });
 }

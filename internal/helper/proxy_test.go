@@ -2,6 +2,7 @@ package helper
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +16,7 @@ func proxyFor(t *testing.T, target string) *http.Request {
 }
 
 func TestProxyTransportEmptyIsNilInterface(t *testing.T) {
-	// именно интерфейсный nil: типизированный сломал бы откат http.Client на DefaultTransport
+	// интерфейсный nil: с типизированным http.Client не откатится на DefaultTransport
 	if rt := ProxyTransport("  "); rt != nil {
 		t.Fatalf("want nil RoundTripper, got %T", rt)
 	}
@@ -91,7 +92,7 @@ func TestProxyTransportHonoursNoProxy(t *testing.T) {
 
 func TestProxyTransportPrefersUpperCaseNoProxy(t *testing.T) {
 	// склейка обеих переменных давала бы no_proxy=* поверх выбора пользователя,
-	// и весь трафик тихо ушёл бы мимо прокси
+	// и весь трафик тихо ушел бы мимо прокси
 	t.Setenv("NO_PROXY", "mirror.rutracker.org")
 	t.Setenv("no_proxy", "*")
 	tr := ProxyTransport("http://127.0.0.1:3128").(*http.Transport)
@@ -118,5 +119,16 @@ func TestDirectTransportNeverProxies(t *testing.T) {
 	// бы прокси всему процессу
 	if http.DefaultTransport.(*http.Transport).Proxy == nil {
 		t.Fatal("DirectTransport mutated http.DefaultTransport")
+	}
+}
+
+func TestProxyTransportInvalidURLHidesSecrets(t *testing.T) {
+	hc := &http.Client{Transport: ProxyTransport("socks5://u:SEC-pw@/SEC-path")}
+	_, err := hc.Get("http://example.invalid")
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if strings.Contains(err.Error(), "SEC-") {
+		t.Fatalf("secret leaked: %s", err)
 	}
 }

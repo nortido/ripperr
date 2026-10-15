@@ -3,13 +3,21 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/sethvargo/go-envconfig"
 	"ripperr/internal/config"
 	"ripperr/internal/runner"
+	"ripperr/internal/storage/client/sqlite"
 )
 
 type countingSettingStore struct {
@@ -24,44 +32,41 @@ func (c *countingSettingStore) GetSetting(ctx context.Context, key string) (json
 
 func TestAuthSetupThenLoginFlow(t *testing.T) {
 	store := &fakeStore{}
-	srv := newTestServer(store)
+	srv := newBareServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, TrustedProxy: false}
 		return cfg
 	}
 
-	// Настройка: создаём учётку
 	body := []byte(`{"username":"testuser","password":"testpass123"}`)
 	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(body))
+	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("setup failed: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Проверяем ответ настройки
 	var setupResp map[string]bool
 	_ = json.Unmarshal(w.Body.Bytes(), &setupResp)
 	if !setupResp["ok"] {
 		t.Error("setup response ok=false")
 	}
 
-	// Достаём куку из настройки
 	setupCookie := w.Header().Get("Set-Cookie")
 	if setupCookie == "" {
 		t.Error("setup did not set cookie")
 	}
 
-	// Повторная настройка должна упасть с 409
 	req = httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(body))
+	req.Host = "192.168.1.5:6410"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusConflict {
 		t.Errorf("duplicate setup: expected 409, got %d", w.Code)
 	}
 
-	// Вход с верным паролем
 	loginBody := []byte(`{"username":"testuser","password":"testpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginBody))
 	req.RemoteAddr = "203.0.113.5:1234"
@@ -71,13 +76,11 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 		t.Errorf("login failed: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Достаём куку входа
 	loginCookie := w.Header().Get("Set-Cookie")
 	if loginCookie == "" {
 		t.Error("login did not set cookie")
 	}
 
-	// Вход с неверным паролем
 	wrongBody := []byte(`{"username":"testuser","password":"wrongpass"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(wrongBody))
 	req.RemoteAddr = "203.0.113.5:1234"
@@ -90,23 +93,22 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 
 func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 	store := &fakeStore{}
-	srv := newTestServer(store)
+	srv := newBareServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: false, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, TrustedProxy: false}
 		return cfg
 	}
 
-	// Настраиваем учётку
 	setupBody := []byte(`{"username":"admin","password":"adminpass123"}`)
 	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupBody))
+	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("setup failed: %d", w.Code)
 	}
 
-	// Запрос /api/history с нелокального адреса без куки должен вернуть 401
 	req = httptest.NewRequest("GET", "/api/history", nil)
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
@@ -115,7 +117,6 @@ func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 		t.Errorf("unauth api call: expected 401, got %d", w.Code)
 	}
 
-	// Входим, чтобы получить валидную куку
 	loginBody := []byte(`{"username":"admin","password":"adminpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginBody))
 	req.RemoteAddr = "203.0.113.5:1234"
@@ -125,7 +126,6 @@ func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 		t.Fatalf("login failed: %d", w.Code)
 	}
 
-	// Достаём значение куки из заголовка Set-Cookie
 	var cookie *http.Cookie
 	for _, c := range w.Result().Cookies() {
 		if c.Name == authCookieName {
@@ -137,7 +137,6 @@ func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 		t.Fatalf("no session cookie found")
 	}
 
-	// Запрос /api/history с валидной кукой должен пройти (не 401)
 	req = httptest.NewRequest("GET", "/api/history", nil)
 	req.RemoteAddr = "203.0.113.5:1234"
 	req.AddCookie(cookie)
@@ -145,67 +144,6 @@ func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 	srv.srv.Handler.ServeHTTP(w, req)
 	if w.Code == http.StatusUnauthorized {
 		t.Errorf("auth api call with cookie should not be 401, got %d", w.Code)
-	}
-}
-
-func TestAuthLanBypass(t *testing.T) {
-	store := &fakeStore{}
-	srv := newTestServer(store)
-	srv.effective = func() config.App {
-		cfg := testEffective()
-		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
-		return cfg
-	}
-
-	// Настраиваем учётку
-	setupBody := []byte(`{"username":"admin","password":"adminpass123"}`)
-	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupBody))
-	w := httptest.NewRecorder()
-	srv.srv.Handler.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("setup failed: %d", w.Code)
-	}
-
-	// Запрос /api/history с локального адреса без куки должен пройти (обход для LAN)
-	req = httptest.NewRequest("GET", "/api/history", nil)
-	req.RemoteAddr = "192.168.1.10:1234"
-	w = httptest.NewRecorder()
-	srv.srv.Handler.ServeHTTP(w, req)
-	if w.Code == http.StatusUnauthorized {
-		t.Errorf("local api call should not be 401 with LAN bypass, got %d", w.Code)
-	}
-}
-
-func TestAuthOpenUntilConfigured(t *testing.T) {
-	store := &fakeStore{}
-	srv := newTestServer(store)
-	srv.effective = func() config.App {
-		cfg := testEffective()
-		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
-		return cfg
-	}
-
-	// Запрос /api/history с нелокального адреса без настроенной авторизации должен пройти (учётки ещё нет)
-	req := httptest.NewRequest("GET", "/api/history", nil)
-	req.RemoteAddr = "203.0.113.5:1234"
-	w := httptest.NewRecorder()
-	srv.srv.Handler.ServeHTTP(w, req)
-	if w.Code == http.StatusUnauthorized {
-		t.Errorf("api call without configured auth should not be 401, got %d", w.Code)
-	}
-
-	// GET /api/auth/state должен показать, что не настроено
-	req = httptest.NewRequest("GET", "/api/auth/state", nil)
-	w = httptest.NewRecorder()
-	srv.srv.Handler.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("auth/state failed: %d", w.Code)
-	}
-
-	var state map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &state)
-	if state["configured"].(bool) {
-		t.Error("auth state should show configured=false before setup")
 	}
 }
 
@@ -218,8 +156,8 @@ func TestLoadAuthCachesAcrossRequests(t *testing.T) {
 		req.RemoteAddr = "203.0.113.5:1234"
 		w := httptest.NewRecorder()
 		srv.srv.Handler.ServeHTTP(w, req)
-		if w.Code == http.StatusUnauthorized {
-			t.Fatalf("request %d: unexpected 401", i)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("request %d: code %d, want 401", i, w.Code)
 		}
 	}
 	if store.getSettingCalls != 1 {
@@ -232,11 +170,10 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: false, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, TrustedProxy: false}
 		return cfg
 	}
 
-	// прогреваем кеш состоянием "не настроено"
 	req := httptest.NewRequest("GET", "/api/auth/state", nil)
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -246,16 +183,16 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 
 	setupBody := []byte(`{"username":"admin","password":"newpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupBody))
+	req.Host = "192.168.1.5:6410"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("setup failed: %d, body: %s", w.Code, w.Body.String())
 	}
-	if store.getSettingCalls != 1 {
-		t.Fatalf("GetSetting calls after setup = %d, want 1 (setup itself must reuse the cache)", store.getSettingCalls)
+	if store.getSettingCalls != 2 {
+		t.Fatalf("GetSetting calls after setup = %d, want 2 (setup rereads the DB once under authMu)", store.getSettingCalls)
 	}
 
-	// следующий защищённый запрос должен увидеть новый документ без ещё одного GetSetting
 	req = httptest.NewRequest("GET", "/api/history", nil)
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
@@ -263,11 +200,10 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauth request after setup: expected 401, got %d", w.Code)
 	}
-	if store.getSettingCalls != 1 {
-		t.Fatalf("GetSetting calls after protected request = %d, want 1 (cache went stale)", store.getSettingCalls)
+	if store.getSettingCalls != 2 {
+		t.Fatalf("GetSetting calls after protected request = %d, want 2 (cache went stale)", store.getSettingCalls)
 	}
 
-	// неверный пароль должен быть отвергнут
 	wrongBody := []byte(`{"username":"admin","password":"wrongpass"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(wrongBody))
 	req.RemoteAddr = "203.0.113.5:1234"
@@ -277,7 +213,6 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 		t.Fatalf("login with wrong password: expected 401, got %d", w.Code)
 	}
 
-	// только что заданные учётные данные должны работать
 	loginBody := []byte(`{"username":"admin","password":"newpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginBody))
 	req.RemoteAddr = "203.0.113.5:1234"
@@ -307,8 +242,8 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 		t.Fatal("authorized request with new session cookie got 401")
 	}
 
-	if store.getSettingCalls != 1 {
-		t.Fatalf("GetSetting calls at end = %d, want 1 (cache must serve every read)", store.getSettingCalls)
+	if store.getSettingCalls != 2 {
+		t.Fatalf("GetSetting calls at end = %d, want 2 (cache must serve every read)", store.getSettingCalls)
 	}
 }
 
@@ -317,7 +252,7 @@ func TestLoginPageServed(t *testing.T) {
 	srv := newTestServer(store)
 	srv.effective = func() config.App {
 		cfg := testEffective()
-		cfg.Web = config.Web{Listen: ":0", Enabled: true, LanBypass: true, TrustedProxy: false}
+		cfg.Web = config.Web{Listen: ":0", Enabled: true, TrustedProxy: false}
 		return cfg
 	}
 
@@ -329,5 +264,820 @@ func TestLoginPageServed(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`id="auth-card"`)) {
 		t.Error("login page should contain id=\"auth-card\"")
+	}
+}
+
+func newConfiguredAuthServer(t *testing.T, web config.Web) *Server {
+	t.Helper()
+	srv := newBareServer(&fakeStore{})
+	srv.effective = func() config.App {
+		cfg := testEffective()
+		cfg.Web = web
+		return cfg
+	}
+	setupBody := []byte(`{"username":"admin","password":"adminpass123"}`)
+	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupBody))
+	req.Host = "192.168.1.5:6410"
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("setup failed: %d", w.Code)
+	}
+	return srv
+}
+
+func TestCrossOriginStateChangeBlocked(t *testing.T) {
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		origin string
+		auth   bool
+		want   int
+	}{
+		{"logout foreign origin", "POST", "/api/auth/logout", "http://evil.example", false, http.StatusForbidden},
+		{"logout same origin", "POST", "/api/auth/logout", "http://192.168.1.5:6410", false, http.StatusOK},
+		{"logout no origin", "POST", "/api/auth/logout", "", false, http.StatusOK},
+		{"logout null origin", "POST", "/api/auth/logout", "null", false, http.StatusForbidden},
+		{"session delete foreign origin", "DELETE", "/api/ignore/abc", "http://evil.example", true, http.StatusForbidden},
+		{"session delete same origin", "DELETE", "/api/ignore/abc", "http://192.168.1.5:6410", true, http.StatusNoContent},
+		{"session get foreign origin", "GET", "/api/history", "http://evil.example", true, http.StatusOK},
+		{"no auth force-all foreign origin", "POST", "/api/plan/force-all", "http://evil.example", false, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newBareServer(&fakeStore{})
+			var cookie *http.Cookie
+			if tc.auth {
+				srv = newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+				cookie = loginCookie(t, srv)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			if cookie != nil {
+				req.AddCookie(cookie)
+			}
+			req.RemoteAddr = "192.168.1.10:1234"
+			req.Host = "192.168.1.5:6410"
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			w := httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Errorf("code %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
+}
+
+func TestCrossOriginAllowedHostOrigin(t *testing.T) {
+	cases := []struct {
+		name    string
+		allowed []string
+		want    int
+	}{
+		{"allowed host behind proxy", []string{"my.keenetic.pro"}, http.StatusOK},
+		{"not in allowed hosts", nil, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(&fakeStore{})
+			srv.effective = func() config.App {
+				cfg := testEffective()
+				cfg.Web = config.Web{Listen: ":0", AllowedHosts: tc.allowed}
+				return cfg
+			}
+			req := httptest.NewRequest("POST", "/api/auth/logout", nil)
+			req.RemoteAddr = "192.168.1.10:1234"
+			req.Host = "192.168.1.200:6410"
+			req.Header.Set("Origin", "https://my.keenetic.pro")
+			w := httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Errorf("code %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
+}
+
+type lockedSettingStore struct {
+	fakeStore
+	mu sync.Mutex
+}
+
+func (l *lockedSettingStore) GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.fakeStore.GetSetting(ctx, key)
+}
+
+func (l *lockedSettingStore) SaveSetting(ctx context.Context, key string, value json.RawMessage) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.fakeStore.SaveSetting(ctx, key, value)
+}
+
+func authState(t *testing.T, srv *Server, cookie *http.Cookie) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/auth/state", nil)
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.5:6410"
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("auth/state: %d", w.Code)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func sessionCookie(w *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range w.Result().Cookies() {
+		if c.Name == authCookieName {
+			return c
+		}
+	}
+	return nil
+}
+
+func TestLegacyLanBypassEnvIgnored(t *testing.T) {
+	cfg := config.DefaultApp()
+	if err := envconfig.ProcessWith(context.Background(), &envconfig.Config{
+		Target:   &cfg,
+		Lookuper: envconfig.MapLookuper(map[string]string{"WEB_LAN_BYPASS": "true", "WEB_TRUSTED_PROXY": "true"}),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := newConfiguredAuthServer(t, cfg.Web)
+	cases := []struct{ remote, host, xff string }{
+		{"192.168.1.10:1234", "192.168.1.5:6410", ""},
+		{"192.168.1.10:1234", "localhost:6410", ""},
+		{"192.168.1.10:1234", "[::1]:6410", ""},
+		{"192.168.1.10:1234", "nas:6410", ""},
+		{"192.168.1.10:1234", "ripperr.lan", ""},
+		{"172.18.0.1:5000", "192.168.1.5:6410", "8.8.8.8, 192.168.1.20"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", "/api/history", nil)
+		req.RemoteAddr = tc.remote
+		req.Host = tc.host
+		if tc.xff != "" {
+			req.Header.Set("X-Forwarded-For", tc.xff)
+		}
+		w := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s via %s xff %q: code %d, want 401", tc.host, tc.remote, tc.xff, w.Code)
+		}
+	}
+}
+
+func TestApiClosedUntilAccount(t *testing.T) {
+	srv := newBareServer(&fakeStore{})
+	cases := []struct{ method, path, body string }{
+		{"GET", "/api/history", ""},
+		{"GET", "/api/status", ""},
+		{"POST", "/api/run", ""},
+		{"POST", "/api/integrations/secret", `{"field":"qbit.password"}`},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.RemoteAddr = "192.168.1.10:1234"
+		req.Host = "192.168.1.5:6410"
+		w := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "account setup required") {
+			t.Errorf("%s %s: code %d body %s, want 401 account setup required", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+	state := authState(t, srv, nil)
+	if state["configured"] != false || state["authenticated"] != false {
+		t.Errorf("state = %v, want configured false, authenticated false", state)
+	}
+}
+
+func TestSetupHostCheck(t *testing.T) {
+	keenetic := []string{"my.keenetic.pro"}
+	cases := []struct {
+		host    string
+		allowed []string
+		want    int
+	}{
+		{"192.168.1.5:6410", nil, http.StatusOK},
+		{"localhost:6410", nil, http.StatusOK},
+		{"[::1]:6410", nil, http.StatusOK},
+		{"nas:6410", nil, http.StatusOK},
+		{"ripperr.lan", nil, http.StatusOK},
+		{"box.home.arpa", nil, http.StatusOK},
+		{"svc.internal", nil, http.StatusOK},
+		{"nas.local.", nil, http.StatusOK},
+		{"MY.Keenetic.PRO", keenetic, http.StatusOK},
+		{"evil.example.com:6410", nil, http.StatusForbidden},
+		{"evil.example.com:6410", keenetic, http.StatusForbidden},
+		{"my.keenetic.pro", nil, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			srv := newBareServer(&fakeStore{})
+			srv.effective = func() config.App {
+				cfg := testEffective()
+				cfg.Web = config.Web{Listen: ":0", Enabled: true, AllowedHosts: tc.allowed}
+				return cfg
+			}
+			req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+			req.RemoteAddr = "192.168.1.10:1234"
+			req.Host = tc.host
+			w := httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("setup code %d, want %d, body %s", w.Code, tc.want, w.Body.String())
+			}
+			if tc.want == http.StatusForbidden {
+				if state := authState(t, srv, nil); state["configured"] != false {
+					t.Errorf("configured = %v after rejected setup, want false", state["configured"])
+				}
+			}
+		})
+	}
+}
+
+func TestSetupCreatesOneAccount(t *testing.T) {
+	srv := New(&lockedSettingStore{}, func() {}, testEffective, ":0", runner.NewState(), nil)
+	const n = 8
+	recs := make([]*httptest.ResponseRecorder, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body := fmt.Sprintf(`{"username":"admin","password":"adminpass%d"}`, i)
+			req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(body))
+			req.RemoteAddr = "192.168.1.10:1234"
+			req.Host = "192.168.1.5:6410"
+			recs[i] = httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(recs[i], req)
+		}()
+	}
+	wg.Wait()
+
+	winner := -1
+	oks := 0
+	for i, w := range recs {
+		switch w.Code {
+		case http.StatusOK:
+			oks++
+			winner = i
+		case http.StatusConflict, http.StatusTooManyRequests:
+		default:
+			t.Errorf("setup %d: code %d, want 200, 409 or 429", i, w.Code)
+		}
+	}
+	if oks != 1 {
+		t.Fatalf("successful setups = %d, want exactly 1", oks)
+	}
+
+	req := httptest.NewRequest("GET", "/api/history", nil)
+	req.AddCookie(sessionCookie(recs[winner]))
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("history with winner cookie: code %d, want 200", w.Code)
+	}
+
+	req = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(fmt.Sprintf(`{"username":"admin","password":"adminpass%d"}`, winner)))
+	req.RemoteAddr = "203.0.113.5:1234"
+	w = httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("login with winner password: code %d, want 200", w.Code)
+	}
+}
+
+func TestAuthStateHidesUsername(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	state := authState(t, srv, nil)
+	if state["username"] != "" {
+		t.Errorf("username without cookie = %v, want empty", state["username"])
+	}
+	if _, ok := state["lan_bypass"]; ok {
+		t.Errorf("state has lan_bypass key: %v", state)
+	}
+
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+	req.RemoteAddr = "203.0.113.5:1234"
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
+	}
+	state = authState(t, srv, sessionCookie(w))
+	if state["username"] != "admin" || state["authenticated"] != true {
+		t.Errorf("state with cookie = %v, want username admin, authenticated true", state)
+	}
+}
+
+func loginCookie(t *testing.T, srv *Server) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.5:6410"
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	cookie := sessionCookie(w)
+	if w.Code != http.StatusOK || cookie == nil {
+		t.Fatalf("login: code %d, cookie %v", w.Code, cookie)
+	}
+	return cookie
+}
+
+func TestSetupRechecksStoredAccount(t *testing.T) {
+	stored := json.RawMessage(`{"username":"owner","salt":"c2FsdA","hash":"aGFzaA","secret":"c2VjcmV0","created_at":"2026-10-22T00:00:00Z"}`)
+	store := &fakeStore{settings: map[string]json.RawMessage{sqlite.SettingAuth: stored}}
+	srv := newBareServer(store)
+	// так кеш выглядит, если чтение до setup записало nil уже после сохранения аккаунта
+	srv.authCache.set(nil)
+
+	req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.5:6410"
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Errorf("setup over stored account: code %d, want 409", w.Code)
+	}
+	if got := string(store.settings[sqlite.SettingAuth]); got != string(stored) {
+		t.Errorf("stored account overwritten: %s", got)
+	}
+}
+
+func TestAuthCacheFillKeepsSaved(t *testing.T) {
+	var c authCache
+	saved := &authDoc{Username: "admin"}
+	c.set(saved)
+	if got := c.fill(nil); got != saved {
+		t.Errorf("fill(nil) after set = %v, want saved doc", got)
+	}
+	if doc, _ := c.get(); doc != saved {
+		t.Errorf("cache = %v after stale fill, want saved doc", doc)
+	}
+}
+
+const (
+	rightLogin = `{"username":"admin","password":"adminpass123"}`
+	wrongLogin = `{"username":"admin","password":"wrongpass1"}`
+)
+
+func loginFrom(srv *Server, remote, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.RemoteAddr = remote
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func TestLoginLocksAfterFiveFailures(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const remote = "198.51.100.7:1000"
+	for i := range 5 {
+		if w := loginFrom(srv, remote, wrongLogin); w.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong login %d: code %d, want 401", i+1, w.Code)
+		}
+	}
+	if w := loginFrom(srv, remote, wrongLogin); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("6th wrong login: code %d, want 429", w.Code)
+	}
+	if w := loginFrom(srv, remote, rightLogin); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("right login during lock: code %d, want 429", w.Code)
+	}
+}
+
+func fillHashSlots(srv *Server) {
+	for range cap(srv.hashSlots) {
+		srv.hashSlots <- struct{}{}
+	}
+}
+
+func drainHashSlots(srv *Server) {
+	for range cap(srv.hashSlots) {
+		<-srv.hashSlots
+	}
+}
+
+func errorText(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var resp errorResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error body %q: %v", w.Body.String(), err)
+	}
+	return resp.Error
+}
+
+func TestHashSlotsLimit(t *testing.T) {
+	const busy = "too many login attempts at once, try later"
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	if got := cap(srv.hashSlots); got != 2 {
+		t.Fatalf("hash slots = %d, want 2", got)
+	}
+
+	fillHashSlots(srv)
+	// отказ по слоту не проверял пароль, поэтому не должен копиться в счетчике неудач
+	for i := range 6 {
+		w := loginFrom(srv, "198.51.100.7:1000", wrongLogin)
+		if w.Code != http.StatusTooManyRequests {
+			t.Fatalf("login %d with busy slots: code %d, want 429", i+1, w.Code)
+		}
+		if got := errorText(t, w); got != busy {
+			t.Fatalf("login with busy slots: error %q, want %q", got, busy)
+		}
+	}
+	if w := loginFrom(srv, "198.51.100.7:1000", rightLogin); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("right login with busy slots: code %d, want 429", w.Code)
+	}
+	drainHashSlots(srv)
+	if w := loginFrom(srv, "198.51.100.7:1000", rightLogin); w.Code != http.StatusOK {
+		t.Fatalf("login after drain: code %d, want 200", w.Code)
+	}
+
+	bare := newBareServer(&fakeStore{})
+	fillHashSlots(bare)
+	req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(rightLogin))
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.5:6410"
+	w := httptest.NewRecorder()
+	bare.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("setup with busy slots: code %d, want 429", w.Code)
+	}
+	if got := errorText(t, w); got != busy {
+		t.Fatalf("setup with busy slots: error %q, want %q", got, busy)
+	}
+	if state := authState(t, bare, nil); state["configured"] != false {
+		t.Errorf("configured = %v after busy setup, want false", state["configured"])
+	}
+}
+
+func TestLoginLockExpiresAndSuccessResets(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	srv.loginFails.now = func() time.Time { return clock }
+	const remote = "198.51.100.7:1000"
+
+	for range 5 {
+		loginFrom(srv, remote, wrongLogin)
+	}
+	if w := loginFrom(srv, remote, rightLogin); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("right login during lock: code %d, want 429", w.Code)
+	}
+	if w := loginFrom(srv, "198.51.100.8:1000", wrongLogin); w.Code != http.StatusUnauthorized {
+		t.Fatalf("other address during lock: code %d, want 401", w.Code)
+	}
+	clock = clock.Add(61 * time.Second)
+	if w := loginFrom(srv, remote, rightLogin); w.Code != http.StatusOK {
+		t.Fatalf("right login after lock: code %d, want 200", w.Code)
+	}
+
+	for i, body := range []string{wrongLogin, wrongLogin, wrongLogin, wrongLogin, rightLogin, wrongLogin, wrongLogin, wrongLogin, wrongLogin} {
+		if w := loginFrom(srv, remote, body); w.Code == http.StatusTooManyRequests {
+			t.Fatalf("attempt %d after success reset: code 429", i+1)
+		}
+	}
+
+	clock = clock.Add(61 * time.Second)
+	for i := range 4 {
+		if w := loginFrom(srv, remote, wrongLogin); w.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong login %d in a new window: code %d, want 401", i+1, w.Code)
+		}
+	}
+}
+
+func TestLoginConcurrentAttemptsBounded(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const n = 12
+	// слотов на всех, чтобы лимит держал только счетчик попыток
+	srv.hashSlots = make(chan struct{}, n)
+	recs := make([]*httptest.ResponseRecorder, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recs[i] = loginFrom(srv, "198.51.100.7:1000", wrongLogin)
+		}()
+	}
+	wg.Wait()
+
+	checked := 0
+	for i, w := range recs {
+		switch w.Code {
+		case http.StatusUnauthorized:
+			checked++
+		case http.StatusTooManyRequests:
+		default:
+			t.Errorf("attempt %d: code %d, want 401 or 429", i, w.Code)
+		}
+	}
+	if checked == 0 || checked > maxLoginFails {
+		t.Errorf("password checks = %d, want 1..%d", checked, maxLoginFails)
+	}
+}
+
+func TestLoginThrottleKeyBehindTrustedProxy(t *testing.T) {
+	cases := []struct {
+		name    string
+		trusted bool
+		remote  string
+		xff     []string
+		want    string
+	}{
+		{"last entry", true, "192.168.65.1:1000", []string{"203.0.113.9"}, "203.0.113.9"},
+		{"spoofed left entries", true, "192.168.65.1:1000", []string{"6.6.6.6, 7.7.7.7, 203.0.113.9"}, "203.0.113.9"},
+		{"spoofed earlier header", true, "192.168.65.1:1000", []string{"6.6.6.6", "203.0.113.9"}, "203.0.113.9"},
+		{"garbage left entries", true, "192.168.65.1:1000", []string{"not-an-ip,, ;x, 203.0.113.9"}, "203.0.113.9"},
+		{"garbage last entry", true, "192.168.65.1:1000", []string{"203.0.113.9, garbage"}, "<nil>"},
+		{"public peer", true, "198.51.100.7:1000", []string{"203.0.113.9"}, "198.51.100.7"},
+		{"proxy not trusted", false, "192.168.65.1:1000", []string{"203.0.113.9"}, "192.168.65.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newBareServer(&fakeStore{})
+			srv.effective = func() config.App {
+				cfg := testEffective()
+				cfg.Web.TrustedProxy = tc.trusted
+				return cfg
+			}
+			req := httptest.NewRequest("POST", "/api/auth/login", nil)
+			req.RemoteAddr = tc.remote
+			for _, v := range tc.xff {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			if got := srv.clientIP(req).String(); got != tc.want {
+				t.Errorf("clientIP = %s, want %s", got, tc.want)
+			}
+		})
+	}
+
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true, TrustedProxy: true})
+	for i := range 6 {
+		req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(wrongLogin))
+		req.RemoteAddr = "192.168.65.1:1000"
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.0.0.%d, 203.0.113.9", i))
+		w := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(w, req)
+		want := http.StatusUnauthorized
+		if i == 5 {
+			want = http.StatusTooManyRequests
+		}
+		if w.Code != want {
+			t.Fatalf("wrong login %d with rotated left XFF: code %d, want %d", i+1, w.Code, want)
+		}
+	}
+}
+
+func TestLoginThrottlePrunesExpiredKeys(t *testing.T) {
+	th := newLoginThrottle()
+	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	th.now = func() time.Time { return clock }
+	for range maxLoginFails {
+		th.reserve("locked")
+	}
+	for i := range maxThrottleKeys {
+		th.reserve(fmt.Sprintf("k%d", i))
+	}
+	clock = clock.Add(30 * time.Second)
+	th.reserve("fresh")
+	if got := len(th.fails); got != maxThrottleKeys+2 {
+		t.Fatalf("keys inside the window = %d, want %d", got, maxThrottleKeys+2)
+	}
+	clock = clock.Add(31 * time.Second)
+	th.reserve("next")
+	// fresh еще в своем окне, остальные истекли
+	if got := len(th.fails); got != 2 {
+		t.Fatalf("keys after expiry = %d, want 2", got)
+	}
+	if !th.reserve("locked") {
+		t.Error("expired lock still blocks")
+	}
+}
+
+func historyWith(srv *Server, cookie *http.Cookie, host, referer string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("GET", "/api/history", nil)
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = host
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func logoutWith(srv *Server, cookie *http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/auth/logout", nil)
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.5:6410"
+	req.Header.Set("Origin", "http://192.168.1.5:6410")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func authPost(srv *Server, path, host, origin, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = host
+	req.Header.Set("Origin", origin)
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func testSecret(t *testing.T, srv *Server) []byte {
+	t.Helper()
+	doc, _ := srv.authCache.get()
+	if doc == nil {
+		t.Fatal("no account in cache")
+	}
+	secret, err := base64.RawURLEncoding.DecodeString(doc.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return secret
+}
+
+func TestLogoutRevokesAllSessions(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	b := sessionCookie(loginFrom(srv, "192.168.1.11:1234", rightLogin))
+	if a == nil || b == nil {
+		t.Fatalf("login cookies: A %t, B %t", a != nil, b != nil)
+	}
+
+	w := logoutWith(srv, a)
+	if w.Code != http.StatusOK {
+		t.Fatalf("logout: code %d, want 200", w.Code)
+	}
+	if c := sessionCookie(w); c == nil || c.MaxAge >= 0 {
+		t.Errorf("logout cookie set %t, want a clearing one", c != nil)
+	}
+
+	const host = "192.168.1.5:6410"
+	if w := historyWith(srv, a, host, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("history with logged out cookie A: code %d, want 401", w.Code)
+	}
+	if w := historyWith(srv, b, host, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("history with other session B: code %d, want 401", w.Code)
+	}
+	fresh := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if fresh == nil {
+		t.Fatal("login after logout: no cookie")
+	}
+	if w := historyWith(srv, fresh, host, ""); w.Code != http.StatusOK {
+		t.Errorf("history with new login: code %d, want 200", w.Code)
+	}
+}
+
+func TestLogoutWithoutSessionRevokesNothing(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login: no cookie")
+	}
+	forged := &http.Cookie{Name: authCookieName, Value: signSession([]byte("not the secret"), "admin", time.Now().Add(time.Hour))}
+	for i, c := range []*http.Cookie{nil, forged} {
+		if w := logoutWith(srv, c); w.Code != http.StatusOK {
+			t.Errorf("logout %d (none, forged): code %d, want 200", i, w.Code)
+		}
+	}
+	if w := historyWith(srv, a, "192.168.1.5:6410", ""); w.Code != http.StatusOK {
+		t.Errorf("history with cookie A after foreign logouts: code %d, want 200", w.Code)
+	}
+}
+
+type failingSaveStore struct {
+	fakeStore
+	fail bool
+}
+
+func (f *failingSaveStore) SaveSetting(ctx context.Context, key string, value json.RawMessage) error {
+	if f.fail {
+		return errors.New("disk full")
+	}
+	return f.fakeStore.SaveSetting(ctx, key, value)
+}
+
+func TestLogoutSaveErrorKeepsSession(t *testing.T) {
+	store := &failingSaveStore{}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+	if w := authPost(srv, "/api/auth/setup", "192.168.1.5:6410", "http://192.168.1.5:6410", rightLogin); w.Code != http.StatusOK {
+		t.Fatalf("setup: code %d", w.Code)
+	}
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login: no cookie")
+	}
+	store.fail = true
+
+	w := logoutWith(srv, a)
+	if w.Code != http.StatusInternalServerError || errorText(t, w) != "auth error" {
+		t.Errorf("logout with failing save: code %d body %s, want 500 auth error", w.Code, w.Body.String())
+	}
+	if c := sessionCookie(w); c != nil {
+		t.Errorf("logout with failing save set cookie Max-Age %d, want none", c.MaxAge)
+	}
+	if w := historyWith(srv, a, "192.168.1.5:6410", ""); w.Code != http.StatusOK {
+		t.Errorf("history after failed logout: code %d, want 200", w.Code)
+	}
+}
+
+func TestSessionSlidingRenewal(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	secret := testSecret(t, srv)
+	const host = "192.168.1.5:6410"
+	const referer = "http://192.168.1.5:6410/"
+	cookieAt := func(exp time.Time) *http.Cookie {
+		return &http.Cookie{Name: authCookieName, Value: signSession(secret, "admin", exp)}
+	}
+	now := time.Now()
+	old := cookieAt(now.Add(10 * 24 * time.Hour))
+
+	w := historyWith(srv, old, host, referer)
+	renewed := sessionCookie(w)
+	if w.Code != http.StatusOK || renewed == nil {
+		t.Fatalf("history with 10 day cookie: code %d, renewed %t, want 200 and a renewed cookie", w.Code, renewed != nil)
+	}
+	if !renewed.Expires.After(now.Add(29 * 24 * time.Hour)) {
+		t.Errorf("renewed cookie expires %v, want after now+29d", renewed.Expires)
+	}
+	if w := historyWith(srv, renewed, host, ""); w.Code != http.StatusOK {
+		t.Errorf("history with renewed cookie: code %d, want 200", w.Code)
+	}
+
+	w = historyWith(srv, cookieAt(now.Add(authSessionTTL-time.Minute)), host, referer)
+	if w.Code != http.StatusOK || sessionCookie(w) != nil {
+		t.Errorf("fresh cookie: code %d, Set-Cookie %t, want 200 and none", w.Code, sessionCookie(w) != nil)
+	}
+
+	w = historyWith(srv, old, host, "")
+	if w.Code != http.StatusOK || sessionCookie(w) != nil {
+		t.Errorf("old cookie without Origin and Referer: code %d, Set-Cookie %t, want 200 and none", w.Code, sessionCookie(w) != nil)
+	}
+
+	if w := historyWith(srv, cookieAt(now.Add(-time.Second)), host, referer); w.Code != http.StatusUnauthorized {
+		t.Errorf("expired cookie: code %d, want 401", w.Code)
+	}
+}
+
+func TestSessionCookieSecureFromScheme(t *testing.T) {
+	web := config.Web{Listen: ":0", Enabled: true, AllowedHosts: []string{"my.keenetic.pro"}}
+	srv := newConfiguredAuthServer(t, web)
+
+	w := authPost(srv, "/api/auth/login", "192.168.1.200:6410", "https://my.keenetic.pro", rightLogin)
+	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || !c.Secure {
+		t.Errorf("login over https proxy: code %d, cookie set %t, Secure %t, want Secure", w.Code, c != nil, c != nil && c.Secure)
+	}
+
+	w = authPost(srv, "/api/auth/login", "192.168.1.5:6410", "http://192.168.1.5:6410", rightLogin)
+	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || c.Secure {
+		t.Errorf("login over http: code %d, cookie set %t, Secure %t, want not Secure", w.Code, c != nil, c != nil && c.Secure)
+	}
+
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(rightLogin))
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.5:6410"
+	req.Header.Set("Origin", "http://192.168.1.5:6410")
+	req.Header.Set("Referer", "https://my.keenetic.pro/x")
+	w = httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || c.Secure {
+		t.Errorf("login with http Origin and https Referer: code %d, cookie set %t, Secure %t, want not Secure", w.Code, c != nil, c != nil && c.Secure)
+	}
+
+	old := &http.Cookie{Name: authCookieName, Value: signSession(testSecret(t, srv), "admin", time.Now().Add(10*24*time.Hour))}
+	w = historyWith(srv, old, "192.168.1.200:6410", "https://my.keenetic.pro/x")
+	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || !c.Secure {
+		t.Errorf("renewal over https proxy: code %d, cookie set %t, Secure %t, want Secure", w.Code, c != nil, c != nil && c.Secure)
+	}
+
+	bare := newBareServer(&fakeStore{})
+	bare.effective = func() config.App {
+		cfg := testEffective()
+		cfg.Web = web
+		return cfg
+	}
+	w = authPost(bare, "/api/auth/setup", "192.168.1.200:6410", "https://my.keenetic.pro", rightLogin)
+	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || !c.Secure {
+		t.Errorf("setup over https proxy: code %d, cookie set %t, Secure %t, want Secure", w.Code, c != nil, c != nil && c.Secure)
 	}
 }

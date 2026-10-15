@@ -1,17 +1,39 @@
+import { fetchJSON, showToast } from './api.js';
 import { closeOpenHistFilterSelect, openHistFilterSelect, positionHistFilterPanel, renderHistFilterMain } from './histfilter.js';
 import { ICONS } from './icons.js';
 import { closeOpenNameFilter, openNameFilterWrap } from './namefilter.js';
 import { closeOpenCustomSelect, initCustomSelects, openCustomSelect } from './select.js';
-import { PAGE_SIZE_OPTIONS, html, savePageSize } from './util.js';
+import { PAGE_SIZE_OPTIONS, SECRET_MASK, html, savePageSize } from './util.js';
 
 export let activeErrorPopover = null;
+let closingPopover = null;
+
+export const POP_CLOSE_MS = 130;
+
+export function closeAnimated(el, done) {
+  // запас 30 мс сверху на длительность выхода (--pop-out-dur в overlays.css)
+  if (!el || el.popCloseTimer) return;
+  el.classList.add('is-closing');
+  el.popCloseTimer = setTimeout(function () {
+    el.popCloseTimer = 0;
+    el.classList.remove('is-closing');
+    done();
+  }, POP_CLOSE_MS + 30);
+}
+
+export function cancelClose(el) {
+  if (!el) return;
+  clearTimeout(el.popCloseTimer);
+  el.popCloseTimer = 0;
+  el.classList.remove('is-closing');
+}
 
 export function bindErrorBadges(root) {
   root.querySelectorAll('.status-error-badge').forEach(function (badge) {
     badge.addEventListener('click', function (e) {
       e.stopPropagation();
       const err = badge.getAttribute('data-error') || '';
-      closePopovers();
+      closePopovers(true);
       const pop = document.createElement('div');
       pop.className = 'error-popover';
       pop.textContent = err;
@@ -24,26 +46,49 @@ export function bindErrorBadges(root) {
   });
 }
 
-export function closePopovers() {
-  if (activeErrorPopover) {
-    activeErrorPopover.remove();
-    activeErrorPopover = null;
+export function closePopovers(force) {
+  // force при открытии нового поповера: еще закрывающийся прежний убираем сразу,
+  // иначе он повиснет рядом с новым
+  if (force && closingPopover) {
+    cancelClose(closingPopover);
+    closingPopover.remove();
+    closingPopover = null;
   }
+  const pop = activeErrorPopover;
+  if (!pop) return;
+  activeErrorPopover = null;
+  if (pop.hintOwner) pop.hintOwner.setAttribute('aria-expanded', 'false');
+  clearTimeout(pop.hintTimer);
+  if (force) {
+    pop.remove();
+    return;
+  }
+  closingPopover = pop;
+  closeAnimated(pop, function () {
+    pop.remove();
+    if (closingPopover === pop) closingPopover = null;
+  });
 }
 
 export function initGlobalDismiss() {
-  // ширина может поменяться (поворот, devtools, переход десктоп-мобильный) прямо
-  // при открытой панели; повторяем ту же логику, что и при открытии и смене
-  // содержимого, чтобы устаревший десктопный инлайновый max-height не переехал
-  // в мобильную нижнюю шторку (и наоборот). Отложено на кадр, как и собственная
-  // обработка ресайза в layout.js, чтобы к моменту чтения html.mobile-layout уже
-  // был переключён (слушатель initLayout вешается первым, layout.js)
+  // ширина может смениться при открытой панели (поворот, devtools), и десктопный
+  // max-height уехал бы в мобильную шторку или наоборот. Ждем кадр, как в layout.js,
+  // чтобы html.mobile-layout уже успел переключиться
   window.addEventListener('resize', function () {
     if (!openHistFilterSelect) return;
     requestAnimationFrame(function () {
       if (openHistFilterSelect) positionHistFilterPanel(openHistFilterSelect);
     });
   });
+
+  // на iPhone тап по пустому месту не доходит до document как click, и подсказка
+  // висела. Закрываем по касанию мимо
+  document.addEventListener('pointerdown', function (e) {
+    const pop = activeErrorPopover;
+    if (!pop || pop.contains(e.target)) return;
+    if (pop.hintOwner && pop.hintOwner.contains(e.target)) return;
+    closePopovers();
+  }, true);
 
   document.addEventListener('click', function (e) {
     closePopovers();
@@ -54,13 +99,16 @@ export function initGlobalDismiss() {
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
+      if (activeErrorPopover) {
+        closePopovers();
+        return;
+      }
       const histPanel = openHistFilterSelect && openHistFilterSelect.querySelector('.hist-filter-panel');
       if (openCustomSelect) {
-        // слой селекта, открытый где-то ещё на странице, поглощает первый Escape
+        // первый Escape забирает селект, открытый где-то на странице
         closeOpenCustomSelect();
       } else if (histPanel && histPanel.dataset.filterGroup) {
-        // список групп, открытый внутри попапа фильтра, поглощает первый Escape;
-        // сам попап закрывается только следующим нажатием
+        // первый Escape закрывает список групп, сам попап закроется следующим
         renderHistFilterMain(openHistFilterSelect);
       } else {
         closeOpenHistFilterSelect();
@@ -71,8 +119,9 @@ export function initGlobalDismiss() {
 }
 
 
-export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onChange) {
+export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onChange, opts) {
   const chips = (initialValues || []).slice();
+  const decorate = opts && opts.decorate;
   const chipsEl = chipEl.querySelector('.chip-input-chips');
   const input = chipEl.querySelector('.chip-input-field');
 
@@ -86,13 +135,8 @@ export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onCha
       const chip = document.createElement('span');
       chip.className = 'chip';
       chip.innerHTML = html`<span class="chip-label">${val}</span><button type="button" class="chip-remove" aria-label="${t('common.remove')}">&times;</button>`;
-      chip.querySelector('.chip-remove').addEventListener('click', function () {
-        const i = chips.indexOf(val);
-        if (i !== -1) chips.splice(i, 1);
-        renderChips();
-        renderHints();
-        notifyChange();
-      });
+      if (decorate) decorate(val, chip);
+      chip.querySelector('.chip-remove').addEventListener('click', function () { removeChip(val); });
       chipsEl.appendChild(chip);
     });
   }
@@ -104,6 +148,14 @@ export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onCha
     renderChips();
     renderHints();
     input.value = '';
+    notifyChange();
+  }
+
+  function removeChip(val) {
+    const i = chips.indexOf(val);
+    if (i !== -1) chips.splice(i, 1);
+    renderChips();
+    renderHints();
     notifyChange();
   }
 
@@ -148,6 +200,18 @@ export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onCha
     setSuggestions: function (list) {
       suggestions = list || [];
       renderHints();
+    },
+    // в отличие от ввода руками поле не очищаем: там может быть недописанный адрес
+    add: function (raw) {
+      const val = String(raw || '').trim();
+      if (!val || chips.indexOf(val) !== -1) return;
+      chips.push(val);
+      renderChips();
+      renderHints();
+      notifyChange();
+    },
+    remove: function (val) {
+      if (chips.indexOf(val) !== -1) removeChip(val);
     },
   };
 }
@@ -226,29 +290,133 @@ export function bindPageSizeSelect(root, onChange) {
 }
 
 
+function hintLabel(hint) {
+  const prev = hint.previousElementSibling;
+  const row = hint.closest('.form-submit-row') || (prev && prev.matches('.form-submit-row') ? prev : null);
+  if (row) {
+    const btns = row.querySelectorAll(':scope > .btn');
+    if (btns.length) return btns[btns.length - 1];
+  }
+  const pick = function (el) {
+    if (!el) return null;
+    const all = el.querySelectorAll('.form-label, .form-switch > span');
+    return all.length ? all[all.length - 1] : null;
+  };
+  // подсказка бывает вне группы: под рядом полей или в карточке, где подпись это заголовок
+  const group = hint.closest('.form-group');
+  const card = hint.closest('.card');
+  return pick(group) || pick(hint.previousElementSibling) || (card && card.querySelector('.card-title'));
+}
+
+export function initHintToggles(root) {
+  // пояснения под полями съедали по две-три строки, так что прячем их за кнопку (i).
+  // Предупреждения и живые подсказки с id остаются на виду
+  (root || document).querySelectorAll('.form-hint:not(.form-hint-warn):not(.form-hint-keep):not([id])').forEach(function (hint) {
+    if (hint.dataset.hintInit) return;
+    const label = hintLabel(hint);
+    if (!label) return;
+    hint.dataset.hintInit = '1';
+    hint.classList.add('form-hint-collapsed');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hint-toggle';
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-label', t('common.moreInfo'));
+    btn.innerHTML = ICONS.info;
+    btn.addEventListener('click', function (e) {
+      // кнопка внутри label переключателя, без этого клик щелкал бы его
+      e.preventDefault();
+      e.stopPropagation();
+      const wasOpen = activeErrorPopover && activeErrorPopover.hintOwner === btn;
+      if (wasOpen) {
+        closePopovers();
+        return;
+      }
+      closePopovers(true);
+      const pop = document.createElement('div');
+      pop.className = 'error-popover hint-popover';
+      pop.setAttribute('role', 'tooltip');
+      pop.textContent = hint.textContent;
+      pop.hintOwner = btn;
+      document.body.appendChild(pop);
+      const rect = btn.getBoundingClientRect();
+      const left = Math.max(8, Math.min(rect.left + rect.width / 2 - pop.offsetWidth / 2, window.innerWidth - pop.offsetWidth - 8));
+      pop.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+      pop.style.left = (left + window.scrollX) + 'px';
+      btn.setAttribute('aria-expanded', 'true');
+      activeErrorPopover = pop;
+      // если про пояснение забыли, пусть закроется само
+      pop.hintTimer = setTimeout(function () {
+        if (activeErrorPopover === pop) closePopovers();
+      }, 10000);
+    });
+    // у переключателя и кнопки (i) встает соседом в той же flex-строке, внутри span она уехала бы на вторую строку
+    if (label.matches('.form-switch > span, .form-submit-row > .btn')) label.after(btn);
+    else label.appendChild(btn);
+  });
+}
+
+const maskedRoots = new WeakSet();
+
 export function initPasswordToggles(root) {
-  (root || document).querySelectorAll('.input-password-wrap').forEach(function (wrap) {
+  const scope = root || document;
+  if (!maskedRoots.has(scope)) {
+    maskedRoots.add(scope);
+    // маску меняем только целиком: любая правка сначала чистит поле,
+    // иначе выйдут звездочки вперемешку с мусором
+    scope.addEventListener('beforeinput', function (e) {
+      const target = e.target;
+      if (!(target instanceof HTMLInputElement) || !target.value.includes(SECRET_MASK)) return;
+      target.value = '';
+      if (String(e.inputType).startsWith('delete')) {
+        e.preventDefault();
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+  }
+  scope.querySelectorAll('.input-password-wrap').forEach(function (wrap) {
     if (wrap.dataset.passwordInit) return;
     wrap.dataset.passwordInit = '1';
     const input = wrap.querySelector('.input');
     const btn = wrap.querySelector('.input-password-toggle');
     if (!input || !btn) return;
-    btn.addEventListener('click', function () {
-      const revealed = input.classList.contains('input-secure-revealed') ||
-        (!input.classList.contains('input-secure') && input.type === 'text');
+    function setVisible(show) {
       if (input.classList.contains('input-secure')) {
-        input.classList.toggle('input-secure-revealed', !revealed);
+        input.classList.toggle('input-secure-revealed', show);
       } else {
-        input.type = revealed ? 'password' : 'text';
+        input.type = show ? 'text' : 'password';
       }
-      const nowVisible = input.classList.contains('input-secure-revealed') ||
-        (!input.classList.contains('input-secure') && input.type === 'text');
       const iconEl = btn.querySelector('[data-icon]');
       if (iconEl) {
-        iconEl.setAttribute('data-icon', nowVisible ? 'eye' : 'eyeHidden');
-        iconEl.innerHTML = ICONS[nowVisible ? 'eye' : 'eyeHidden'];
+        iconEl.setAttribute('data-icon', show ? 'eye' : 'eyeHidden');
+        iconEl.innerHTML = ICONS[show ? 'eye' : 'eyeHidden'];
       }
-      btn.setAttribute('aria-label', t(nowVisible ? 'trackers.hideCredentials' : 'trackers.showCredentials'));
+      btn.setAttribute('aria-label', t(show ? 'trackers.hideCredentials' : 'trackers.showCredentials'));
+    }
+    btn.addEventListener('click', async function () {
+      if (btn.dataset.revealing) return;
+      const url = input.dataset.reveal;
+      const field = input.dataset.revealField;
+      if (input.value === SECRET_MASK && url && field) {
+        btn.dataset.revealing = '1';
+        try {
+          const res = await fetchJSON(url, { method: 'POST', body: JSON.stringify({ field }) });
+          // пока шел запрос, поле могли поменять или переключить на другой клиент, тогда ответ уже чужой
+          if (input.value === SECRET_MASK && input.dataset.revealField === field) {
+            input.value = res.value;
+            setVisible(true);
+            input.dispatchEvent(new CustomEvent('secretreveal', { bubbles: true, detail: { value: res.value } }));
+          }
+        } catch (err) {
+          showToast(t('common.revealFailed') + ': ' + err.message, 'error');
+        } finally {
+          delete btn.dataset.revealing;
+        }
+        return;
+      }
+      const revealed = input.classList.contains('input-secure-revealed') ||
+        (!input.classList.contains('input-secure') && input.type === 'text');
+      setVisible(!revealed);
     });
   });
 }

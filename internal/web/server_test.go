@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"ripperr/internal/config"
 	"ripperr/internal/helper/breakeralerts"
+	"ripperr/internal/manager/client/deluge"
 	"ripperr/internal/manager/client/transmission"
 	"ripperr/internal/model"
 	"ripperr/internal/model/storage"
@@ -40,6 +42,7 @@ type fakeStore struct {
 	forceAllFilter   storage.CheckLogFilter
 	purgedCategories []string
 	purgedRows       int64
+	deletedTrackers  []int
 }
 
 func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
@@ -216,12 +219,36 @@ func (f *fakeStore) PurgeCategoriesExcept(_ context.Context, allowed []string) (
 	return f.purgedRows, nil
 }
 
+func (f *fakeStore) DeleteTracker(_ context.Context, trackerID int) error {
+	f.deletedTrackers = append(f.deletedTrackers, trackerID)
+	return nil
+}
+
 func (f *fakeStore) Ping(context.Context) error {
 	return f.pingErr
 }
 
-func newTestServer(store *fakeStore) *Server {
+func newBareServer(store *fakeStore) *Server {
 	return New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+}
+
+var testSessionSecret = []byte("0123456789abcdef0123456789abcdef")
+
+func withTestSession(srv *Server) *Server {
+	// с аккаунтом в кеше API уже не открыт, поэтому куку подставляем, если у теста нет своей
+	srv.authCache.set(&authDoc{Username: "admin", Secret: base64.RawURLEncoding.EncodeToString(testSessionSecret)})
+	next := srv.srv.Handler
+	srv.srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := r.Cookie(authCookieName); err != nil {
+			r.AddCookie(&http.Cookie{Name: authCookieName, Value: signSession(testSessionSecret, "admin", time.Now().Add(authSessionTTL))})
+		}
+		next.ServeHTTP(w, r)
+	})
+	return srv
+}
+
+func newTestServer(store *fakeStore) *Server {
+	return withTestSession(newBareServer(store))
 }
 
 func testEffective() config.App {
@@ -261,7 +288,7 @@ func (f *fakeQbitClient) List(context.Context, model.FilterOptions) ([]*model.En
 	return f.entries, nil
 }
 
-func (f *fakeQbitClient) ForceRedownload(ctx context.Context, _ string) error {
+func (f *fakeQbitClient) ForceRedownload(ctx context.Context, _ string, _ model.RedownloadOptions) error {
 	if f.redownloadTracker != nil {
 		f.redownloadTracker.enter()
 		defer f.redownloadTracker.leave()
@@ -673,7 +700,6 @@ func TestPutIntegrationsMerge(t *testing.T) {
 }
 
 func TestPutIntegrationsAutoResolvesChatID(t *testing.T) {
-	// подменяет endpoint getUpdates у Telegram
 	fakeTelegram := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true,"result":[{"message":{"chat":{"id":777}}}]}`))
 	}))
@@ -1021,8 +1047,7 @@ func TestPostPlanForceQueueFull(t *testing.T) {
 	state := runner.NewState()
 	srv := New(store, func() {}, testEffective, ":0", state, nil)
 
-	// очередь форса ограничена; вычерпываем её, чтобы RequestForce начал возвращать
-	// false, вместо того чтобы зашивать здесь приватную ёмкость пакета
+	// забиваем очередь форса до false, чтобы не зашивать сюда приватную емкость пакета
 	for state.RequestForce("filler") {
 	}
 
@@ -1069,7 +1094,7 @@ func TestPostPlanForceAll(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	// h2 уже был форсирован, поэтому в счёт изменённых он не попадает
+	// h2 уже был форсирован и в счет измененных не идет
 	if resp.Updated != 1 {
 		t.Fatalf("updated = %d, want 1", resp.Updated)
 	}
@@ -1544,24 +1569,125 @@ func TestHealthzSuccess(t *testing.T) {
 	}
 }
 
-func TestHealthzDatabaseError(t *testing.T) {
-	store := &fakeStore{pingErr: fmt.Errorf("connection failed")}
-	srv := newTestServer(store)
+func TestHealthzAlwaysOK(t *testing.T) {
+	srv := newTestServer(&fakeStore{pingErr: fmt.Errorf("connection failed")})
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
 	srv.handleHealthz(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if strings.TrimSpace(w.Body.String()) != `{"status":"ok"}` {
+		t.Fatalf("body = %q", w.Body.String())
+	}
+}
+
+func TestReadyz(t *testing.T) {
+	srv := newTestServer(&fakeStore{})
+	w := httptest.NewRecorder()
+	srv.handleReadyz(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"status":"ok"}` {
+		t.Fatalf("ok case: %d %q", w.Code, w.Body.String())
+	}
+
+	srv = newTestServer(&fakeStore{pingErr: fmt.Errorf("connection failed")})
+	w = httptest.NewRecorder()
+	srv.handleReadyz(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", w.Code)
 	}
-	var resp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatal(err)
+	if strings.TrimSpace(w.Body.String()) != `{"status":"error"}` {
+		t.Fatalf("body = %q, must carry no error text", w.Body.String())
 	}
-	if resp["status"] != "error" {
-		t.Fatalf("status = %q, want error", resp["status"])
+}
+
+func TestProbesAndMetricsBypassSessionAuth(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	base := srv.effective
+	srv.effective = func() config.App {
+		cfg := base()
+		cfg.Metrics.Token = "tok"
+		return cfg
 	}
-	if resp["error"] != "connection failed" {
-		t.Fatalf("error = %q, want connection failed", resp["error"])
+	for _, path := range []string{"/healthz", "/readyz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "203.0.113.5:1234"
+		w := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s without cookie: %d", path, w.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.RemoteAddr = "203.0.113.5:1234"
+	req.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("/metrics with bearer and no cookie: %d", w.Code)
+	}
+}
+
+func TestMetricsGate(t *testing.T) {
+	reg := breakeralerts.New()
+	reg.Open("rutracker", "circuit open")
+	srv := New(&fakeStore{}, func() {}, func() config.App { return config.App{} }, ":0", runner.NewState(), reg)
+	do := func(auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.RemoteAddr = "192.168.1.5:1234"
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		w := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := do("Bearer anything"); w.Code != http.StatusNotFound {
+		t.Fatalf("no token configured: %d, want 404", w.Code)
+	}
+
+	srv.effective = func() config.App {
+		return config.App{
+			Metrics: config.Metrics{Token: "s3cret"},
+			Tracker: config.Tracker{
+				"rutracker": {Enabled: true},
+				"kinozal":   {Enabled: true},
+				"off":       {Enabled: false},
+			},
+		}
+	}
+	for _, auth := range []string{"", "Bearer wrong", "Basic s3cret", "s3cret"} {
+		w := do(auth)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("auth %q: %d, want 401", auth, w.Code)
+		}
+		if got := w.Header().Get("WWW-Authenticate"); got != "Bearer" {
+			t.Fatalf("auth %q: WWW-Authenticate = %q", auth, got)
+		}
+	}
+
+	w := do("Bearer s3cret")
+	if w.Code != http.StatusOK {
+		t.Fatalf("right token: %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/plain; version=0.0.4; charset=utf-8" {
+		t.Fatalf("content type = %q", ct)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"# TYPE ripperr_checks_total counter",
+		"# TYPE ripperr_notifications_total counter",
+		"# TYPE ripperr_tracker_circuit_open gauge",
+		`ripperr_tracker_circuit_open{tracker="kinozal"} 0`,
+		`ripperr_tracker_circuit_open{tracker="rutracker"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body misses %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `tracker="off"`) {
+		t.Fatalf("disabled tracker exported:\n%s", body)
 	}
 }
 
@@ -1581,7 +1707,6 @@ func TestHandleRedownload(t *testing.T) {
 	store := &fakeStore{}
 	srv := newTestServer(store)
 
-	// Проверяем успех
 	testURL := "https://rutracker.org/forum/viewtopic.php?t=123"
 	testURLHash := storagePkg.URLHash(testURL)
 	entries := []*model.Entry{
@@ -1608,7 +1733,6 @@ func TestHandleRedownload(t *testing.T) {
 		t.Fatal("ok should be true")
 	}
 
-	// Проверяем, что торрент не найден
 	managerClientFactory = fakeQbitFactory(nil, nil)
 	req = httptest.NewRequest(http.MethodPost, "/api/history/"+testURLHash+"/redownload", nil)
 	req.SetPathValue("hash", testURLHash)
@@ -1625,7 +1749,6 @@ func TestHandleRedownload(t *testing.T) {
 		t.Fatalf("error = %q, want torrent not found in the download client", errResp["error"])
 	}
 
-	// Проверяем ошибку ForceRedownload
 	entries = []*model.Entry{
 		{
 			URL:  testURL,
@@ -1679,17 +1802,15 @@ func TestHandleRedownloadTransmissionUnsupportedReturns501(t *testing.T) {
 }
 
 func TestHandleRedownloadTransmissionSkipsSemaphore(t *testing.T) {
-	// 501 для Transmission обязан отдаваться до попытки занять redownloadSlot:
-	// если бы вид клиента проверялся после взятия семафора, как было раньше,
-	// вызов заблокировался бы на уже занятом слоте вплоть до пятиминутного
-	// контекста запроса вместо мгновенного ответа
+	// 501 для Transmission уходит до попытки занять redownloadSlot, иначе вызов
+	// висел бы на занятом слоте до пятиминутного таймаута вместо мгновенного ответа
 	redownloadSlot <- struct{}{}
 	defer func() { <-redownloadSlot }()
 
 	store := &fakeStore{}
 	effective := func() config.App {
 		cfg := testEffective()
-		// с учётом регистра и пробелов, как реальный MANAGER_CLIENT из env
+		// регистр и пробелы как у реального MANAGER_CLIENT из env
 		cfg.Manager.Client = " Transmission "
 		return cfg
 	}
@@ -1728,7 +1849,7 @@ func TestHandleTestIntegrationUsesClientSpecificConfigWhenTransmissionActive(t *
 	}
 	srv := New(store, func() {}, effective, ":0", runner.NewState(), nil)
 
-	// kind=qbit обязан обращаться к qbit-хосту, даже когда активен transmission
+	// kind=qbit ходит на qbit-хост, даже когда активен transmission
 	req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader([]byte(`{"kind":"qbit"}`)))
 	w := httptest.NewRecorder()
 	srv.handleTestIntegration(w, req)
@@ -1740,7 +1861,7 @@ func TestHandleTestIntegrationUsesClientSpecificConfigWhenTransmissionActive(t *
 		t.Fatalf("qbit test error = %q, want dial error mentioning 127.0.0.1:1", resp.Error)
 	}
 
-	// kind=transmission обязан обращаться к transmission-хосту
+	// и наоборот
 	req = httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader([]byte(`{"kind":"transmission"}`)))
 	w = httptest.NewRecorder()
 	srv.handleTestIntegration(w, req)
@@ -1933,13 +2054,13 @@ func TestGetTrackersSplitsLoginAndPassword(t *testing.T) {
 	if !resp[rut].SupportsLogin {
 		t.Error("rutracker must report supports_login")
 	}
-	if resp[rut].Login != "vasya" || resp[rut].Password != "s3cret" {
-		t.Errorf("login/password = %q/%q, want vasya/s3cret", resp[rut].Login, resp[rut].Password)
+	if resp[rut].Login != "vasya" || resp[rut].Password != settings.SecretMask {
+		t.Errorf("login/password = %q/%q, want vasya/%s", resp[rut].Login, resp[rut].Password, settings.SecretMask)
 	}
-	if resp[rut].Credentials == "" {
-		t.Error("raw credentials must stay available for the advanced form")
+	if want := "login=%D0%B2%D1%85%D0%BE%D0%B4&login_password={password}&login_username={login}"; resp[rut].Credentials != want {
+		t.Errorf("credentials = %q, want template %q", resp[rut].Credentials, want)
 	}
-	// у nnm вход только по кукам, поэтому дружелюбных полей быть не должно
+	// у nnm вход только по кукам, полей логина нет
 	if resp[nnm].SupportsLogin || resp[nnm].Login != "" || resp[nnm].Password != "" {
 		t.Errorf("nnm = %+v, want no login form", resp[nnm])
 	}
@@ -1959,17 +2080,12 @@ func TestPutTrackerLoginKeepsOtherCredentialFields(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", w.Code)
 	}
-	var saved map[string]map[string]any
-	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := saved["rutracker"]["credentials"].(string)
-	want := "login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=new+pass&login_username=vasya"
-	if got != want {
-		t.Fatalf("credentials =\n %q\nwant\n %q", got, want)
-	}
-	if _, ok := saved["rutracker"]["login"]; ok {
-		t.Error("login must not leak into the stored overlay")
+	assertStoredTemplate(t, store, "rutracker",
+		"login=%D0%B2%D1%85%D0%BE%D0%B4&login_password={password}&login_username={login}",
+		"login=%D0%B2%D1%85%D0%BE%D0%B4&login_password=new+pass&login_username=vasya")
+	creds, login, _ := storedTrackerLogin(t, store, "rutracker")
+	if login != "vasya" || strings.Contains(creds, "vasya") {
+		t.Errorf("login = %q, credentials = %q, want login only in its own field", login, creds)
 	}
 }
 
@@ -1985,18 +2101,9 @@ func TestPutTrackerLoginOnEmptyCredentialsUsesTemplate(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", w.Code)
 	}
-	var saved map[string]map[string]any
-	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := saved["kinozal"]["credentials"].(string)
-	if got != "username=vasya&password=pw&to=%2F" {
-		t.Fatalf("credentials = %q", got)
-	}
+	assertStoredTemplate(t, store, "kinozal", "username={login}&password={password}&to=%2F", "username=vasya&password=pw&to=%2F")
 }
 
-// правка сырой строки в расширенных настройках это последнее слово: логин с
-// паролем ложатся поверх пришедшей строки, а не поверх сохранённой
 func TestPutTrackerRawCredentialsAreTheBaseForLogin(t *testing.T) {
 	store := &fakeStore{settings: map[string]json.RawMessage{
 		"trackers": json.RawMessage(`{"rutracker":{"credentials":"login_username=old&login_password=old"}}`),
@@ -2011,14 +2118,9 @@ func TestPutTrackerRawCredentialsAreTheBaseForLogin(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", w.Code)
 	}
-	var saved map[string]map[string]any
-	if err := json.Unmarshal(store.settings["trackers"], &saved); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := saved["rutracker"]["credentials"].(string)
-	if got != "login_username=vasya&login_password=pw&extra=1" {
-		t.Fatalf("credentials = %q", got)
-	}
+	assertStoredTemplate(t, store, "rutracker",
+		"login_username={login}&login_password={password}&extra=1",
+		"login_username=vasya&login_password=pw&extra=1")
 }
 
 func TestPutTrackerWithoutLoginFieldsLeavesCredentialsAlone(t *testing.T) {
@@ -2044,7 +2146,6 @@ func TestPutTrackerWithoutLoginFieldsLeavesCredentialsAlone(t *testing.T) {
 	}
 }
 
-// у трекера без формы логина эти поля игнорируются: подставлять их некуда
 func TestPutTrackerLoginIgnoredWhenTrackerHasNoForm(t *testing.T) {
 	store := &fakeStore{}
 	srv := newTestServer(store)
@@ -2066,12 +2167,11 @@ func TestPutTrackerLoginIgnoredWhenTrackerHasNoForm(t *testing.T) {
 	}
 }
 
-// effective() в бою отдаёт конфиг с уже наложенным оверлеем из БД, поэтому
-// тестам, где важна текущая строка credentials, мало положить её в fakeStore
 func newTrackerTestServer(store *fakeStore, key, credentials string) *Server {
 	return New(store, func() {}, func() config.App {
 		cfg := testEffective()
 		cfg.Tracker = registry.ConfigDefaults()
+		// в бою effective() уже с оверлеем из БД, одного fakeStore тут мало
 		if it := cfg.Tracker.ByKey(key); it != nil {
 			it.Credentials = credentials
 		}
@@ -2079,8 +2179,6 @@ func newTrackerTestServer(store *fakeStore, key, credentials string) *Server {
 	}, ":0", runner.NewState(), nil)
 }
 
-// JSON null это "поля нет", а не "пустая строка": без отдельной проверки
-// json.Unmarshal молча отдал бы "" и затёр сохранённый пароль
 func TestApplyTrackerLoginIgnoresJSONNull(t *testing.T) {
 	cfg := testEffective()
 	cfg.Tracker = registry.ConfigDefaults()
@@ -2111,12 +2209,16 @@ func TestApplyTrackerLoginAcceptsEmptyStringAsErase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := &fakeStore{settings: map[string]json.RawMessage{"trackers": json.RawMessage(`{"rutracker":` + string(out) + `}`)}}
+	assertStoredTemplate(t, store, "rutracker",
+		"login_username={login}&login_password={password}",
+		"login_username=vasya&login_password=")
 	var body map[string]any
 	if err := json.Unmarshal(out, &body); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := body["credentials"].(string); got != "login_username=vasya&login_password=" {
-		t.Fatalf("credentials = %q, want the password cleared", got)
+	if password, ok := body["password"]; !ok || password != "" {
+		t.Fatalf("password = %v (sent %v), want the password cleared", password, ok)
 	}
 }
 
@@ -2139,8 +2241,8 @@ func TestPostIntegrationsTestNotifyKeepsSavedChatID(t *testing.T) {
 		return nil
 	}
 
-	// форма шлёт только токен, поэтому сохранённый chat id должен пережить проверку,
-	// иначе getUpdates отвечает "бот не получил ни одного сообщения" на живом боте
+	// форма шлет только токен, и сохраненный chat id должен пережить проверку.
+	// Иначе на живом боте getUpdates отвечает, что сообщений не было
 	effective := func() config.App {
 		cfg := testEffective()
 		cfg.Notify.TelegramToken = "tok"
@@ -2200,5 +2302,356 @@ func TestPutSchedulePurgesDisabledCategories(t *testing.T) {
 	// релизы выключенной категории иначе висят в плане, а форс на них молчит
 	if !slices.Equal(store.purgedCategories, []string{"radarr", "sonarr"}) {
 		t.Fatalf("purge called with %v, want the monitored categories", store.purgedCategories)
+	}
+}
+
+func newRegistryTestServer(store *fakeStore, reload func()) *Server {
+	return withTestSession(New(store, reload, func() config.App {
+		cfg := testEffective()
+		cfg.Tracker = registry.ConfigDefaults()
+		return cfg
+	}, ":0", runner.NewState(), nil))
+}
+
+func getTrackerKeys(t *testing.T, srv *Server) []string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/trackers", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp []struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(resp))
+	for _, it := range resp {
+		keys = append(keys, it.Key)
+	}
+	return keys
+}
+
+func TestGetTrackersCustomOrder(t *testing.T) {
+	store := &fakeStore{settings: map[string]json.RawMessage{
+		"trackers_order": json.RawMessage(`["nnm","rutracker","bogus","nnm"]`),
+	}}
+	got := getTrackerKeys(t, newRegistryTestServer(store, func() {}))
+
+	want := []string{"nnm", "rutracker"}
+	for _, k := range registry.Keys() {
+		if k != "nnm" && k != "rutracker" {
+			want = append(want, k)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("keys = %v, want %v", got, want)
+	}
+}
+
+func TestGetTrackersOrderInvalidJSONFallsBack(t *testing.T) {
+	store := &fakeStore{settings: map[string]json.RawMessage{
+		"trackers_order": json.RawMessage(`{"x":1}`),
+	}}
+	got := getTrackerKeys(t, newRegistryTestServer(store, func() {}))
+	if !slices.Equal(got, registry.Keys()) {
+		t.Fatalf("keys = %v, want id order %v", got, registry.Keys())
+	}
+}
+
+func TestPutTrackersOrderSavesWithoutReload(t *testing.T) {
+	store := &fakeStore{}
+	reloads := 0
+	srv := newRegistryTestServer(store, func() { reloads++ })
+
+	req := httptest.NewRequest(http.MethodPut, "/api/trackers/order", strings.NewReader(`{"order":["kinozal","rutracker"]}`))
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	var saved []string
+	if err := json.Unmarshal(store.settings["trackers_order"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(saved, []string{"kinozal", "rutracker"}) {
+		t.Fatalf("saved = %v", saved)
+	}
+	if reloads != 0 {
+		t.Fatalf("reload called %d times, want 0", reloads)
+	}
+	if got := getTrackerKeys(t, srv); got[0] != "kinozal" || got[1] != "rutracker" {
+		t.Fatalf("keys = %v, want kinozal, rutracker first", got)
+	}
+}
+
+func TestPutTrackersOrderRejects(t *testing.T) {
+	for name, body := range map[string]string{
+		"unknown":   `{"order":["rutracker","bogus"]}`,
+		"duplicate": `{"order":["rutracker","rutracker"]}`,
+		"not array": `{"order":"x"}`,
+		"not keys":  `{"order":[1]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeStore{}
+			reloads := 0
+			srv := newRegistryTestServer(store, func() { reloads++ })
+			req := httptest.NewRequest(http.MethodPut, "/api/trackers/order", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+			}
+			if _, ok := store.settings["trackers_order"]; ok {
+				t.Fatal("trackers_order must stay unset")
+			}
+			if reloads != 0 {
+				t.Fatalf("reload called %d times", reloads)
+			}
+		})
+	}
+}
+
+func TestPostIntegrationsTestNotifyChannelOnly(t *testing.T) {
+	origResolver := telegramChatIDResolver
+	origSend := sendNotification
+	defer func() {
+		telegramChatIDResolver = origResolver
+		sendNotification = origSend
+	}()
+
+	resolved := false
+	telegramChatIDResolver = func(context.Context, string, string) (string, error) {
+		resolved = true
+		return "1", nil
+	}
+	var sent notify.Config
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+		sent = cfg
+		return nil
+	}
+
+	srv := newTestServer(&fakeStore{})
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		srv.handleTestIntegration(w, req)
+		return w
+	}
+
+	w := post(`{"kind":"notify","config":{"channel":"webhook","telegram":{"bot_token":"tok"},"webhook":{"url":"http://hook"},"enabled":true}}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if resolved {
+		t.Error("chat id resolver called although telegram is not the tested channel")
+	}
+	if sent.TelegramToken != "" || sent.TelegramChatID != "" || sent.WebhookURL != "http://hook" {
+		t.Errorf("sent config = %+v, want webhook only", sent)
+	}
+
+	w = post(`{"kind":"notify","config":{"channel":"telegram","telegram":{"bot_token":"tok"},"webhook":{"url":"http://hook"},"enabled":true}}`)
+	if w.Code != http.StatusOK || !resolved {
+		t.Fatalf("telegram channel: status %d resolved %v", w.Code, resolved)
+	}
+	if sent.WebhookURL != "" || sent.TelegramToken != "tok" {
+		t.Errorf("sent config = %+v, want telegram only", sent)
+	}
+
+	if w = post(`{"kind":"notify","config":{"channel":"sms","enabled":true}}`); w.Code != http.StatusBadRequest {
+		t.Errorf("unknown channel status = %d, want 400", w.Code)
+	}
+}
+
+func TestPostIntegrationsTestNotifyEmailChannel(t *testing.T) {
+	origSend := sendNotification
+	defer func() { sendNotification = origSend }()
+	var sent notify.Config
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+		sent = cfg
+		return nil
+	}
+	srv := newTestServer(&fakeStore{})
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		srv.handleTestIntegration(w, req)
+		return w
+	}
+	const all = `"webhook":{"url":"http://hook"},"email":{"host":"smtp.example.com","port":465,"security":"tls","username":"u","password":"p","from":"f@x.example","to":"t@x.example"},"pushover":{"app_token":"a","user_key":"k"},"enabled":true`
+
+	if w := post(`{"kind":"notify","config":{"channel":"email",` + all + `}}`); w.Code != http.StatusOK {
+		t.Fatalf("email status = %d: %s", w.Code, w.Body.String())
+	}
+	if sent.EmailHost != "smtp.example.com" || sent.EmailPort != 465 || sent.EmailSecurity != "tls" || sent.EmailUsername != "u" ||
+		sent.EmailPassword != "p" || sent.EmailFrom != "f@x.example" || sent.EmailTo != "t@x.example" {
+		t.Errorf("email fields = %+v", sent)
+	}
+	if sent.WebhookURL != "" || sent.PushoverToken != "" || sent.PushoverUser != "" {
+		t.Errorf("other channels not zeroed: %+v", sent)
+	}
+
+	if w := post(`{"kind":"notify","config":{"channel":"pushover",` + all + `}}`); w.Code != http.StatusOK {
+		t.Fatalf("pushover status = %d: %s", w.Code, w.Body.String())
+	}
+	if sent.PushoverToken != "a" || sent.PushoverUser != "k" || sent.EmailHost != "" || sent.WebhookURL != "" {
+		t.Errorf("pushover config = %+v", sent)
+	}
+}
+
+func fakeDelugeWeb(t *testing.T, password string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params []any  `json:"params"`
+			ID     int64  `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || r.URL.Path != "/json" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var result any
+		switch req.Method {
+		case "auth.login":
+			result = len(req.Params) == 1 && req.Params[0] == password
+		case "web.connected":
+			result = true
+		default:
+			t.Errorf("unexpected deluge method %q", req.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": result, "error": nil, "id": req.ID})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestHandleTestIntegrationDeluge(t *testing.T) {
+	dl := fakeDelugeWeb(t, "dlpass")
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = "qbit"
+		cfg.Manager.QbitTorrent.Host = "http://127.0.0.1:1"
+		cfg.Manager.QbitTorrent.Username = "u"
+		cfg.Manager.QbitTorrent.Password = "p"
+		cfg.Manager.Deluge.Host = dl.URL
+		cfg.Manager.Deluge.Password = "dlpass"
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+	run := func(body string) testResultResp {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader([]byte(body)))
+		w := httptest.NewRecorder()
+		srv.handleTestIntegration(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("body %s: status = %d, want 200: %s", body, w.Code, w.Body.String())
+		}
+		var resp testResultResp
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	// kind=deluge берет данные deluge, даже когда активен qbit
+	if resp := run(`{"kind":"deluge"}`); !resp.OK {
+		t.Fatalf("saved deluge config: error = %q, want ok", resp.Error)
+	}
+	hostOnly := strings.TrimPrefix(dl.URL, "http://")
+	if resp := run(`{"kind":"deluge","config":{"host":"` + hostOnly + `","password":"dlpass"}}`); !resp.OK {
+		t.Fatalf("form config without scheme: error = %q, want ok", resp.Error)
+	}
+	if resp := run(`{"kind":"deluge","config":{"host":"` + dl.URL + `","password":"wrong"}}`); resp.OK || !strings.Contains(resp.Error, "login failed") {
+		t.Fatalf("wrong password: resp = %+v, want login failed", resp)
+	}
+}
+
+func TestRedownloadDelugeReturns501(t *testing.T) {
+	redownloadSlot <- struct{}{}
+	defer func() { <-redownloadSlot }()
+
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = " Deluge "
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/history/somehash/redownload", nil)
+	req.SetPathValue("hash", "somehash")
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.handleRedownload(w, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleRedownload blocked instead of returning 501 for deluge")
+	}
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501, body: %s", w.Code, w.Body.String())
+	}
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatal(err)
+	}
+	if errResp["error"] != deluge.ErrRedownloadUnsupported.Error() {
+		t.Fatalf("error = %q, want %q", errResp["error"], deluge.ErrRedownloadUnsupported.Error())
+	}
+}
+
+func TestGetCategoriesUsesDelugeConfig(t *testing.T) {
+	orig := managerClientFactory
+	defer func() { managerClientFactory = orig }()
+	var gotKind string
+	var gotCfg model.ManagerConfig
+	managerClientFactory = func(kind string, cfg model.ManagerConfig) (managerClient, error) {
+		gotKind, gotCfg = kind, cfg
+		return &fakeQbitClient{cats: []string{"tv"}}, nil
+	}
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = "deluge"
+		cfg.Manager.QbitTorrent.Host = "http://qb:8068"
+		cfg.Manager.Deluge.Host = "http://dl:8112"
+		cfg.Manager.Deluge.Password = "p"
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+	w := httptest.NewRecorder()
+	srv.handleGetCategories(w, httptest.NewRequest(http.MethodGet, "/api/categories", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if gotKind != "deluge" || gotCfg.Host != "http://dl:8112" || gotCfg.Password != "p" || gotCfg.Username != "" {
+		t.Fatalf("factory got kind=%q cfg=%+v, want deluge creds", gotKind, gotCfg)
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	cases := []struct {
+		name string
+		srv  *Server
+		path string
+	}{
+		{"index", newTestServer(&fakeStore{}), "/"},
+		{"login", newTestServer(&fakeStore{}), "/login"},
+		{"auth state", newTestServer(&fakeStore{}), "/api/auth/state"},
+		{"healthz", newTestServer(&fakeStore{}), "/healthz"},
+		{"unauthorized", newBareServer(&fakeStore{}), "/api/history"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c.srv.srv.Handler.ServeHTTP(rec, httptest.NewRequest("GET", c.path, nil))
+			if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+				t.Fatalf("X-Frame-Options = %q, want DENY (status %d)", got, rec.Code)
+			}
+			if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+				t.Fatalf("Content-Security-Policy = %q, want frame-ancestors 'none'", got)
+			}
+		})
 	}
 }

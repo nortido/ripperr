@@ -10,17 +10,20 @@ import (
 	_ "modernc.org/sqlite"
 
 	"ripperr/internal/model/storage"
+	"ripperr/internal/secrets"
 )
 
 const (
-	SettingSchedule     = "schedule"
-	SettingTrackers     = "trackers"
-	SettingIntegrations = "integrations"
-	SettingAuth         = "auth"
+	SettingSchedule      = "schedule"
+	SettingTrackers      = "trackers"
+	SettingTrackersOrder = "trackers_order"
+	SettingIntegrations  = "integrations"
+	SettingAuth          = "auth"
 )
 
 type Client struct {
-	db *sql.DB
+	db  *sql.DB
+	box *secrets.Box
 }
 
 func (c *Client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error) {
@@ -33,22 +36,43 @@ func (c *Client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tr
 		return
 	}
 	res.Exists = true
+	if err != nil {
+		return
+	}
+	if res.Credentials, err = c.openTracker(res.TypeID, trackerCredentials, res.Credentials); err != nil {
+		return
+	}
+	res.Cookies, err = c.openTracker(res.TypeID, trackerCookies, res.Cookies)
 
 	return
 }
 
 func (c *Client) AddTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
+	cookies, credentials, err := c.sealTracker(tracker)
+	if err != nil {
+		return
+	}
 	_, err = c.db.ExecContext(ctx,
 		"INSERT INTO trackers(tracker_type_id, tracker_name, domain_name, login_url, download_url, cookies, credentials, publicity, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, unixepoch())",
-		tracker.TypeID, tracker.Name, tracker.Domain, tracker.LoginURL, tracker.DownloadURL, tracker.Cookies, tracker.Credentials, tracker.Publicity)
+		tracker.TypeID, tracker.Name, tracker.Domain, tracker.LoginURL, tracker.DownloadURL, cookies, credentials, tracker.Publicity)
 
 	return
 }
 
 func (c *Client) UpdateTracker(ctx context.Context, tracker *storage.Tracker) (err error) {
+	cookies, credentials, err := c.sealTracker(tracker)
+	if err != nil {
+		return
+	}
 	_, err = c.db.ExecContext(ctx,
 		"UPDATE trackers SET cookies = ?, credentials = ?, updated_at = unixepoch() WHERE tracker_type_id = ?",
-		tracker.Cookies, tracker.Credentials, tracker.TypeID)
+		cookies, credentials, tracker.TypeID)
+
+	return
+}
+
+func (c *Client) DeleteTracker(ctx context.Context, trackerID int) (err error) {
+	_, err = c.db.ExecContext(ctx, "DELETE FROM trackers WHERE tracker_type_id = ?", trackerID)
 
 	return
 }
@@ -91,8 +115,8 @@ func (c *Client) UpdateItem(ctx context.Context, item *storage.Item) (err error)
 }
 
 func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) (int, error) {
-	// арбитр upsert это url_hash, поэтому строка с тем же именем под другим хешем
-	// (релиз переехал в новую тему) споткнётся о check_log_item_name_uidx: сносим её заранее
+	// арбитр upsert это url_hash, поэтому строка с тем же именем под другим хешем (релиз
+	// переехал в новую тему) споткнется о check_log_item_name_uidx. Сносим ее заранее
 	if strings.TrimSpace(entry.ItemName) != "" {
 		if _, err := c.db.ExecContext(ctx,
 			`DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`,
@@ -103,7 +127,7 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 	var errorStreak int
 	err := c.db.QueryRowContext(ctx,
 		`INSERT INTO check_log (url_hash, item_name, item_url, tracker_type_id, status, error, error_streak)
-		 VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ? = 'error' THEN 1 ELSE 0 END)
+		 VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ? = 'error' AND NOT ? THEN 1 ELSE 0 END)
 		 ON CONFLICT(url_hash) DO UPDATE SET
 		     checked_at = unixepoch(),
 		     item_name = excluded.item_name,
@@ -111,15 +135,12 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 		     tracker_type_id = excluded.tracker_type_id,
 		     status = excluded.status,
 		     error = excluded.error,
-		     error_streak = CASE WHEN excluded.status = 'error' THEN check_log.error_streak + 1 ELSE 0 END
+		     error_streak = CASE WHEN excluded.status = 'error' THEN check_log.error_streak + CASE WHEN ? THEN 0 ELSE 1 END ELSE 0 END
 		 RETURNING error_streak`,
-		entry.URLHash, entry.ItemName, entry.ItemURL, entry.TrackerTypeID, entry.Status, entry.Error, entry.Status).Scan(&errorStreak)
+		entry.URLHash, entry.ItemName, entry.ItemURL, entry.TrackerTypeID, entry.Status, entry.Error, entry.Status, entry.KeepStreak, entry.KeepStreak).Scan(&errorStreak)
 	return errorStreak, err
 }
 
-// checkLogFilterClause собирает join и WHERE ровно так, как их видит список
-// дашборда: тот же набор условий переиспользует ForceCheckAll, иначе форс всем
-// расходился бы с тем, что показано на экране.
 func checkLogFilterClause(f storage.CheckLogFilter) (join, clause string, args []any) {
 	join = ` LEFT JOIN history h ON h.url_hash = c.url_hash`
 	if f.IgnoredOnly {
@@ -150,8 +171,8 @@ func checkLogFilterClause(f storage.CheckLogFilter) (join, clause string, args [
 		args = append(args, f.Category)
 	}
 	if f.ExcludeIgnored && !f.IgnoredOnly {
-		// IgnoredOnly уже делает inner join с "ignore" и требует совпадения, поэтому это
-		// исключение ему противоречит; пропускаем его и оставляем победу за IgnoredOnly
+		// IgnoredOnly уже делает inner join с "ignore", это исключение ему противоречит.
+		// Побеждает IgnoredOnly
 		where = append(where, `NOT EXISTS (SELECT 1 FROM "ignore" ig WHERE ig.url_hash = c.url_hash)`)
 	}
 	if len(where) > 0 {
@@ -279,14 +300,22 @@ func (c *Client) GetSetting(ctx context.Context, key string) (json.RawMessage, b
 	if err != nil {
 		return nil, false, err
 	}
-	return json.RawMessage(raw), true, nil
+	plain, err := c.openSetting(key, string(raw))
+	if err != nil {
+		return nil, false, err
+	}
+	return json.RawMessage(plain), true, nil
 }
 
 func (c *Client) SaveSetting(ctx context.Context, key string, value json.RawMessage) error {
-	_, err := c.db.ExecContext(ctx,
+	sealed, err := c.seal(value, settingAAD(key))
+	if err != nil {
+		return err
+	}
+	_, err = c.db.ExecContext(ctx,
 		`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch())
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()`,
-		key, []byte(value))
+		key, sealed)
 	return err
 }
 
@@ -332,12 +361,11 @@ func (c *Client) SetForceCheck(ctx context.Context, urlHash string, force bool) 
 	return n > 0, nil
 }
 
-// ForceCheckAll помечает отфильтрованные релизы и возвращает их url_hash: раннеру
-// они нужны, чтобы форс всем стартовал проверку сразу, как одиночный.
 func (c *Client) ForceCheckAll(ctx context.Context, force bool, f storage.CheckLogFilter) ([]string, int64, error) {
+	// хеши нужны раннеру, чтобы форс всем запустил проверку сразу, как одиночный
 	join, clause, args := checkLogFilterClause(f)
-	// строки выбираются тем же условием, что и список дашборда, поэтому форс
-	// ложится ровно на отфильтрованные релизы, а не на всю историю
+	// условие то же, что у списка на дашборде, поэтому форс ложится на отфильтрованные
+	// релизы, а не на всю историю
 	sub := `SELECT c.url_hash FROM check_log c` + join + clause
 	rows, err := c.db.QueryContext(ctx, sub, args...)
 	if err != nil {
@@ -359,8 +387,8 @@ func (c *Client) ForceCheckAll(ctx context.Context, force bool, f storage.CheckL
 	if force {
 		flag = 1
 	}
-	// условие force_check <> ? отсекает строки, которые и так в нужном состоянии,
-	// поэтому RowsAffected считает реально изменённые релизы, а не весь фильтр
+	// force_check <> ? отсекает строки, которые уже в нужном состоянии, и RowsAffected
+	// считает только реально измененные релизы
 	res, err := c.db.ExecContext(ctx,
 		`UPDATE history SET force_check = ? WHERE force_check <> ? AND url_hash IN (`+sub+`)`,
 		append([]any{flag, flag}, args...)...)
@@ -393,15 +421,16 @@ func timeFromNull(n sql.NullInt64) *time.Time {
 	return &t
 }
 
-func New(db *sql.DB) *Client {
+func New(db *sql.DB, box *secrets.Box) *Client {
 	return &Client{
-		db: db,
+		db:  db,
+		box: box,
 	}
 }
 
-// категорию выключили в настройках, значит её релизы больше не проверяются: без
-// чистки они висят в плане неотличимо от живых, а форс на них молча ничего не делает
 func (c *Client) PurgeCategoriesExcept(ctx context.Context, allowed []string) (int64, error) {
+	// релизы выключенной категории больше не проверяются. Без чистки они висят в плане
+	// как живые, и форс на них молча ничего не делает
 	if len(allowed) == 0 {
 		return 0, nil
 	}
@@ -409,7 +438,7 @@ func (c *Client) PurgeCategoriesExcept(ctx context.Context, allowed []string) (i
 	for _, a := range allowed {
 		args = append(args, a)
 	}
-	// пустая категория остаётся: это не выключенная категория, а неизвестная
+	// пустую категорию не трогаем: она неизвестна, а не выключена
 	cond := `category_name IS NOT NULL AND category_name <> '' AND category_name NOT IN (` +
 		strings.TrimSuffix(strings.Repeat("?,", len(allowed)), ",") + `)`
 	tx, err := c.db.BeginTx(ctx, nil)

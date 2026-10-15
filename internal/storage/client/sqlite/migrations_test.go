@@ -1,8 +1,11 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -29,7 +32,7 @@ func userVersion(t *testing.T, db *sql.DB) int {
 
 func TestBootstrapStampsUserVersion(t *testing.T) {
 	db := newRawDB(t)
-	c := New(db)
+	c := New(db, testBox(t))
 	if err := c.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -40,21 +43,17 @@ func TestBootstrapStampsUserVersion(t *testing.T) {
 
 func TestMigrateSkipsAlreadyApplied(t *testing.T) {
 	db := newRawDB(t)
-	c := New(db)
+	c := New(db, testBox(t))
 	if err := c.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	// вторая миграция с заведомо ломающим оператором: если applied уже учтён,
-	// она не должна выполниться повторно после того, как её версия записана
-	boom := []migration{
-		{name: "init", stmts: migrations[0].stmts},
-		{name: "boom", stmts: []string{"CREATE TABLE boom (id INTEGER PRIMARY KEY)"}},
-	}
+	// последняя миграция падает при повторе. Если версия уже записана, второй раз ее выполнять нельзя
+	boom := append(slices.Clone(migrations), migration{name: "boom", stmts: []string{"CREATE TABLE boom (id INTEGER PRIMARY KEY)"}})
 	if err := c.migrate(t.Context(), boom); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if got := userVersion(t, db); got != 2 {
-		t.Fatalf("user_version = %d, want 2", got)
+	if got := userVersion(t, db); got != len(migrations)+1 {
+		t.Fatalf("user_version = %d, want %d", got, len(migrations)+1)
 	}
 	// повторный прогон не должен упасть на CREATE TABLE boom без IF NOT EXISTS
 	if err := c.migrate(t.Context(), boom); err != nil {
@@ -64,7 +63,7 @@ func TestMigrateSkipsAlreadyApplied(t *testing.T) {
 
 func TestMigrateRefusesNewerSchema(t *testing.T) {
 	db := newRawDB(t)
-	c := New(db)
+	c := New(db, testBox(t))
 	if _, err := db.Exec("PRAGMA user_version = 999"); err != nil {
 		t.Fatalf("set version: %v", err)
 	}
@@ -75,7 +74,7 @@ func TestMigrateRefusesNewerSchema(t *testing.T) {
 
 func TestMigrateRollsBackFailedStep(t *testing.T) {
 	db := newRawDB(t)
-	c := New(db)
+	c := New(db, testBox(t))
 	bad := []migration{
 		{name: "bad", stmts: []string{
 			"CREATE TABLE good (id INTEGER PRIMARY KEY)",
@@ -97,11 +96,38 @@ func TestMigrateRollsBackFailedStep(t *testing.T) {
 	}
 }
 
-// боевая база создана до версионирования: таблицы уже стоят, user_version = 0.
-// init обязан пройти по ней вхолостую и просто проставить версию.
+func TestMigrateRollsBackFailedApply(t *testing.T) {
+	db := newRawDB(t)
+	c := New(db, testBox(t))
+	errApply := errors.New("apply failed")
+	bad := []migration{
+		{name: "bad apply", stmts: []string{"CREATE TABLE t (id INTEGER PRIMARY KEY)"},
+			apply: func(ctx context.Context, _ *Client, tx *sql.Tx) error {
+				if _, err := tx.ExecContext(ctx, "INSERT INTO t (id) VALUES (1)"); err != nil {
+					return err
+				}
+				return errApply
+			}},
+	}
+	if err := c.migrate(t.Context(), bad); !errors.Is(err, errApply) {
+		t.Fatalf("migrate err = %v, want errApply", err)
+	}
+	if got := userVersion(t, db); got != 0 {
+		t.Fatalf("user_version = %d, want 0 after rollback", got)
+	}
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name = 't'").Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatal("table t survived a failed apply")
+	}
+}
+
 func TestMigrateOverLegacyDB(t *testing.T) {
 	db := newRawDB(t)
-	c := New(db)
+	c := New(db, testBox(t))
+	// база до версионирования: таблицы есть, а user_version = 0
 	for _, stmt := range migrations[0].stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("legacy setup: %v", err)
@@ -128,11 +154,10 @@ func TestMigrateOverLegacyDB(t *testing.T) {
 	}
 }
 
-// версия перечитывается уже под блокировкой записи: если шаг успел накатить другой
-// процесс, пока мы ждали, повторно выполнять его нельзя
 func TestApplyMigrationSkipsWhenVersionAlreadyReached(t *testing.T) {
 	db := newRawDB(t)
-	c := New(db)
+	c := New(db, testBox(t))
+	// как будто другой процесс накатил шаг, пока мы ждали блокировку записи
 	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
 		t.Fatalf("set version: %v", err)
 	}

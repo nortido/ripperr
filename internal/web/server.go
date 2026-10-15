@@ -4,7 +4,11 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"ripperr/internal/config"
@@ -12,6 +16,7 @@ import (
 	"ripperr/internal/model/storage"
 	"ripperr/internal/model/tracker"
 	"ripperr/internal/runner"
+	"ripperr/internal/system/logger"
 )
 
 //go:embed static/*
@@ -32,6 +37,7 @@ type store interface {
 	ForceCheckAll(ctx context.Context, force bool, f storage.CheckLogFilter) (hashes []string, n int64, err error)
 	GetTracker(ctx context.Context, trackerID int) (*tracker.Tracker, error)
 	PurgeCategoriesExcept(ctx context.Context, allowed []string) (int64, error)
+	DeleteTracker(ctx context.Context, trackerID int) error
 }
 
 type Server struct {
@@ -42,6 +48,16 @@ type Server struct {
 	alerts      *breakeralerts.Registry
 	srv         *http.Server
 	authCache   authCache
+	authMu      sync.Mutex
+	loginFails  *loginThrottle
+	hashSlots   chan struct{}
+	listen      string
+	lnMu        sync.Mutex
+	ln          net.Listener
+	lnHost      string
+	closed      bool
+	done        chan struct{}
+	serveErr    chan error
 }
 
 func New(db store, reload func(), effective func() config.App, listen string, runnerState *runner.State, alerts *breakeralerts.Registry) *Server {
@@ -51,6 +67,11 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 		effective:   effective,
 		runnerState: runnerState,
 		alerts:      alerts,
+		loginFails:  newLoginThrottle(),
+		hashSlots:   make(chan struct{}, pbkdf2Slots),
+		listen:      listen,
+		done:        make(chan struct{}),
+		serveErr:    make(chan error, 1),
 	}
 	mux := http.NewServeMux()
 	staticHandler, err := newCachedStaticHandler(staticFS)
@@ -59,6 +80,8 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	}
 	mux.Handle("/", staticHandler)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/auth/state", s.handleAuthState)
 	mux.HandleFunc("POST /api/auth/setup", withMaxBody(s.handleAuthSetup))
 	mux.HandleFunc("POST /api/auth/login", withMaxBody(s.handleAuthLogin))
@@ -78,20 +101,100 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("POST /api/ignore", withMaxBody(s.handlePostIgnore))
 	mux.HandleFunc("DELETE /api/ignore/{hash}", s.handleDeleteIgnore)
 	mux.HandleFunc("GET /api/trackers", s.handleGetTrackers)
+	mux.HandleFunc("GET /api/trackers/types", s.handleGetTrackerTypes)
+	mux.HandleFunc("PUT /api/trackers/order", withMaxBody(s.handlePutTrackersOrder))
 	mux.HandleFunc("PUT /api/trackers/{key}", withMaxBody(s.handlePutTracker))
+	mux.HandleFunc("POST /api/trackers/{key}", withMaxBody(s.handleAddTracker))
+	mux.HandleFunc("DELETE /api/trackers/{key}", s.handleRemoveTracker)
 	mux.HandleFunc("POST /api/trackers/{key}/test", withMaxBody(s.handleTestTracker))
+	mux.HandleFunc("POST /api/trackers/{key}/secret", withMaxBody(s.handleRevealTrackerSecret))
+	mux.HandleFunc("POST /api/trackers/{key}/mirrors/confirm", withMaxBody(s.handleConfirmMirror))
+	mux.HandleFunc("POST /api/trackers/{key}/suggestions/dismiss", withMaxBody(s.handleDismissSuggestion))
 	mux.HandleFunc("GET /api/integrations", s.handleGetIntegrations)
 	mux.HandleFunc("PUT /api/integrations", withMaxBody(s.handlePutIntegrations))
 	mux.HandleFunc("POST /api/integrations/test", withMaxBody(s.handleTestIntegration))
-	s.srv = &http.Server{Addr: listen, Handler: s.withAuth(mux)}
+	mux.HandleFunc("POST /api/integrations/secret", withMaxBody(s.handleRevealIntegrationSecret))
+	mux.HandleFunc("GET /api/web", s.handleGetWeb)
+	mux.HandleFunc("PUT /api/web", withMaxBody(s.handlePutWeb))
+	s.srv = &http.Server{
+		Addr:              listen,
+		Handler:           withSecurityHeaders(s.withAuth(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	return s
 }
 
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Start() error {
-	return s.srv.ListenAndServe()
+	s.lnMu.Lock()
+	if s.closed {
+		s.lnMu.Unlock()
+		return http.ErrServerClosed
+	}
+	addr := s.effective().Web.Listen
+	ln, err := net.Listen("tcp", addr)
+	if err != nil && addr != s.listen {
+		logger.Warn(fmt.Sprintf("web: cannot listen on %s: %v, using %s", addr, err, s.listen))
+		addr = s.listen
+		ln, err = net.Listen("tcp", addr)
+	}
+	if err != nil {
+		s.lnMu.Unlock()
+		return err
+	}
+	s.lnHost, _, _ = net.SplitHostPort(addr)
+	s.ln = ln
+	s.serve(ln)
+	s.lnMu.Unlock()
+
+	select {
+	case <-s.done:
+		return http.ErrServerClosed
+	case err = <-s.serveErr:
+		return err
+	}
+}
+
+func (s *Server) serve(ln net.Listener) {
+	go func() {
+		err := s.srv.Serve(ln)
+		s.lnMu.Lock()
+		defer s.lnMu.Unlock()
+		// старый листенер после переезда закрываем сами, его ошибка ожидаема
+		if s.ln != ln || errors.Is(err, http.ErrServerClosed) {
+			return
+		}
+		s.ln = nil
+		s.serveErr <- err
+	}()
+}
+
+func (s *Server) Addr() net.Addr {
+	s.lnMu.Lock()
+	defer s.lnMu.Unlock()
+	if s.ln == nil {
+		return nil
+	}
+	return s.ln.Addr()
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.lnMu.Lock()
+	if !s.closed {
+		s.closed = true
+		s.ln = nil
+		close(s.done)
+	}
+	s.lnMu.Unlock()
 	return s.srv.Shutdown(ctx)
 }
 
@@ -115,11 +218,16 @@ func withMaxBody(h http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, healthResp{Status: "ok"})
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	err := s.db.Ping(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, healthResp{Status: "error", Error: err.Error()})
+	if err := s.db.Ping(ctx); err != nil {
+		// текст ошибки только в лог: проба открыта без авторизации
+		logger.Warn(fmt.Sprintf("readyz: db ping failed: %v", err))
+		writeJSON(w, http.StatusServiceUnavailable, healthResp{Status: "error"})
 		return
 	}
 	writeJSON(w, http.StatusOK, healthResp{Status: "ok"})

@@ -1,6 +1,7 @@
 package tlsclient
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	nethttp "net/http"
@@ -12,6 +13,8 @@ import (
 	fhttp "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
+
+	"ripperr/internal/helper"
 )
 
 type Config struct {
@@ -38,12 +41,18 @@ func New(cfg Config) (*Client, error) {
 		tls_client.WithTimeoutSeconds(int(timeout.Seconds())),
 		tls_client.WithClientProfile(profile),
 	}
-	if proxyURL := resolveProxyURL(cfg.ProxyURL); proxyURL != "" {
+	proxyURL := resolveProxyURL(cfg.ProxyURL)
+	if proxyURL != "" {
 		opts = append(opts, tls_client.WithProxyUrl(proxyURL))
 	}
 
 	inner, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
 	if err != nil {
+		err = helper.RedactURLError(err)
+		if proxyURL != "" {
+			// tls-client печатает адрес прокси целиком, с логином и паролем
+			err = errors.New(strings.ReplaceAll(err.Error(), proxyURL, helper.RedactURL(proxyURL)))
+		}
 		return nil, err
 	}
 	return &Client{inner: inner}, nil

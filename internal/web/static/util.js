@@ -2,10 +2,11 @@ import { icon } from './icons.js';
 
 export const REFRESH_OPTIONS = [1, 2, 3, 4, 6, 8, 12, 24];
 
-export const DISMISSED_ALERTS_KEY = 'trackerr-dismissed-alerts';
-export const PAGE_SIZE_KEY = 'trackerr-page-size';
+export const DISMISSED_ALERTS_KEY = 'ripperr-dismissed-alerts';
+export const PAGE_SIZE_KEY = 'ripperr-page-size';
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 0];
 export const PAGE_SIZE_ALL = 1000;
+export const SECRET_MASK = '********';
 
 export const SECURE_INPUT_SUPPORTED = (function () {
   const el = document.createElement('input');
@@ -42,7 +43,7 @@ export function dismissAlertKey(key) {
   dismissed.add(key);
   try {
     localStorage.setItem(DISMISSED_ALERTS_KEY, JSON.stringify(Array.from(dismissed)));
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
 }
 
 export function pruneDismissedAlerts(alerts) {
@@ -58,7 +59,7 @@ export function pruneDismissedAlerts(alerts) {
   if (!changed) return;
   try {
     localStorage.setItem(DISMISSED_ALERTS_KEY, JSON.stringify(Array.from(dismissed)));
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
 }
 
 export function alertIncidentKey(alert) {
@@ -100,9 +101,9 @@ export function trackerDisplayDomain(tracker) {
 
 export const TRACKER_HUE_COUNT = 6;
 
-// набор трекеров фиксирован, поэтому оттенки назначены вручную: хеширование сажало // rutracker и teamhd на один и тот же. Четыре частых трекера берут максимально
-// разнесённые оттенки (синий, фиолетовый, янтарный, розовый), оставляя два соседних
-// сине-зелёных редким. 0 бирюзовый, 1 голубой, 2 синий, 3 фиолетовый, 4 янтарный, 5 розовый
+// оттенки вручную: хеш сажал rutracker и teamhd на один цвет. Четырем частым трекерам
+// самые далекие друг от друга оттенки, а два похожих сине-зеленых достались редким.
+// 0 бирюзовый, 1 голубой, 2 синий, 3 фиолетовый, 4 янтарный, 5 розовый
 export const TRACKER_HUES = {
   rutracker: 2,
   nnm: 3,
@@ -128,14 +129,14 @@ export function loadStoredPageSize(fallback) {
     if (raw === 'all') return 0;
     const n = parseInt(raw, 10);
     if (PAGE_SIZE_OPTIONS.indexOf(n) >= 0) return n;
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
   return fallback;
 }
 
 export function savePageSize(size) {
   try {
     localStorage.setItem(PAGE_SIZE_KEY, size === 0 ? 'all' : String(size));
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
 }
 
 export function pageSizeQueryLimit(size) {
@@ -146,7 +147,7 @@ export function pageSizeQueryLimit(size) {
 export function trackerBadgeHtml(name) {
   const label = name || t('common.emDash');
   const idx = trackerNameHueIndex(label);
-  // имя в title: в узкой колонке чип обрезается многоточием, и это единственный способ дочитать
+  // имя в title: в узкой колонке чип режется многоточием, иначе его не дочитать
   return html`<span class="tracker-badge tracker-badge-hue-${idx}" title="${label}">${label}</span>`;
 }
 
@@ -179,8 +180,10 @@ export function formatThenSlot(iso) {
   const d = new Date(iso);
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
   const slotDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  if (slotDay.getTime() === today.getTime()) return formatRunSlotTime(iso);
+  if (slotDay.getTime() === today.getTime() || slotDay.getTime() === tomorrow.getTime()) return formatRunSlotTime(iso);
   return formatRunSlot(iso);
 }
 
@@ -193,8 +196,6 @@ export function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
-// сборщик разметки: каждая подстановка ${} экранируется, поэтому сырой HTML попадает
-// только через другой результат html`` (или их массив): забыть escapeHtml невозможно
 class Html {
   constructor(value) {
     this.value = value;
@@ -208,6 +209,7 @@ function htmlValue(v) {
   if (v instanceof Html) return v.value;
   if (Array.isArray(v)) return v.map(htmlValue).join('');
   if (v === null || v === undefined || v === false) return '';
+  // сырой HTML проходит только как Html из html``, так что escapeHtml не забудешь
   return escapeHtml(String(v));
 }
 
@@ -219,8 +221,8 @@ export function html(strings, ...values) {
   return new Html(out);
 }
 
-// лазейка для разметки, которая является литералом в исходнике, а не данными: таблица иконок
 export function rawHtml(value) {
+  // только для разметки прямо из исходника (таблица иконок), не для данных
   return new Html(value == null ? '' : String(value));
 }
 
@@ -263,9 +265,9 @@ export function statusIcon(status, error, streak) {
     iconName = 'help';
     label = t('status.unknown');
   }
-  // полный текст ошибки только для попапа по клику: подсказка при наведении
-  // дублировала его и закрывала соседние строки. unknown несёт фрагмент
-  // страницы трекера в том же поле, поэтому получает тот же значок
+  // полный текст ошибки только в попапе по клику: подсказка при наведении дублировала
+  // его и закрывала соседние строки. unknown кладет в то же поле кусок страницы трекера,
+  // поэтому значок тот же
   const attrs = (status === 'error' || status === 'unknown') && error
     ? html` data-error="${error}" class="${cls} status-error-badge"`
     : html` class="${cls}"`;
@@ -297,9 +299,9 @@ export function timezoneOptions(timezones, selected) {
     const label = typeof tz === 'string' ? tz : formatTimezoneLabel(tz);
     return html`<option value="${id}"${id === selected ? ' selected' : ''}>${label}</option>`;
   });
-  // зона из БД может не встретиться в списке (задана вручную или её город
-  // выпал при схлопывании по смещению): без своей строки браузер выбрал бы
-  // первый пункт, и сохранение формы молча сбросило бы зону на серверную
+  // зоны из БД может не быть в списке (задана руками или ее город выпал при схлопывании
+  // по смещению). Без своей строки браузер выберет первый пункт и сохранение формы
+  // молча сбросит зону на серверную
   const known = list.some(function (tz) {
     return (typeof tz === 'string' ? tz : tz.id) === selected;
   });

@@ -9,12 +9,12 @@ import (
 type migration struct {
 	name  string
 	stmts []string
+	apply func(ctx context.Context, c *Client, tx *sql.Tx) error
 }
 
-// Версия схемы живёт в PRAGMA user_version: индекс последней применённой миграции,
-// считая с единицы. Новую миграцию дописываем в конец, старые не трогаем: на боевой
-// базе они уже отмечены применёнными и повторно не выполнятся.
 var migrations = []migration{
+	// версия схемы в PRAGMA user_version, считая с единицы. Новые миграции только в конец:
+	// старые на боевой базе уже отмечены и повторно не выполнятся
 	{
 		name: "init",
 		stmts: []string{
@@ -52,6 +52,10 @@ WHERE id IN (
 			`CREATE UNIQUE INDEX IF NOT EXISTS check_log_item_name_uidx ON check_log (LOWER(TRIM(item_name))) WHERE TRIM(item_name) <> ''`,
 		},
 	},
+	{
+		name:  "encrypt secrets",
+		apply: encryptSecrets,
+	},
 }
 
 func (c *Client) Bootstrap(ctx context.Context) error {
@@ -64,8 +68,8 @@ func (c *Client) migrate(ctx context.Context, ms []migration) error {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if version > len(ms) {
-		// база от более новой сборки: её схему этот бинарник не понимает, а накат
-		// вниз ничего не откатит, поэтому падаем, а не портим данные молча
+		// база от более новой сборки, ее схему мы не знаем. Откатить нечем,
+		// так что падаем, чтобы молча не испортить данные
 		return fmt.Errorf("schema version %d is newer than this build knows (%d)", version, len(ms))
 	}
 	for i := version; i < len(ms); i++ {
@@ -86,11 +90,9 @@ func (c *Client) applyMigration(ctx context.Context, version int, m migration) (
 			_ = tx.Rollback()
 		}
 	}()
-	// версия перечитывается уже внутри транзакции: DSN просит BEGIN IMMEDIATE,
-	// поэтому пишущая блокировка взята до этого чтения, и второй процесс, стартовавший
-	// на том же файле, увидит здесь версию, которую первый успел закоммитить, пока
-	// он ждал блокировку. Без перечитывания оба накатили бы один шаг, и второму
-	// любой будущий ALTER TABLE ADD COLUMN вернул бы duplicate column
+	// версию перечитываем внутри транзацкии. DSN просит BEGIN IMMEDIATE, поэтому второй процесс
+	// на том же файле увидит тут версию, которую закоммитил первый. Без этого оба накатят
+	// один шаг, и любой ALTER TABLE ADD COLUMN у второго упадет с duplicate column
 	var current int
 	if err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return
@@ -105,8 +107,13 @@ func (c *Client) applyMigration(ctx context.Context, version int, m migration) (
 			return
 		}
 	}
-	// user_version не принимает плейсхолдер, поэтому число подставляется в текст;
-	// источник у него один, счётчик цикла, так что подставлять нечему
+	if m.apply != nil {
+		if err = m.apply(ctx, c, tx); err != nil {
+			return
+		}
+	}
+	// user_version не берет плейсхолдер, число вставляем в текст.
+	// Это счетчик цикла, чужим данным тут взяться неоткуда
 	if _, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
 		return
 	}
