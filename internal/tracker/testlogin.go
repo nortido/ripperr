@@ -11,6 +11,7 @@ import (
 
 	"ripperr/internal/config"
 	"ripperr/internal/helper"
+	"ripperr/internal/helper/formcreds"
 	"ripperr/internal/helper/tlsclient"
 	proxyModel "ripperr/internal/model/proxy"
 	trackerModel "ripperr/internal/model/tracker"
@@ -21,24 +22,21 @@ import (
 )
 
 var (
-	// ErrUnknownTracker возвращается, когда ключа трекера нет в реестре.
 	ErrUnknownTracker = errors.New("unknown tracker key")
 )
+
+var loginTransport = helper.ProxyTransport
 
 type loginDB interface {
 	GetTracker(ctx context.Context, trackerID int) (*trackerModel.Tracker, error)
 }
 
-// TestLogin делает изолированную проверку входа для одного трекера на действующем конфиге.
-// Необязательный configPatch подмешивает поля трекера (той же формы, что элемент GET /api/trackers) без сохранения.
-// Он не трогает боевой кеш клиентов и реестр оповещений предохранителя.
 func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, configPatch json.RawMessage) error {
 	tid := registry.ID(key)
 	if tid == 0 {
 		return ErrUnknownTracker
 	}
-	// cfg пришёл по значению, но набор трекеров это map: без своей копии разовый
-	// патч из формы ушёл бы в конфиг вызывающего, вопреки "без сохранения" выше
+	// cfg пришел по значению, но Tracker это map. Без копии патч из формы утек бы в конфиг вызывающего
 	cfg.Tracker = cfg.Tracker.Clone()
 	if len(configPatch) > 0 && string(configPatch) != "null" {
 		overlay, err := settings.TrackerPatchFromJSON(configPatch)
@@ -47,11 +45,16 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		}
 		settings.ApplyTrackerKey(&cfg, key, overlay)
 	}
+	// выключенный трекер тоже проверяем, enabled про боевой запуск
+	if it := cfg.Tracker.ByKey(key); it != nil {
+		it.Enabled = true
+	}
 	trCfg := ConfigFromApp(cfg)
+	// реестр свой, боевой кеш клиентов и оповещения предохранителя не трогаем
 	reg := buildHandlerRegistry(trCfg)
 	tr, ok := reg[tid]
 	if !ok {
-		return fmt.Errorf("tracker %s is disabled", key)
+		return fmt.Errorf("tracker %s is not configured", key)
 	}
 
 	cj, err := cookiejar.New(nil)
@@ -64,7 +67,7 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		},
 		Jar:       cj,
 		Timeout:   time.Duration(cfg.Runner.HttpTimeout) * time.Second,
-		Transport: helper.ProxyTransport(cfg.Runner.DownloadProxy),
+		Transport: loginTransport(cfg.Runner.DownloadProxy),
 	}
 	downloadHC, err := tlsclient.New(tlsclient.Config{
 		Timeout:  time.Duration(cfg.Runner.DownloadTimeout) * time.Second,
@@ -89,7 +92,10 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 
 	active := trackerActiveDomain(tr)
 	if active == "" {
-		active = selectActiveDomain(ctx, tr.GetDomain(), trackerMirrors(tr), domainProbeWith(hc)(tr))
+		var paused string
+		if active, paused = guardedDomain(ctx, tr, domainProbeWith(hc)(tr)); paused != "" {
+			return fmt.Errorf("only the unconfirmed mirror %s answers, confirm it in the tracker settings", paused)
+		}
 	}
 	if active != tr.GetDomain() {
 		tr = withActiveDomain(tr, active)
@@ -115,10 +121,10 @@ func testLoginAttrs(cfg config.App, key string, tid int, dbAttrs *trackerModel.T
 		*attrs = *dbAttrs
 		attrs.Exists = true
 	}
-	// настройки важнее сохранённой сессии, включая пустые: проверка должна смотреть
-	// на то, что в форме, а не откатываться к кукам, оставленным в БД прошлым входом
+	// настройки главнее сохраненной сессии, даже пустые. Проверяем то, что в форме,
+	// без отката к старым кукам из БД
 	if it := cfg.Tracker.ByKey(key); it != nil {
-		attrs.Credentials = it.Credentials
+		attrs.Credentials = formcreds.Expand(it.Credentials, it.Login, it.Password)
 		attrs.Cookies = helper.ParseCookies(it.Cookies)
 		attrs.Publicity = it.Publicity
 	}

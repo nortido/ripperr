@@ -111,19 +111,33 @@ func (nopLoginDB) GetTracker(context.Context, int) (*trackerModel.Tracker, error
 	return &trackerModel.Tracker{}, nil
 }
 
-// TestLogin принимает config.App по значению, но Tracker это map: без своей копии
-// разовый патч "проверить с этими данными" уходил бы в конфиг вызывающего
 func TestTestLoginDoesNotMutateCallerConfig(t *testing.T) {
-	cfg := config.App{Tracker: config.Tracker{
-		"kinozal": &config.TrackerItem{Name: "kinozal", Domain: "kinozal.tv", Credentials: "real", Enabled: true},
+	cfg := config.App{Runner: config.Runner{TLSProfile: "chrome_131"}, Tracker: config.Tracker{
+		"rutor": &config.TrackerItem{Name: "rutor", Domain: "rutor.info", Publicity: "public", Credentials: "real", Enabled: true},
 	}}
-	// enabled=false в патче даёт ранний выход до сети: до него ApplyTrackerKey уже отработал
+	// публичный трекер выходит из InitClient до сети, но патч к копии уже применен
 	patch := json.RawMessage(`{"enabled":false,"credentials":"probe"}`)
-	if err := TestLogin(context.Background(), cfg, nopLoginDB{}, "kinozal", patch); err == nil {
-		t.Fatal("want disabled error, got nil")
+	if err := TestLogin(context.Background(), cfg, nopLoginDB{}, "rutor", patch); err != nil {
+		t.Fatalf("TestLogin: %v", err)
 	}
-	if got := cfg.Tracker["kinozal"]; got.Credentials != "real" || !got.Enabled {
+	if got := cfg.Tracker["rutor"]; got.Credentials != "real" || !got.Enabled {
 		t.Fatalf("caller config mutated: credentials=%q enabled=%v", got.Credentials, got.Enabled)
+	}
+}
+
+func TestTestLoginRunsForDisabledTracker(t *testing.T) {
+	cfg := config.App{Runner: config.Runner{TLSProfile: "chrome_131"}, Tracker: config.Tracker{
+		"rutor": &config.TrackerItem{Name: "rutor", Domain: "rutor.info", Publicity: "public", Enabled: false},
+	}}
+	if err := TestLogin(context.Background(), cfg, nopLoginDB{}, "rutor", nil); err != nil {
+		t.Fatalf("disabled tracker must be testable: %v", err)
+	}
+	patch := json.RawMessage(`{"enabled":false}`)
+	if err := TestLogin(context.Background(), cfg, nopLoginDB{}, "rutor", patch); err != nil {
+		t.Fatalf("patch enabled=false: %v", err)
+	}
+	if cfg.Tracker["rutor"].Enabled {
+		t.Fatal("caller config must stay disabled")
 	}
 }
 

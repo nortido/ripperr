@@ -3,13 +3,19 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
+	"strings"
 	"testing"
 
 	"ripperr/internal/config"
+	"ripperr/internal/notify"
+	"ripperr/internal/system/logger"
 )
 
 type fakeSettingsDB struct {
-	data map[string]json.RawMessage
+	data  map[string]json.RawMessage
+	saves int
 }
 
 func (f *fakeSettingsDB) GetSetting(_ context.Context, key string) (json.RawMessage, bool, error) {
@@ -18,6 +24,7 @@ func (f *fakeSettingsDB) GetSetting(_ context.Context, key string) (json.RawMess
 }
 
 func (f *fakeSettingsDB) SaveSetting(_ context.Context, key string, value json.RawMessage) error {
+	f.saves++
 	if f.data == nil {
 		f.data = make(map[string]json.RawMessage)
 	}
@@ -181,7 +188,7 @@ func TestApplyOverridesUnknownClientIgnored(t *testing.T) {
 		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
 	}
 	db := &fakeSettingsDB{data: map[string]json.RawMessage{
-		"integrations": json.RawMessage(`{"client":"deluge"}`),
+		"integrations": json.RawMessage(`{"client":"utorrent"}`),
 	}}
 	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
 		t.Fatal(err)
@@ -231,10 +238,8 @@ func TestApplyOverridesOldJSONWithoutClientKeepsQbit(t *testing.T) {
 }
 
 func TestApplyOverridesEnvMixedCaseClientNormalized(t *testing.T) {
-	// MANAGER_CLIENT=Transmission из env (регистр, случайные пробелы) обязан
-	// дойти до cfg.Manager.Client в каноническом виде без всякого оверлея из БД
-	// настроек, иначе он молча ушёл бы в ветку qbit за учётными данными
-	// где-то дальше по коду
+	// MANAGER_CLIENT=Transmission из env должен дойти до cfg.Manager.Client в каноническом виде
+	// и без оверлея из БД, иначе уйдет в ветку qbit за учетными данными
 	cfg := config.App{
 		Log:          config.Log{Level: "info"},
 		Runner:       config.Runner{StartHour: 7},
@@ -251,9 +256,8 @@ func TestApplyOverridesEnvMixedCaseClientNormalized(t *testing.T) {
 }
 
 func TestApplyOverridesPatchMixedCaseClientApplied(t *testing.T) {
-	// патч со значением "Transmission" (как прислал бы UI без принудительного
-	// приведения к нижнему регистру) обязан пройти валидацию и применить
-	// transmission, а не молча остаться на qbit
+	// UI может прислать "Transmission" с большой буквы. Такой патч должен пройти валидацию
+	// и включить transmission, а не остатся на qbit
 	cfg := config.App{
 		Log:          config.Log{Level: "info"},
 		Runner:       config.Runner{StartHour: 7},
@@ -293,16 +297,14 @@ func TestIntegrationsJSONIncludesClientAndTransmission(t *testing.T) {
 	if got.Client != "transmission" {
 		t.Errorf("client = %q, want transmission", got.Client)
 	}
-	if got.Transmission.Host != "http://tm-host" || got.Transmission.Username != "u" || got.Transmission.Password != "p" {
+	if got.Transmission.Host != "http://tm-host" || got.Transmission.Username != "u" || got.Transmission.Password != SecretMask {
 		t.Errorf("transmission = %+v", got.Transmission)
 	}
 }
 
 func TestIntegrationsJSONNormalizesRawEnvCasing(t *testing.T) {
-	// cfg.Manager.Client тут такой, каким его кладёт env-парсер из
-	// MANAGER_CLIENT=Transmission, без похода через ApplyOverrides. GET
-	// /api/integrations обязан отдать "transmission", а не сырое
-	// "Transmission", иначе ни один вариант селекта в UI не выбран
+	// Client тут такой, как его кладет env-парсер из MANAGER_CLIENT=Transmission, без ApplyOverrides.
+	// GET /api/integrations должен отдать "transmission", иначе в селекте UI ничего не выбрано
 	cfg := &config.App{
 		Manager: config.Manager{Client: "Transmission"},
 	}
@@ -502,8 +504,6 @@ func TestSchedulePatchWatchTagsRejectsComma(t *testing.T) {
 	}
 }
 
-// config.App копируется по значению, но Tracker это набор по ключу: без
-// собственной копии оверлей из БД писал бы в базовый конфиг навсегда
 func TestApplyOverridesDoesNotMutateBaseTrackers(t *testing.T) {
 	base := config.App{Tracker: config.Tracker{
 		"rutracker": &config.TrackerItem{Name: "rutracker", Domain: "rutracker.org", Enabled: true},
@@ -525,4 +525,698 @@ func TestApplyOverridesDoesNotMutateBaseTrackers(t *testing.T) {
 	if !base.Tracker["rutracker"].Enabled {
 		t.Fatal("base Enabled flipped to false")
 	}
+}
+
+func TestMergeIntegrationsEventsNilVsEmpty(t *testing.T) {
+	db := &fakeSettingsDB{}
+	ctx := context.Background()
+	if err := MergeIntegrations(ctx, db, json.RawMessage(`{"notifications":{"webhook":{"url":"http://h"}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	var saved integrationsOverlay
+	if err := json.Unmarshal(db.data["integrations"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Notifications.Webhook.Events != nil || saved.Notifications.Telegram.Events != nil {
+		t.Fatalf("absent events must stay absent: %s", db.data["integrations"])
+	}
+
+	if err := MergeIntegrations(ctx, db, json.RawMessage(`{"notifications":{"webhook":{"events":[]},"telegram":{"events":["updated","updated","check_failed"]}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(db.data["integrations"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Notifications.Webhook.Events == nil || len(*saved.Notifications.Webhook.Events) != 0 {
+		t.Fatalf("empty list must persist: %s", db.data["integrations"])
+	}
+	if got := saved.Notifications.Telegram.Events; got == nil || len(*got) != 2 || (*got)[0] != "updated" || (*got)[1] != "check_failed" {
+		t.Fatalf("telegram events not deduped: %s", db.data["integrations"])
+	}
+
+	if err := MergeIntegrations(ctx, db, json.RawMessage(`{"notifications":{"enabled":true}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(db.data["integrations"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Notifications.Webhook.Events == nil || saved.Notifications.Telegram.Events == nil {
+		t.Fatalf("patch without events must keep stored lists: %s", db.data["integrations"])
+	}
+
+	cfg := &config.App{}
+	applyIntegrations(cfg, saved)
+	if cfg.Notify.WebhookEvents == nil || len(cfg.Notify.WebhookEvents) != 0 || len(cfg.Notify.TelegramEvents) != 2 {
+		t.Fatalf("apply: webhook %#v telegram %#v", cfg.Notify.WebhookEvents, cfg.Notify.TelegramEvents)
+	}
+}
+
+func TestIntegrationsJSONShowsResolvedEvents(t *testing.T) {
+	cfg := &config.App{}
+	var got struct {
+		Notifications struct {
+			Telegram struct {
+				Events []string `json:"events"`
+			} `json:"telegram"`
+			Webhook struct {
+				Events []string `json:"events"`
+			} `json:"webhook"`
+		} `json:"notifications"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Notifications.Telegram.Events) != len(notify.DefaultEvents()) || len(got.Notifications.Webhook.Events) != len(notify.DefaultEvents()) {
+		t.Fatalf("nil lists must resolve to defaults: %+v", got.Notifications)
+	}
+	cfg.Notify.WebhookEvents = []string{}
+	cfg.Notify.TelegramEvents = []string{"check_failed"}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Notifications.Webhook.Events == nil || len(got.Notifications.Webhook.Events) != 0 {
+		t.Fatalf("empty list must stay [] in JSON, got %#v", got.Notifications.Webhook.Events)
+	}
+	if len(got.Notifications.Telegram.Events) != 1 || got.Notifications.Telegram.Events[0] != "check_failed" {
+		t.Fatalf("telegram events = %#v", got.Notifications.Telegram.Events)
+	}
+}
+
+func TestIntegrationsJSONIncludesEmailPushover(t *testing.T) {
+	cfg := &config.App{}
+	cfg.Notify.EmailHost = "smtp.example.com"
+	cfg.Notify.EmailPort = 465
+	cfg.Notify.EmailSecurity = "tls"
+	cfg.Notify.EmailUsername = "user"
+	cfg.Notify.EmailPassword = "pw"
+	cfg.Notify.EmailFrom = "bot@example.com"
+	cfg.Notify.EmailTo = "a@example.com"
+	cfg.Notify.PushoverToken = "apptok"
+	cfg.Notify.PushoverUser = "userkey"
+	cfg.Notify.PushoverEvents = []string{}
+	var got struct {
+		Notifications struct {
+			Email struct {
+				Host     string   `json:"host"`
+				Port     int      `json:"port"`
+				Security string   `json:"security"`
+				Username string   `json:"username"`
+				Password string   `json:"password"`
+				From     string   `json:"from"`
+				To       string   `json:"to"`
+				Events   []string `json:"events"`
+			} `json:"email"`
+			Pushover struct {
+				AppToken string   `json:"app_token"`
+				UserKey  string   `json:"user_key"`
+				Events   []string `json:"events"`
+			} `json:"pushover"`
+		} `json:"notifications"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	e, p := got.Notifications.Email, got.Notifications.Pushover
+	if e.Host != "smtp.example.com" || e.Port != 465 || e.Security != "tls" || e.Username != "user" || e.Password != SecretMask || e.From != "bot@example.com" || e.To != "a@example.com" {
+		t.Fatalf("email = %+v", e)
+	}
+	if len(e.Events) != len(notify.DefaultEvents()) {
+		t.Fatalf("nil email events must resolve to defaults: %v", e.Events)
+	}
+	if p.AppToken != SecretMask || p.UserKey != SecretMask || p.Events == nil || len(p.Events) != 0 {
+		t.Fatalf("pushover = %+v", p)
+	}
+
+	db := &fakeSettingsDB{}
+	body := `{"notifications":{"email":{"host":"mx","port":587,"security":"starttls","username":"u","password":"p","from":"f@x.example","to":"t@x.example","events":["check_failed"]},"pushover":{"app_token":"a","user_key":"k","events":[]}}}`
+	if err := MergeIntegrations(context.Background(), db, json.RawMessage(body)); err != nil {
+		t.Fatal(err)
+	}
+	var saved integrationsOverlay
+	if err := json.Unmarshal(db.data["integrations"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	out := &config.App{}
+	applyIntegrations(out, saved)
+	n := out.Notify
+	if n.EmailHost != "mx" || n.EmailPort != 587 || n.EmailSecurity != "starttls" || n.EmailUsername != "u" || n.EmailPassword != "p" || n.EmailFrom != "f@x.example" || n.EmailTo != "t@x.example" {
+		t.Fatalf("applied email = %+v", n)
+	}
+	if len(n.EmailEvents) != 1 || n.PushoverToken != "a" || n.PushoverUser != "k" || n.PushoverEvents == nil || len(n.PushoverEvents) != 0 {
+		t.Fatalf("applied = %+v", n)
+	}
+}
+
+func TestMetricsTokenRoundTrip(t *testing.T) {
+	db := &fakeSettingsDB{}
+	if err := MergeIntegrations(context.Background(), db, json.RawMessage(`{"metrics":{"token":"s3cret"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	var cfg config.App
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Metrics.Token != "s3cret" {
+		t.Fatalf("applied token = %q", cfg.Metrics.Token)
+	}
+	var got struct {
+		Metrics struct {
+			Token string `json:"token"`
+		} `json:"metrics"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(&cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Metrics.Token != SecretMask {
+		t.Fatalf("json token = %q", got.Metrics.Token)
+	}
+
+	if err := MergeIntegrations(context.Background(), db, json.RawMessage(`{"proxy":{"download_proxy":""}}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg = config.App{}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Metrics.Token != "s3cret" {
+		t.Fatalf("unrelated patch must keep token, got %q", cfg.Metrics.Token)
+	}
+	if err := MergeIntegrations(context.Background(), db, json.RawMessage(`{"metrics":{"token":""}}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg = config.App{}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Metrics.Token != "" {
+		t.Fatalf("cleared token = %q", cfg.Metrics.Token)
+	}
+}
+
+func TestApplyOverridesClientDeluge(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: "qbit"},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	cfg.Manager.QbitTorrent.Host = "http://qb-host"
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"client":"Deluge","deluge":{"host":"dl-host:8112","password":"p"}}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "deluge" {
+		t.Errorf("client = %q, want deluge", cfg.Manager.Client)
+	}
+	if cfg.Manager.Deluge.Host != "http://dl-host:8112" || cfg.Manager.Deluge.Password != "p" {
+		t.Errorf("deluge = %+v, want http://dl-host:8112 / p", cfg.Manager.Deluge)
+	}
+	if cfg.Manager.QbitTorrent.Host != "http://qb-host" {
+		t.Errorf("qbit host = %q, switching client must keep other client settings", cfg.Manager.QbitTorrent.Host)
+	}
+}
+
+func TestApplyOverridesEnvDelugeNormalized(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: " Deluge "},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	cfg.Manager.Deluge.Host = "localhost:8112"
+	if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "deluge" {
+		t.Errorf("client = %q, want deluge", cfg.Manager.Client)
+	}
+	if cfg.Manager.Deluge.Host != "http://localhost:8112" {
+		t.Errorf("deluge host = %q, want http://localhost:8112", cfg.Manager.Deluge.Host)
+	}
+}
+
+func TestIntegrationsJSONIncludesDeluge(t *testing.T) {
+	cfg := &config.App{Manager: config.Manager{Client: "Deluge"}}
+	cfg.Manager.Deluge.Host = "http://dl-host:8112"
+	cfg.Manager.Deluge.Password = "p"
+	var got struct {
+		Client string `json:"client"`
+		Deluge struct {
+			Host     string `json:"host"`
+			Password string `json:"password"`
+		} `json:"deluge"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Client != "deluge" {
+		t.Errorf("client = %q, want deluge", got.Client)
+	}
+	if got.Deluge.Host != "http://dl-host:8112" || got.Deluge.Password != SecretMask {
+		t.Errorf("deluge = %+v", got.Deluge)
+	}
+}
+
+func TestApplyOverridesWebSection(t *testing.T) {
+	const doc = `{"port":7000,"allowed_hosts":["my.keenetic.pro"]}`
+	cases := []struct {
+		name       string
+		data       map[string]json.RawMessage
+		listen     string
+		wantListen string
+		wantHosts  []string
+		locked     bool
+	}{
+		{"port only host", map[string]json.RawMessage{"web": json.RawMessage(doc)}, ":6410", ":7000", []string{"my.keenetic.pro"}, false},
+		{"port keeps host part", map[string]json.RawMessage{"web": json.RawMessage(doc)}, "127.0.0.1:6410", "127.0.0.1:7000", []string{"my.keenetic.pro"}, false},
+		{"no web row", map[string]json.RawMessage{}, ":6410", ":6410", []string{"a.example"}, false},
+		{"invalid json", map[string]json.RawMessage{"web": json.RawMessage(`{"port":`)}, ":6410", ":6410", []string{"a.example"}, false},
+		{"locked ignores stored port", map[string]json.RawMessage{"web": json.RawMessage(doc)}, ":6410", ":6410", []string{"my.keenetic.pro"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.App{Web: config.Web{Listen: tc.listen, PortLocked: tc.locked, AllowedHosts: []string{"a.example"}}}
+			if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{data: tc.data}); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Web.Listen != tc.wantListen {
+				t.Errorf("Listen = %q, want %q", cfg.Web.Listen, tc.wantListen)
+			}
+			if !slices.Equal(cfg.Web.AllowedHosts, tc.wantHosts) {
+				t.Errorf("AllowedHosts = %v, want %v", cfg.Web.AllowedHosts, tc.wantHosts)
+			}
+		})
+	}
+}
+
+func TestWebJSON(t *testing.T) {
+	cfg := &config.App{Web: config.Web{Listen: "127.0.0.1:6410"}}
+	if got := string(WebJSON(cfg)); got != `{"allowed_hosts":[],"port":6410}` {
+		t.Errorf("WebJSON = %s", got)
+	}
+	cfg.Web.AllowedHosts = []string{"x.lan"}
+	if got := string(WebJSON(cfg)); got != `{"allowed_hosts":["x.lan"],"port":6410}` {
+		t.Errorf("WebJSON = %s", got)
+	}
+}
+
+func TestMergeWebKeepsOtherField(t *testing.T) {
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"web": json.RawMessage(`{"port":7000,"allowed_hosts":["x.lan"]}`),
+	}}
+	if err := MergeWeb(context.Background(), db, json.RawMessage(`{"port":7001}`)); err != nil {
+		t.Fatal(err)
+	}
+	var saved webOverlay
+	if err := json.Unmarshal(db.data["web"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Port == nil || *saved.Port != 7001 || saved.AllowedHosts == nil || !slices.Equal(*saved.AllowedHosts, []string{"x.lan"}) {
+		t.Errorf("after port patch: %s", db.data["web"])
+	}
+	if err := MergeWeb(context.Background(), db, json.RawMessage(`{"allowed_hosts":["Y.lan"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	saved = webOverlay{}
+	if err := json.Unmarshal(db.data["web"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Port == nil || *saved.Port != 7001 || saved.AllowedHosts == nil || !slices.Equal(*saved.AllowedHosts, []string{"y.lan"}) {
+		t.Errorf("after hosts patch: %s", db.data["web"])
+	}
+}
+
+func TestMergeTrackerKeyLoginPassword(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"trackers": json.RawMessage(`{"rutracker":{"password":"SEC-p"}}`),
+	}}
+	if err := MergeTrackerKey(ctx, db, "rutracker", json.RawMessage(`{"login":"a"}`)); err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]map[string]any
+	if err := json.Unmarshal(db.data["trackers"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved["rutracker"]["login"] != "a" || saved["rutracker"]["password"] != "SEC-p" {
+		t.Fatalf("saved = %s", db.data["trackers"])
+	}
+	cfg := config.App{Tracker: config.Tracker{"rutracker": {Name: "rutracker"}}}
+	eff, err := TrackersEffective(ctx, &cfg, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := eff["rutracker"]; it.Login != "a" || it.Password != "SEC-p" {
+		t.Fatalf("effective login %q password %q", it.Login, it.Password)
+	}
+}
+
+func TestApplyOverridesDisablesTrackersNotAdded(t *testing.T) {
+	cases := []struct {
+		name          string
+		data          map[string]json.RawMessage
+		wantRutracker bool
+		wantWarn      bool
+	}{
+		{"added list", map[string]json.RawMessage{"trackers_added": json.RawMessage(`["kinozal"]`)}, false, false},
+		{"no list", map[string]json.RawMessage{}, true, false},
+		{"invalid list", map[string]json.RawMessage{"trackers_added": json.RawMessage(`{"x":1}`)}, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.App{Tracker: config.Tracker{
+				"rutracker": {Name: "rutracker", Enabled: true},
+				"kinozal":   {Name: "kinozal", Enabled: true},
+			}}
+			if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{data: tc.data}); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Tracker["rutracker"].Enabled != tc.wantRutracker {
+				t.Errorf("rutracker Enabled = %v, want %v", cfg.Tracker["rutracker"].Enabled, tc.wantRutracker)
+			}
+			if !cfg.Tracker["kinozal"].Enabled {
+				t.Error("kinozal should stay enabled")
+			}
+			if tc.wantWarn && !hasWarn("settings trackers_added") {
+				t.Error("no WARN naming trackers_added")
+			}
+		})
+	}
+}
+
+func hasWarn(needle string) bool {
+	for _, e := range logger.Snapshot(0) {
+		if e.Level == "WARN" && strings.Contains(e.Message, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTrackersAddedRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeSettingsDB{}
+	if keys, ok, err := TrackersAdded(ctx, db); err != nil || ok || keys != nil {
+		t.Fatalf("absent: keys %v ok %v err %v", keys, ok, err)
+	}
+	if err := SaveTrackersAdded(ctx, db, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(db.data["trackers_added"]); got != "[]" {
+		t.Fatalf("stored %q, want []", got)
+	}
+	if keys, ok, err := TrackersAdded(ctx, db); err != nil || !ok || keys == nil || len(keys) != 0 {
+		t.Fatalf("empty: keys %#v ok %v err %v", keys, ok, err)
+	}
+	if err := SaveTrackersAdded(ctx, db, []string{"a", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if keys, ok, err := TrackersAdded(ctx, db); err != nil || !ok || !slices.Equal(keys, []string{"a", "b"}) {
+		t.Fatalf("two: keys %v ok %v err %v", keys, ok, err)
+	}
+}
+
+func TestDeleteTrackerKey(t *testing.T) {
+	ctx := context.Background()
+	const ru = `{"credentials":"SEC-c","login":"u","password":"SEC-p","x_unknown":1}`
+	doc := `{"rutracker":` + ru + `,"kinozal":{"login":"k","password":"SEC-k"}}`
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{"trackers": json.RawMessage(doc)}}
+	if err := DeleteTrackerKey(ctx, db, "kinozal"); err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]json.RawMessage
+	if err := json.Unmarshal(db.data["trackers"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved) != 1 || string(saved["rutracker"]) != ru {
+		t.Fatalf("saved = %s", db.data["trackers"])
+	}
+
+	db.saves = 0
+	if err := DeleteTrackerKey(ctx, db, "kinozal"); err != nil || db.saves != 0 {
+		t.Fatalf("absent key: err %v saves %d", err, db.saves)
+	}
+
+	empty := &fakeSettingsDB{}
+	if err := DeleteTrackerKey(ctx, empty, "kinozal"); err != nil || empty.saves != 0 {
+		t.Fatalf("absent document: err %v saves %d", err, empty.saves)
+	}
+
+	bad := &fakeSettingsDB{data: map[string]json.RawMessage{"trackers": json.RawMessage(`{"rutracker":`)}}
+	if err := DeleteTrackerKey(ctx, bad, "rutracker"); err == nil || bad.saves != 0 {
+		t.Fatalf("invalid JSON: err %v saves %d", err, bad.saves)
+	}
+}
+
+func channelEnabledFlags(t *testing.T, cfg *config.App) map[string]bool {
+	t.Helper()
+	var got struct {
+		Notifications map[string]json.RawMessage `json:"notifications"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, ch := range []string{"telegram", "webhook", "email", "pushover"} {
+		var c struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.Unmarshal(got.Notifications[ch], &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.Enabled == nil {
+			t.Fatalf("%s: no enabled key in IntegrationsJSON", ch)
+		}
+		out[ch] = *c.Enabled
+	}
+	return out
+}
+
+func TestIntegrationsChannelEnabledRoundTrip(t *testing.T) {
+	db := &fakeSettingsDB{}
+	if err := MergeIntegrations(context.Background(), db, json.RawMessage(`{"notifications":{"email":{"enabled":false}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.App{}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	n := cfg.Notify
+	if !n.EmailDisabled || n.TelegramDisabled || n.WebhookDisabled || n.PushoverDisabled {
+		t.Fatalf("disabled flags = tg %v wh %v email %v po %v, want only email", n.TelegramDisabled, n.WebhookDisabled, n.EmailDisabled, n.PushoverDisabled)
+	}
+	want := map[string]bool{"telegram": true, "webhook": true, "email": false, "pushover": true}
+	if got := channelEnabledFlags(t, &cfg); !maps.Equal(got, want) {
+		t.Fatalf("enabled in JSON = %v, want %v", got, want)
+	}
+
+	if err := MergeIntegrations(context.Background(), db, json.RawMessage(`{"notifications":{"email":{"enabled":true},"telegram":{"enabled":false}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg = config.App{}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	want = map[string]bool{"telegram": false, "webhook": true, "email": true, "pushover": true}
+	if got := channelEnabledFlags(t, &cfg); !maps.Equal(got, want) {
+		t.Fatalf("enabled in JSON after second patch = %v, want %v", got, want)
+	}
+}
+
+func TestIntegrationsChannelEnabledAbsentMeansOn(t *testing.T) {
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"notifications":{"telegram":{"bot_token":"t","chat_id":"1"},"webhook":{"url":"http://h"},"enabled":true}}`),
+	}}
+	cfg := config.App{}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	n := cfg.Notify
+	if n.TelegramDisabled || n.WebhookDisabled || n.EmailDisabled || n.PushoverDisabled {
+		t.Fatalf("absent flag must mean enabled: %+v", n)
+	}
+	want := map[string]bool{"telegram": true, "webhook": true, "email": true, "pushover": true}
+	if got := channelEnabledFlags(t, &cfg); !maps.Equal(got, want) {
+		t.Fatalf("enabled in JSON = %v, want %v", got, want)
+	}
+}
+
+func TestNormalizeAppURL(t *testing.T) {
+	ok := map[string]string{
+		"":                                "",
+		"  ":                              "",
+		"https://rip.example.com":         "https://rip.example.com",
+		"https://rip.example.com/":        "https://rip.example.com",
+		" HTTP://Rip.Example.com:6410// ": "http://rip.example.com:6410",
+		"https://example.com/ripperr/":    "https://example.com/ripperr",
+		"http://192.168.1.5:6410":         "http://192.168.1.5:6410",
+		"http://[::1]:6410/app":           "http://[::1]:6410/app",
+	}
+	for in, want := range ok {
+		got, err := normalizeAppURL(in)
+		if err != nil || got != want {
+			t.Errorf("normalizeAppURL(%q) = %q, %v, want %q", in, got, err, want)
+		}
+	}
+	bad := []string{
+		"rip.example.com",
+		"ftp://rip.example.com",
+		"https://",
+		"https:///app",
+		"https://u:p@rip.example.com",
+		"https://u@rip.example.com",
+		"https://rip.example.com?x=1",
+		"https://rip.example.com/?",
+		"https://rip.example.com/#a",
+		"https://rip.example.com#",
+		"https://rip.example.com:abc",
+		"https://rip example.com",
+		"//rip.example.com",
+		"javascript:alert(1)",
+	}
+	for _, in := range bad {
+		if got, err := normalizeAppURL(in); err == nil || !strings.Contains(err.Error(), "app_url") {
+			t.Errorf("normalizeAppURL(%q) = %q, %v, want app_url error", in, got, err)
+		}
+	}
+}
+
+func TestWebPatchFromJSONAppURL(t *testing.T) {
+	o, err := WebPatchFromJSON(json.RawMessage(`{"app_url":"https://x.example/"}`))
+	if err != nil || o.AppURL == nil || *o.AppURL != "https://x.example" {
+		t.Fatalf("patch = %+v, %v", o, err)
+	}
+	if _, err = WebPatchFromJSON(json.RawMessage(`{"app_url":"ftp://x"}`)); err == nil {
+		t.Fatal("ftp scheme accepted")
+	}
+	if o, err = WebPatchFromJSON(json.RawMessage(`{"port":7000}`)); err != nil || o.AppURL != nil {
+		t.Fatalf("absent app_url must stay nil: %+v, %v", o, err)
+	}
+}
+
+func TestAppURLRoundTrip(t *testing.T) {
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"web": json.RawMessage(`{"port":7000,"allowed_hosts":["x.lan"]}`),
+	}}
+	if err := MergeWeb(context.Background(), db, json.RawMessage(`{"app_url":"https://Rip.example.com/app/"}`)); err != nil {
+		t.Fatal(err)
+	}
+	var saved webOverlay
+	if err := json.Unmarshal(db.data["web"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.AppURL == nil || *saved.AppURL != "https://rip.example.com/app" || saved.Port == nil || *saved.Port != 7000 {
+		t.Fatalf("saved = %s", db.data["web"])
+	}
+	cfg := config.App{Web: config.Web{Listen: ":6410", AppURL: "https://env.example.com"}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Web.AppURL != "https://rip.example.com/app" {
+		t.Errorf("stored app_url must win over env: %q", cfg.Web.AppURL)
+	}
+	if err := MergeWeb(context.Background(), db, json.RawMessage(`{"allowed_hosts":["y.lan"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg = config.App{Web: config.Web{Listen: ":6410"}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Web.AppURL != "https://rip.example.com/app" {
+		t.Errorf("patch without app_url must keep it: %q", cfg.Web.AppURL)
+	}
+	// пустая строка очищает сохраненное значение, env-дефолт тогда тоже перекрыт
+	if err := MergeWeb(context.Background(), db, json.RawMessage(`{"app_url":""}`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg = config.App{Web: config.Web{Listen: ":6410", AppURL: "https://env.example.com"}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Web.AppURL != "" {
+		t.Errorf("cleared app_url must override env: %q", cfg.Web.AppURL)
+	}
+}
+
+func TestApplyOverridesNormalizesEnvAppURL(t *testing.T) {
+	cases := map[string]string{
+		"https://h.example/":        "https://h.example",
+		" HTTPS://H.example/app// ": "https://h.example/app",
+		"h.example":                 "",
+		"https://u:p@h.example":     "",
+		"":                          "",
+	}
+	for in, want := range cases {
+		cfg := config.App{Web: config.Web{Listen: ":6410", AppURL: in}}
+		if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{}); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Web.AppURL != want {
+			t.Errorf("env %q -> %q, want %q", in, cfg.Web.AppURL, want)
+		}
+	}
+}
+
+func countWarns(sub string) int {
+	n := 0
+	for _, e := range logger.Snapshot(1000) {
+		if e.Level == "WARN" && strings.Contains(e.Message, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestInvalidAppURLWarnsOncePerValue(t *testing.T) {
+	resetWarned()
+	const marker = "ftp://warn-once-test.invalid"
+	for range 3 {
+		cfg := config.App{Web: config.Web{Listen: ":6410", AppURL: marker}}
+		if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{}); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Web.AppURL != "" {
+			t.Fatalf("AppURL = %q, want cleared", cfg.Web.AppURL)
+		}
+	}
+	if got := countWarns(marker); got != 1 {
+		t.Errorf("warnings = %d, want 1", got)
+	}
+	cfg := config.App{Web: config.Web{Listen: ":6410", AppURL: marker + "2"}}
+	if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := countWarns(marker + "2"); got != 1 {
+		t.Errorf("warnings for new value = %d, want 1", got)
+	}
+}
+
+func TestLockedStoredPortWarnsOnce(t *testing.T) {
+	resetWarned()
+	data := map[string]json.RawMessage{"web": json.RawMessage(`{"port":7123}`)}
+	for range 3 {
+		cfg := config.App{Web: config.Web{Listen: ":6410", PortLocked: true}}
+		if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{data: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := countWarns("stored web port 7123 ignored"); got != 1 {
+		t.Errorf("warnings = %d, want 1", got)
+	}
+	same := map[string]json.RawMessage{"web": json.RawMessage(`{"port":6410}`)}
+	cfg := config.App{Web: config.Web{Listen: ":6410", PortLocked: true}}
+	if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{data: same}); err != nil {
+		t.Fatal(err)
+	}
+	if got := countWarns("stored web port 6410 ignored"); got != 0 {
+		t.Errorf("warned for matching port: %d", got)
+	}
+}
+
+func resetWarned() {
+	warnedMu.Lock()
+	warned = nil
+	warnedMu.Unlock()
 }

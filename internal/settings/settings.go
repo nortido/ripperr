@@ -4,11 +4,41 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"slices"
+	"strconv"
+	"sync"
 
 	"ripperr/internal/config"
+	"ripperr/internal/notify"
 	"ripperr/internal/storage/client/sqlite"
 	"ripperr/internal/system/logger"
 )
+
+const settingWeb = "web"
+
+var (
+	warnedMu sync.Mutex
+	warned   map[string]struct{}
+)
+
+// ApplyOverrides идет на каждый effective(), поэтому одинаковое предупреждение пишем один раз
+func warnOnce(msg string) {
+	warnedMu.Lock()
+	_, seen := warned[msg]
+	if !seen {
+		if warned == nil {
+			warned = make(map[string]struct{})
+		}
+		warned[msg] = struct{}{}
+	}
+	warnedMu.Unlock()
+	if !seen {
+		logger.Warn(msg)
+	}
+}
+
+const settingTrackersAdded = "trackers_added"
 
 type settingsDB interface {
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
@@ -24,6 +54,7 @@ type scheduleOverlay struct {
 	MagnetTimeout         *int64    `json:"magnet_timeout,omitempty"`
 	DeleteEnabled         *bool     `json:"delete_enabled,omitempty"`
 	DeleteFilesEnabled    *bool     `json:"delete_files_enabled,omitempty"`
+	MirrorConfirm         *bool     `json:"mirror_confirm,omitempty"`
 	MonitoredCategories   *[]string `json:"monitored_categories,omitempty"`
 	DeleteFilesCategories *[]string `json:"delete_files_categories,omitempty"`
 	WatchTags             *[]string `json:"watch_tags,omitempty"`
@@ -36,11 +67,15 @@ type trackerItemOverlay struct {
 	Domain       *string   `json:"domain,omitempty"`
 	ActiveDomain *string   `json:"active_domain,omitempty"`
 	Mirrors      *[]string `json:"mirrors,omitempty"`
+	Retired      *[]string `json:"retired,omitempty"`
+	Unconfirmed  *[]string `json:"unconfirmed,omitempty"`
 	HourLimit    *int      `json:"hour_limit,omitempty"`
 	ProxyType    *int      `json:"proxy_type,omitempty"`
 	LoginURL     *string   `json:"login_url,omitempty"`
 	DownloadURL  *string   `json:"download_url,omitempty"`
 	Credentials  *string   `json:"credentials,omitempty"`
+	Login        *string   `json:"login,omitempty"`
+	Password     *string   `json:"password,omitempty"`
 	Cookies      *string   `json:"cookies,omitempty"`
 	Publicity    *string   `json:"publicity,omitempty"`
 }
@@ -57,6 +92,10 @@ type integrationsOverlay struct {
 		Username *string `json:"username,omitempty"`
 		Password *string `json:"password,omitempty"`
 	} `json:"transmission"`
+	Deluge struct {
+		Host     *string `json:"host,omitempty"`
+		Password *string `json:"password,omitempty"`
+	} `json:"deluge"`
 	Flaresolverr struct {
 		URL       *string `json:"url,omitempty"`
 		TimeoutMS *int    `json:"timeout_ms,omitempty"`
@@ -66,19 +105,48 @@ type integrationsOverlay struct {
 	} `json:"proxy"`
 	Notifications struct {
 		Telegram struct {
-			BotToken *string `json:"bot_token,omitempty"`
-			ChatID   *string `json:"chat_id,omitempty"`
+			Enabled  *bool     `json:"enabled,omitempty"`
+			BotToken *string   `json:"bot_token,omitempty"`
+			ChatID   *string   `json:"chat_id,omitempty"`
+			Events   *[]string `json:"events,omitempty"`
 		} `json:"telegram"`
 		Webhook struct {
-			URL *string `json:"url,omitempty"`
+			Enabled *bool     `json:"enabled,omitempty"`
+			URL     *string   `json:"url,omitempty"`
+			Events  *[]string `json:"events,omitempty"`
 		} `json:"webhook"`
+		Email struct {
+			Enabled  *bool     `json:"enabled,omitempty"`
+			Host     *string   `json:"host,omitempty"`
+			Port     *int      `json:"port,omitempty"`
+			Security *string   `json:"security,omitempty"`
+			Username *string   `json:"username,omitempty"`
+			Password *string   `json:"password,omitempty"`
+			From     *string   `json:"from,omitempty"`
+			To       *string   `json:"to,omitempty"`
+			Events   *[]string `json:"events,omitempty"`
+		} `json:"email"`
+		Pushover struct {
+			Enabled  *bool     `json:"enabled,omitempty"`
+			AppToken *string   `json:"app_token,omitempty"`
+			UserKey  *string   `json:"user_key,omitempty"`
+			Events   *[]string `json:"events,omitempty"`
+		} `json:"pushover"`
 		Enabled *bool `json:"enabled,omitempty"`
 	} `json:"notifications"`
+	Metrics struct {
+		Token *string `json:"token,omitempty"`
+	} `json:"metrics"`
+	MirrorSource struct {
+		Type   *string `json:"type,omitempty"`
+		URL    *string `json:"url,omitempty"`
+		Direct *bool   `json:"direct,omitempty"`
+	} `json:"mirror_source"`
 }
 
 func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
-	// вызывающий передаёт копию App, но набор трекеров это map: без своей копии
-	// патч из БД ушёл бы в базовый конфиг и пережил бы удаление настройки
+	// вызывающий передает копию App, но трекеры лежат в map. Без своей копии патч из БД
+	// ушел бы в базовый конфиг и пережил бы удаление настройки
 	cfg.Tracker = cfg.Tracker.Clone()
 	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingSchedule); err != nil {
 		return err
@@ -100,6 +168,15 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 			applyTrackers(cfg, m)
 		}
 	}
+	if added, ok, err := TrackersAdded(ctx, db); err != nil {
+		return err
+	} else if ok {
+		for key, it := range cfg.Tracker {
+			if !slices.Contains(added, key) {
+				it.Enabled = false
+			}
+		}
+	}
 	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingIntegrations); err != nil {
 		return err
 	} else if ok {
@@ -109,6 +186,22 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 		} else {
 			applyIntegrations(cfg, o)
 		}
+	}
+	if raw, ok, err := db.GetSetting(ctx, settingWeb); err != nil {
+		return err
+	} else if ok {
+		var o webOverlay
+		if err = json.Unmarshal(raw, &o); err != nil {
+			logger.Warn(fmt.Sprintf("settings %s: invalid JSON overlay: %v", settingWeb, err))
+		} else {
+			applyWeb(cfg, o)
+		}
+	}
+	if n, err := normalizeAppURL(cfg.Web.AppURL); err != nil {
+		warnOnce(fmt.Sprintf("settings web: WEB_APP_URL %q ignored: %v", cfg.Web.AppURL, err))
+		cfg.Web.AppURL = ""
+	} else {
+		cfg.Web.AppURL = n
 	}
 	if err := NormalizeAppIntegrations(cfg); err != nil {
 		return err
@@ -155,14 +248,16 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	if o.DeleteFilesEnabled != nil {
 		cfg.Manager.DeleteFilesEnabled = *o.DeleteFilesEnabled
 	}
+	if o.MirrorConfirm != nil {
+		cfg.Runner.MirrorConfirm = *o.MirrorConfirm
+	}
 	if o.DeleteFilesCategories != nil {
 		cfg.Manager.DeleteFilesCategories = *o.DeleteFilesCategories
 	}
 }
 
-// applyTrackerOverlay накладывает патч на один трекер: маршалинг выбрасывает нулевые
-// указатели (omitempty), поэтому Unmarshal трогает только заданные патчем ключи.
 func applyTrackerOverlay(item *config.TrackerItem, o trackerItemOverlay) error {
+	// omitempty выкидывает nil-указатели, и Unmarshal трогает только ключи из патча
 	b, err := json.Marshal(o)
 	if err != nil {
 		return err
@@ -188,8 +283,8 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if o.Client != nil {
 		switch client := config.NormalizeClient(*o.Client); client {
 		case "":
-			// пустая строка = не менять активный клиент, ValidateIntegrationsPatch её пропускает намеренно
-		case "qbit", "transmission":
+			// пустая строка: клиент не меняем, ValidateIntegrationsPatch ее пропускает
+		case "qbit", "transmission", "deluge":
 			cfg.Manager.Client = client
 		default:
 			logger.Warn(fmt.Sprintf("settings %s: unknown client %q, keeping %q", sqlite.SettingIntegrations, *o.Client, cfg.Manager.Client))
@@ -213,6 +308,12 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if o.Transmission.Password != nil {
 		cfg.Manager.Transmission.Password = *o.Transmission.Password
 	}
+	if o.Deluge.Host != nil {
+		cfg.Manager.Deluge.Host = *o.Deluge.Host
+	}
+	if o.Deluge.Password != nil {
+		cfg.Manager.Deluge.Password = *o.Deluge.Password
+	}
 	if o.Flaresolverr.URL != nil {
 		cfg.Flaresolverr.Host = *o.Flaresolverr.URL
 	}
@@ -221,6 +322,18 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	}
 	if o.Proxy.DownloadProxy != nil {
 		cfg.Runner.DownloadProxy = *o.Proxy.DownloadProxy
+	}
+	if v := o.Notifications.Telegram.Enabled; v != nil {
+		cfg.Notify.TelegramDisabled = !*v
+	}
+	if v := o.Notifications.Webhook.Enabled; v != nil {
+		cfg.Notify.WebhookDisabled = !*v
+	}
+	if v := o.Notifications.Email.Enabled; v != nil {
+		cfg.Notify.EmailDisabled = !*v
+	}
+	if v := o.Notifications.Pushover.Enabled; v != nil {
+		cfg.Notify.PushoverDisabled = !*v
 	}
 	if o.Notifications.Telegram.BotToken != nil {
 		cfg.Notify.TelegramToken = *o.Notifications.Telegram.BotToken
@@ -231,9 +344,67 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if o.Notifications.Webhook.URL != nil {
 		cfg.Notify.WebhookURL = *o.Notifications.Webhook.URL
 	}
+	if o.Notifications.Telegram.Events != nil {
+		cfg.Notify.TelegramEvents = slices.Clone(*o.Notifications.Telegram.Events)
+	}
+	if o.Notifications.Webhook.Events != nil {
+		cfg.Notify.WebhookEvents = slices.Clone(*o.Notifications.Webhook.Events)
+	}
+	if v := o.Notifications.Email.Host; v != nil {
+		cfg.Notify.EmailHost = *v
+	}
+	if v := o.Notifications.Email.Port; v != nil {
+		cfg.Notify.EmailPort = *v
+	}
+	if v := o.Notifications.Email.Security; v != nil {
+		cfg.Notify.EmailSecurity = *v
+	}
+	if v := o.Notifications.Email.Username; v != nil {
+		cfg.Notify.EmailUsername = *v
+	}
+	if v := o.Notifications.Email.Password; v != nil {
+		cfg.Notify.EmailPassword = *v
+	}
+	if v := o.Notifications.Email.From; v != nil {
+		cfg.Notify.EmailFrom = *v
+	}
+	if v := o.Notifications.Email.To; v != nil {
+		cfg.Notify.EmailTo = *v
+	}
+	if v := o.Notifications.Email.Events; v != nil {
+		cfg.Notify.EmailEvents = slices.Clone(*v)
+	}
+	if v := o.Notifications.Pushover.AppToken; v != nil {
+		cfg.Notify.PushoverToken = *v
+	}
+	if v := o.Notifications.Pushover.UserKey; v != nil {
+		cfg.Notify.PushoverUser = *v
+	}
+	if v := o.Notifications.Pushover.Events; v != nil {
+		cfg.Notify.PushoverEvents = slices.Clone(*v)
+	}
 	if o.Notifications.Enabled != nil {
 		cfg.Notify.Enabled = *o.Notifications.Enabled
 	}
+	if o.Metrics.Token != nil {
+		cfg.Metrics.Token = *o.Metrics.Token
+	}
+	if v := o.MirrorSource.Type; v != nil {
+		cfg.MirrorSource.Type = *v
+	}
+	if v := o.MirrorSource.URL; v != nil {
+		cfg.MirrorSource.URL = *v
+	}
+	if v := o.MirrorSource.Direct; v != nil {
+		cfg.MirrorSource.Direct = *v
+	}
+}
+
+func resolvedEvents(list []string) []string {
+	if list == nil {
+		return notify.DefaultEvents()
+	}
+	return list
 }
 
 func ScheduleJSON(cfg *config.App) json.RawMessage {
@@ -247,6 +418,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		MagnetTimeout         int64    `json:"magnet_timeout"`
 		DeleteEnabled         bool     `json:"delete_enabled"`
 		DeleteFilesEnabled    bool     `json:"delete_files_enabled"`
+		MirrorConfirm         bool     `json:"mirror_confirm"`
 		MonitoredCategories   []string `json:"monitored_categories"`
 		DeleteFilesCategories []string `json:"delete_files_categories"`
 		WatchTags             []string `json:"watch_tags"`
@@ -259,6 +431,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		ThresholdYear:        cfg.Runner.YearThresholdDays,
 		ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
 		MagnetTimeout:        cfg.Runner.MagnetTimeout,
+		MirrorConfirm:        cfg.Runner.MirrorConfirm,
 		MonitoredCategories:  cfg.Runner.AllowedCategories,
 		WatchTags:            cfg.Runner.WatchTags,
 		Timezone:             cfg.Runner.Timezone,
@@ -280,6 +453,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 }
 
 func IntegrationsJSON(cfg *config.App) json.RawMessage {
+	cfg = maskedCopy(cfg)
 	s := struct {
 		Client string `json:"client"`
 		Qbit   struct {
@@ -292,6 +466,10 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 			Username string `json:"username"`
 			Password string `json:"password"`
 		} `json:"transmission"`
+		Deluge struct {
+			Host     string `json:"host"`
+			Password string `json:"password"`
+		} `json:"deluge"`
 		Flaresolverr struct {
 			URL       string `json:"url"`
 			TimeoutMS int    `json:"timeout_ms"`
@@ -301,14 +479,43 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 		} `json:"proxy"`
 		Notifications struct {
 			Telegram struct {
-				BotToken string `json:"bot_token"`
-				ChatID   string `json:"chat_id"`
+				Enabled  bool     `json:"enabled"`
+				BotToken string   `json:"bot_token"`
+				ChatID   string   `json:"chat_id"`
+				Events   []string `json:"events"`
 			} `json:"telegram"`
 			Webhook struct {
-				URL string `json:"url"`
+				Enabled bool     `json:"enabled"`
+				URL     string   `json:"url"`
+				Events  []string `json:"events"`
 			} `json:"webhook"`
+			Email struct {
+				Enabled  bool     `json:"enabled"`
+				Host     string   `json:"host"`
+				Port     int      `json:"port"`
+				Security string   `json:"security"`
+				Username string   `json:"username"`
+				Password string   `json:"password"`
+				From     string   `json:"from"`
+				To       string   `json:"to"`
+				Events   []string `json:"events"`
+			} `json:"email"`
+			Pushover struct {
+				Enabled  bool     `json:"enabled"`
+				AppToken string   `json:"app_token"`
+				UserKey  string   `json:"user_key"`
+				Events   []string `json:"events"`
+			} `json:"pushover"`
 			Enabled bool `json:"enabled"`
 		} `json:"notifications"`
+		Metrics struct {
+			Token string `json:"token"`
+		} `json:"metrics"`
+		MirrorSource struct {
+			Type   string `json:"type"`
+			URL    string `json:"url"`
+			Direct bool   `json:"direct"`
+		} `json:"mirror_source"`
 	}{}
 	s.Client = config.NormalizeClient(cfg.Manager.Client)
 	s.Qbit.Host = cfg.Manager.QbitTorrent.Host
@@ -317,13 +524,39 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s.Transmission.Host = cfg.Manager.Transmission.Host
 	s.Transmission.Username = cfg.Manager.Transmission.Username
 	s.Transmission.Password = cfg.Manager.Transmission.Password
+	s.Deluge.Host = cfg.Manager.Deluge.Host
+	s.Deluge.Password = cfg.Manager.Deluge.Password
 	s.Flaresolverr.URL = cfg.Flaresolverr.Host
 	s.Flaresolverr.TimeoutMS = cfg.Flaresolverr.MaxTimeout
 	s.Proxy.DownloadProxy = cfg.Runner.DownloadProxy
+	s.Notifications.Telegram.Enabled = !cfg.Notify.TelegramDisabled
+	s.Notifications.Webhook.Enabled = !cfg.Notify.WebhookDisabled
+	s.Notifications.Email.Enabled = !cfg.Notify.EmailDisabled
+	s.Notifications.Pushover.Enabled = !cfg.Notify.PushoverDisabled
 	s.Notifications.Telegram.BotToken = cfg.Notify.TelegramToken
 	s.Notifications.Telegram.ChatID = cfg.Notify.TelegramChatID
 	s.Notifications.Webhook.URL = cfg.Notify.WebhookURL
+	s.Notifications.Telegram.Events = resolvedEvents(cfg.Notify.TelegramEvents)
+	s.Notifications.Webhook.Events = resolvedEvents(cfg.Notify.WebhookEvents)
+	s.Notifications.Email.Host = cfg.Notify.EmailHost
+	s.Notifications.Email.Port = cfg.Notify.EmailPort
+	s.Notifications.Email.Security = cfg.Notify.EmailSecurity
+	s.Notifications.Email.Username = cfg.Notify.EmailUsername
+	s.Notifications.Email.Password = cfg.Notify.EmailPassword
+	s.Notifications.Email.From = cfg.Notify.EmailFrom
+	s.Notifications.Email.To = cfg.Notify.EmailTo
+	s.Notifications.Email.Events = resolvedEvents(cfg.Notify.EmailEvents)
+	s.Notifications.Pushover.AppToken = cfg.Notify.PushoverToken
+	s.Notifications.Pushover.UserKey = cfg.Notify.PushoverUser
+	s.Notifications.Pushover.Events = resolvedEvents(cfg.Notify.PushoverEvents)
 	s.Notifications.Enabled = cfg.Notify.Enabled
+	s.Metrics.Token = cfg.Metrics.Token
+	s.MirrorSource.Type = cfg.MirrorSource.Type
+	if s.MirrorSource.Type == "" {
+		s.MirrorSource.Type = "github"
+	}
+	s.MirrorSource.URL = cfg.MirrorSource.URL
+	s.MirrorSource.Direct = cfg.MirrorSource.Direct
 	b, _ := json.Marshal(s)
 	return b
 }
@@ -354,15 +587,20 @@ func TrackersEffective(ctx context.Context, cfg *config.App, db settingsDB) (map
 	for k, it := range m {
 		if it.Mirrors == nil {
 			it.Mirrors = []string{}
-			m[k] = it
 		}
+		if it.Retired == nil {
+			it.Retired = []string{}
+		}
+		if it.Unconfirmed == nil {
+			it.Unconfirmed = []string{}
+		}
+		m[k] = it
 	}
 	return m, nil
 }
 
-// mergePatch накладывает заполненные поля патча на dst: при маршалинге нулевые указатели
-// выбрасываются (omitempty), поэтому Unmarshal трогает только заданные патчем ключи.
 func mergePatch[T any](dst *T, patch T) error {
+	// как в applyTrackerOverlay: omitempty отсекает пустые поля патча
 	b, err := json.Marshal(patch)
 	if err != nil {
 		return err
@@ -430,6 +668,57 @@ func MergeTrackerKey(ctx context.Context, db interface {
 	return db.SaveSetting(ctx, sqlite.SettingTrackers, out)
 }
 
+func TrackersAdded(ctx context.Context, db settingsDB) ([]string, bool, error) {
+	raw, ok, err := db.GetSetting(ctx, settingTrackersAdded)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	var keys []string
+	if err = json.Unmarshal(raw, &keys); err != nil {
+		logger.Warn(fmt.Sprintf("settings %s: invalid JSON: %v", settingTrackersAdded, err))
+		return nil, false, nil
+	}
+	return keys, true, nil
+}
+
+func SaveTrackersAdded(ctx context.Context, db interface {
+	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
+}, keys []string) error {
+	if keys == nil {
+		keys = []string{}
+	}
+	out, err := json.Marshal(keys)
+	if err != nil {
+		return err
+	}
+	return db.SaveSetting(ctx, settingTrackersAdded, out)
+}
+
+func DeleteTrackerKey(ctx context.Context, db interface {
+	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
+	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
+}, key string) error {
+	raw, ok, err := db.GetSetting(ctx, sqlite.SettingTrackers)
+	if err != nil || !ok {
+		return err
+	}
+	// RawMessage вместо типа overlay: документ запечатан целиком, неизвестные поля
+	// и секреты других трекеров должны пережить перезапись без изменений
+	var m map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	if _, found := m[key]; !found {
+		return nil
+	}
+	delete(m, key)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return db.SaveSetting(ctx, sqlite.SettingTrackers, out)
+}
+
 func MergeIntegrations(ctx context.Context, db interface {
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
@@ -454,4 +743,74 @@ func MergeIntegrations(ctx context.Context, db interface {
 		return err
 	}
 	return db.SaveSetting(ctx, sqlite.SettingIntegrations, out)
+}
+
+type webOverlay struct {
+	AllowedHosts *[]string `json:"allowed_hosts,omitempty"`
+	AppURL       *string   `json:"app_url,omitempty"`
+	Port         *int      `json:"port,omitempty"`
+}
+
+func applyWeb(cfg *config.App, o webOverlay) {
+	// в Docker порт задается картой -p, сохраненный порт не применяется
+	if o.Port != nil && cfg.Web.PortLocked {
+		if _, p, err := net.SplitHostPort(cfg.Web.Listen); err == nil && p != strconv.Itoa(*o.Port) {
+			warnOnce(fmt.Sprintf("settings web: stored web port %d ignored in Docker: map the host port with -p <host>:6410", *o.Port))
+		}
+	}
+	if o.Port != nil && !cfg.Web.PortLocked {
+		// хост берем из env/дефолта, в БД хранится только порт
+		host, _, err := net.SplitHostPort(cfg.Web.Listen)
+		if err != nil {
+			host = ""
+		}
+		cfg.Web.Listen = net.JoinHostPort(host, strconv.Itoa(*o.Port))
+	}
+	if o.AllowedHosts != nil {
+		cfg.Web.AllowedHosts = slices.Clone(*o.AllowedHosts)
+	}
+	if o.AppURL != nil {
+		cfg.Web.AppURL = *o.AppURL
+	}
+}
+
+func WebJSON(cfg *config.App) json.RawMessage {
+	s := struct {
+		AllowedHosts []string `json:"allowed_hosts"`
+		Port         int      `json:"port"`
+	}{AllowedHosts: slices.Clone(cfg.Web.AllowedHosts)}
+	if s.AllowedHosts == nil {
+		s.AllowedHosts = []string{}
+	}
+	if _, p, err := net.SplitHostPort(cfg.Web.Listen); err == nil {
+		s.Port, _ = strconv.Atoi(p)
+	}
+	b, _ := json.Marshal(s)
+	return b
+}
+
+func MergeWeb(ctx context.Context, db interface {
+	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
+	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
+}, patch json.RawMessage) error {
+	overlay, err := WebPatchFromJSON(patch)
+	if err != nil {
+		return err
+	}
+	var existing webOverlay
+	if raw, ok, err := db.GetSetting(ctx, settingWeb); err != nil {
+		return err
+	} else if ok {
+		if err = json.Unmarshal(raw, &existing); err != nil {
+			return err
+		}
+	}
+	if err = mergePatch(&existing, overlay); err != nil {
+		return err
+	}
+	out, err := json.Marshal(existing)
+	if err != nil {
+		return err
+	}
+	return db.SaveSetting(ctx, settingWeb, out)
 }
