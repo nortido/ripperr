@@ -1,5 +1,3 @@
-/* виды */
-
 .hidden {
   display: none !important;
 }
@@ -17,8 +15,8 @@
 }
 
 .dash-header-status-block {
-  /* размер задаём на всей мета-строке: раньше статус, остаток и время были
-     14/13/12px и в одну строку читались разными шрифтами */
+  /* размер на всю мета-строку: раньше статус, остаток и время были 14/13/12px
+     и читались как разные шрифты */
   font-size: 13px;
   display: inline-flex;
   align-items: center;
@@ -77,8 +75,8 @@
   50% { opacity: 0.45; transform: scale(0.92); }
 }
 
-/* точка и так меняет цвет вместе с подписью «Идёт проверка», пульсация
-   декоративная и снимается целиком */
+/* точка и так меняет цвет вместе с подписью «Идет проверка», пульсация
+   просто декор, снимаем целиком */
 @media (prefers-reduced-motion: reduce) {
   .run-status-dot-active {
     animation: none;
@@ -98,40 +96,113 @@
   gap: 20px;
 }
 
-.grid-2 {
+.int-page-header {
+  align-items: center;
+}
+
+.int-page-header .page-title {
+  margin-bottom: 0;
+}
+
+/* карточки интеграций идут одна под другой, как в настройках. Поля прижаты
+   к верху: живая подсказка у таймаута не должна опускать соседа */
+#view-integrations .form-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+#view-integrations .form-row.int-row-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#view-integrations .form-row + .form-group {
+  margin-top: 18px;
+}
+
+#view-integrations .card-body > :last-child,
+#view-integrations .notify-channel > :last-child {
+  margin-bottom: 0;
+}
+
+/* результат проверки виден сразу под шапкой, рядом с кнопкой */
+#view-integrations .card-body > .test-result {
+  margin: 0 0 14px;
+}
+
+.int-field-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.int-field-action .input-password-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notify-tabs {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
+  width: 100%;
+  max-width: 480px;
 }
 
-/* карточка тянется на высоту ряда сетки, а её содержимое нет, поэтому у
-   коротких карточек блок кнопок висел в середине. Растягиваем тело карточки и
-   прижимаем кнопки к низу, чтобы по всему ряду они стояли на одной линии */
-.grid-2 > .card {
-  display: flex;
-  flex-direction: column;
+.notify-tab {
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
 }
 
-.grid-2 > .card > .card-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+.notify-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.grid-2 .card-body > .btn-group {
-  margin-top: auto;
-  /* margin-top: auto съедает весь свободный запас, поэтому у самой высокой
-     карточки в ряду его не остаётся: минимальный зазор держим padding-ом */
-  padding-top: 18px;
+.notify-tab-dot {
+  display: none;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
 }
 
-/* карточки со статистикой */
+.notify-tab.is-on .notify-tab-dot {
+  display: block;
+}
+
+#view-integrations .notify-events-trigger {
+  margin-left: 4px;
+}
+
+@media (max-width: 900px) {
+  #view-integrations .form-row,
+  #view-integrations .form-row.int-row-3 {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+}
+
+html.mobile-layout #view-integrations .form-row,
+html.mobile-layout #view-integrations .form-row.int-row-3 {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+html.mobile-layout .page-header-row.int-page-header {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+html.mobile-layout .int-page-header .page-header-actions {
+  width: auto;
+}
 
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .stat-card {
@@ -162,7 +233,7 @@
 }
 
 .stat-card-filter:focus-visible {
-  outline: 2px solid var(--accent-from);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -185,26 +256,23 @@
 .stat-card-next-run .stat-card-body {
   flex: 1;
   min-width: 0;
-  padding-right: 29px; /* icon right 12 + width 30 = 42 от края карточки, минус padding карточки 20 = нужно ещё 22, плюс 7 зазора = 29 */
 }
 
 .stat-card-next-run .stat-value {
+  --nr-pad: 29px; /* иконка: right 12 + ширина 30 = 42 от края, минус padding 20, плюс 7 зазора */
+  --nr-max: 28px;
   white-space: nowrap;
+  padding-right: var(--nr-pad);
   max-width: 100%;
   overflow: hidden;
-  /* размер упирался в 8.5cqi и был заметно мельче соседних карточек. Потолок
-     держит длина строки, а она зависит от языка: "сегодня 20:00" почти на
-     треть короче "tomorrow 08:00 PM", поэтому английскому коэффициент ниже.
-     От иконки текст отделяет padding-right тела, пересечься они не могут */
-  font-size: clamp(13px, 11cqi, 28px);
-  /* карточки в сетке выровнены по верху, поэтому подпись встанет вровень с
-     соседними только если строка значения занимает ту же высоту: шрифт тут
-     ужимается clamp'ом, а строка держится на высоте обычных 28px */
-  line-height: calc(28px * 1.2);
-}
-
-:root[lang="en"] .stat-card-next-run .stat-value {
-  font-size: clamp(13px, 8.5cqi, 28px);
+  /* --nr-w28 ширина текущей строки на 28px, ее меряет dashboard.js. Шрифт
+     уменьшается, только когда строка правда не влезает, а не по общему
+     коэффициенту под самую длинную строку */
+  font-size: clamp(13px, calc((100cqi - var(--nr-pad)) * 28 / var(--nr-w28, 255)), var(--nr-max));
+  /* карточки выровнены по верху, и подпись встанет вровень с соседями, только
+     если строка значения той же высоты. Шрифт ужимает clamp, а строку держим
+     на обычных 28px */
+  line-height: calc(var(--nr-max) * 1.2);
 }
 
 .stat-card-next-run .stat-icon {
@@ -224,6 +292,10 @@
   min-width: 0;
 }
 
+.stat-run-short {
+  display: none;
+}
+
 .stat-value {
   font-size: 28px;
   font-weight: 700;
@@ -237,27 +309,22 @@
   margin-top: 4px;
 }
 
-.stat-sub {
-  margin-top: 8px;
-}
-
-.stat-then-pill {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle);
-  background: var(--hover);
-  line-height: 1.4;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
+/* иконка стоит только в строке значения, подпись идет на всю ширину. Не влезший "затем"
+   уходит на вторую строку под overflow, и подпись не обрезается */
 .stat-card-next-run .stat-label {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  line-height: 1.4;
+  max-height: 1.4em;
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.stat-then {
+  flex: none;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-icon {
@@ -280,6 +347,13 @@
 .stat-icon-cyan {
   background: var(--tint-cyan);
   color: var(--hue-cyan);
+}
+
+/* время не статус и не фильтр, а все цветные оттенки уже заняты статусами и
+   чипами трекеров, поэтому значок нейтральный */
+.stat-icon-neutral {
+  background: var(--bg-muted);
+  color: var(--text-muted);
 }
 
 .stat-icon svg {

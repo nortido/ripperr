@@ -1,40 +1,54 @@
-/* дизайн-система trackerr, вдохновлена Overseerr и Jellyfin */
+/* шрифт свой: приложение живет в локальной сети. Google Fonts без интернета не
+   грузился, да еще и светил адрес пользователя наружу */
+@font-face {
+  font-family: 'Inter';
+  src: url('inter.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root,
 [data-theme="light"] {
+  color-scheme: light;
+  /* два сплошных цвета из значка вместо градиента: у обоих контраст от 3:1,
+     для крупного жирного текста этого хватает */
+  --brand-head: #0d9488;
+  --brand-tail: #134e4a;
   --bg: #f3f4f6;
   --sidebar-bg: #e8eaee;
-  --bg-gradient: none;
   --surface: #ffffff;
   --input-bg: #ffffff;
   --border: rgba(0, 0, 0, 0.12);
   --border-subtle: rgba(0, 0, 0, 0.14);
+  /* другой границы у полей и переключателей нет, отсюда контраст 3:1 */
+  --border-strong: rgba(0, 0, 0, 0.42);
   --table-stripe: rgba(0, 0, 0, 0.025);
   --text: #111827;
-  /* светлые оттенки подобраны под контраст 4.5:1 на трёх фонах сразу:
-     собственный tint, --surface и --bg. Тёмная тема считается отдельно ниже */
+  /* светлые оттенки держат 4.5:1 сразу на своем tint, --surface и --bg.
+     Для темной темы подбирали отдельно, она ниже */
   --text-muted: #5f6674;
-  --text-empty: #78716c;
+  --text-empty: #6f6862;
   --link: #047857;
   --link-hover: #059669;
   --accent-from: #047857;
   --accent-to: #0d9488;
   --accent-subtle: rgba(5, 150, 105, 0.14);
-  --hue-green: #047653;
+  --hue-green: #036b4b;
   --tint-green: rgba(5, 150, 105, 0.14);
-  --hue-teal: #0a746b;
+  --hue-teal: #086a62;
   --tint-teal: rgba(13, 148, 136, 0.14);
-  --hue-cyan: #06718a;
+  --hue-cyan: #05677e;
   --tint-cyan: rgba(8, 145, 178, 0.14);
-  --hue-blue: #235ede;
+  --hue-blue: #1f54cc;
   --tint-blue: rgba(37, 99, 235, 0.14);
-  --hue-violet: #7c3aed;
+  --hue-violet: #6d2fd6;
   --tint-violet: rgba(124, 58, 237, 0.14);
-  --hue-amber: #995404;
+  --hue-amber: #8f4e03;
   --tint-amber: rgba(217, 119, 6, 0.16);
-  --hue-pink: #bf2268;
+  --hue-pink: #b01f5f;
   --tint-pink: rgba(219, 39, 119, 0.14);
-  --hue-red: #c22222;
+  --hue-red: #b51f1f;
   --tint-red: rgba(220, 38, 38, 0.15);
   --tint-warm: #78716c;
   --tint-warm-bg: rgba(120, 113, 108, 0.1);
@@ -48,9 +62,10 @@
   --restart-bg: rgba(234, 88, 12, 0.12);
   --hover: rgba(0, 0, 0, 0.04);
   --focus-ring: rgba(5, 150, 105, 0.4);
+  --focus-outline: #047857;
   --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06);
   --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.1);
-  --shadow-primary: 0 4px 14px rgba(4, 120, 87, 0.25);
+  --shadow-primary: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --seg-track-bg: rgba(0, 0, 0, 0.11);
   --seg-thumb-bg: #ffffff;
   --seg-thumb-border: rgba(0, 0, 0, 0.1);
@@ -59,7 +74,7 @@
   --radius-sm: 8px;
   --radius-lg: 12px;
   --bg-muted: rgba(0, 0, 0, 0.06);
-  /* система размеров кнопок: каждый вариант .btn выводит геометрию отсюда */
+  /* все варианты .btn берут размеры отсюда */
   --btn-h-md: 44px;
   --btn-h-sm: 36px;
   --btn-h-xs: 32px;
@@ -68,8 +83,8 @@
   --btn-icon-md: 18px;
   --btn-icon-sm: 16px;
   --btn-border-w: 1px;
-  /* отступ подсказки от своего поля: один на все формы, поэтому и вынесенная
-     в отдельную ячейку ряда подсказка гасит row-gap до этого же значения */
+  /* один отступ подсказки на все формы. Подсказка в отдельной ячейке ряда
+     тоже гасит row-gap до него */
   --form-hint-gap: 8px;
   --form-row-gap: 20px;
   --btn-gap: 8px;
@@ -82,20 +97,20 @@
   --release-link: #6b5fae;
   --release-link-hover: #574e91;
   --transition: 0.15s ease;
-  /* конец градиента для залитых белым текстом поверхностей (.btn-primary,
-     .nav-link.active). --accent-to для них слишком светлый: белое на нём
-     давало 3.7 в светлой теме и 2.5 в тёмной. Одно значение на обе темы */
-  --accent-grad-to: #0f766e;
 }
 
-[data-theme="dark"] {
+[data-theme="dark"],
+[data-theme="oled"] {
+  color-scheme: dark;
+  --brand-head: #2dd4bf;
+  --brand-tail: #0d9488;
   --bg: #0a0d12;
   --sidebar-bg: #11161d;
-  --bg-gradient: linear-gradient(180deg, #0a0d12 0%, #0f1419 100%);
-  --surface: #1c232e;
+  --surface: #1e2633;
   --input-bg: #111820;
   --border: rgba(255, 255, 255, 0.14);
   --border-subtle: rgba(255, 255, 255, 0.15);
+  --border-strong: rgba(255, 255, 255, 0.34);
   --table-stripe: rgba(255, 255, 255, 0.03);
   --text: #e5e7eb;
   --text-muted: #9ca3af;
@@ -133,9 +148,12 @@
   --restart-bg: rgba(249, 115, 22, 0.14);
   --hover: rgba(255, 255, 255, 0.05);
   --focus-ring: rgba(16, 185, 129, 0.45);
-  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.35);
+  /* с темным акцентом фокус на карточке был 2.9:1, светлый зеленый дает 7.9 */
+  --focus-outline: #34d399;
+  /* размытой тени на темном фоне не видно, карточку отделяет блик сверху */
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-dropdown: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-primary: 0 4px 16px rgba(4, 120, 87, 0.35);
+  --shadow-primary: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --seg-track-bg: rgba(255, 255, 255, 0.08);
   --seg-thumb-bg: rgba(255, 255, 255, 0.12);
   --seg-thumb-border: rgba(255, 255, 255, 0.14);
@@ -143,6 +161,20 @@
   --bg-muted: rgba(255, 255, 255, 0.08);
   --release-link: #b8b0e8;
   --release-link-hover: #d0caf5;
+}
+
+/* на OLED чистый черный просто гасит пиксели, поэтому карточки держатся
+   на рамке и чуть заметном подъеме */
+[data-theme="oled"] {
+  --bg: #000000;
+  --sidebar-bg: #000000;
+  --surface: #0c0e12;
+  --input-bg: #000000;
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.36);
+  --table-stripe: rgba(255, 255, 255, 0.025);
+  --shadow-card: none;
+  --shadow-dropdown: 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 *, *::before, *::after {
@@ -158,10 +190,20 @@ html {
 body {
   margin: 0;
   background: var(--bg);
-  background-image: var(--bg-gradient);
   background-attachment: fixed;
   color: var(--text);
   line-height: 1.55;
+}
+
+/* цифры одной ширины, иначе время в колонках и числа в плитках дергаются
+   при каждом обновлении */
+.table,
+.stat-value,
+.run-status,
+.dash-last-updated,
+.logs-feed,
+.logs-last-updated {
+  font-variant-numeric: tabular-nums;
 }
 
 a {
@@ -176,19 +218,16 @@ a {
   }
 }
 
-/* раскладка */
-
-/* zoom, а не transform: трансформированный элемент становится содержащим блоком для
-   своих fixed-потомков (шторка, шапка, подложка), а zoom оставляет их привязанными к вьюпорту */
-/* класс вешается только когда экран уже, чем 480px: тогда --page-scale равен
-   w/480 и фиксированные 480px рисуются ровно в ширину экрана. Ширину через
-   calc(100% / scale) считать нельзя: Chrome то отдаёт 100% уже пересчитанным
-   под zoom, то нет, и деление срабатывает дважды. Начиная с 480px масштабировать
-   нечего, класс не вешается и приложение занимает всю ширину само */
+/* zoom, потому что transform делает элемент содержащим блоком для fixed-потомков
+   (шторка, шапка, подложка) и они отрываются от вьюпорта */
+/* класс есть только на экранах уже 360px, --page-scale там w/360. Через
+   calc(100% / scale) ширину не считаем: Chrome то отдает 100% уже под zoom,
+   то нет, и деление срабатывает дважды */
 .app.page-scaled {
-  width: 480px;
+  width: 360px;
   zoom: var(--page-scale, 1);
   min-height: calc(100vh / var(--page-scale, 1));
+  min-height: calc(100dvh / var(--page-scale, 1));
 }
 
 body:has(.app.page-scaled) {
@@ -198,6 +237,7 @@ body:has(.app.page-scaled) {
 .app {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   min-width: 0;
   overflow-x: hidden;
 }
@@ -229,23 +269,38 @@ body:has(.app.page-scaled) {
   transition: none;
 }
 
+/* логотип и переключатель в одну строку, как в Linear и shadcn. Кнопка
+   "Свернуть" внизу меню занимала целый ряд */
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 20px 14px;
+}
+
 .sidebar-brand {
   font-size: 22px;
   font-weight: 700;
-  padding: 4px 14px 24px;
+  padding: 4px 0;
+  min-width: 0;
   letter-spacing: -0.02em;
-  background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--brand-head);
   text-decoration: none;
   display: block;
 }
 
+.brand-tail {
+  color: var(--brand-tail);
+}
+
+.sidebar.sidebar-collapsed .sidebar-head {
+  justify-content: center;
+  padding-left: 0;
+}
+
 .sidebar.sidebar-collapsed .sidebar-brand {
-  text-align: center;
-  padding: 4px 0 24px;
-  font-size: 24px;
+  display: none;
 }
 
 .sidebar-nav {
@@ -264,22 +319,31 @@ body:has(.app.page-scaled) {
   gap: 4px;
 }
 
+/* в подвале только выход, а он есть лишь при входе по паролю. Пустой подвал
+   рисовал одинокую черту */
+.sidebar-footer:not(:has(.nav-link:not(.hidden))) {
+  display: none;
+}
+
 .sidebar-collapse-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  min-height: var(--nav-h);
-  width: 100%;
-  padding: 10px 14px;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border: none;
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-muted);
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 500;
   cursor: pointer;
   transition: background var(--transition), color var(--transition);
+}
+
+.sidebar-collapse-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 @media (hover: hover) {
@@ -294,7 +358,7 @@ body:has(.app.page-scaled) {
 }
 
 .sidebar-collapse-btn:focus-visible {
-  outline: 2px solid var(--accent-from);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -303,13 +367,11 @@ body:has(.app.page-scaled) {
   padding: 20px 8px;
 }
 
-.app.sidebar-collapsed .nav-label,
-.app.sidebar-collapsed .sidebar-collapse-btn .nav-label {
+.app.sidebar-collapsed .nav-label {
   display: none;
 }
 
-.app.sidebar-collapsed .nav-link,
-.app.sidebar-collapsed .sidebar-collapse-btn {
+.app.sidebar-collapsed .nav-link {
   justify-content: center;
   padding: 10px;
 }
@@ -342,21 +404,22 @@ body:has(.app.page-scaled) {
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.18);
   }
 
-  .app.sidebar-collapsed .sidebar.sidebar-overlay-open .nav-label,
-  .app.sidebar-collapsed .sidebar.sidebar-overlay-open .sidebar-collapse-btn .nav-label {
+  .app.sidebar-collapsed .sidebar.sidebar-overlay-open .nav-label {
     display: inline;
   }
 
-  .app.sidebar-collapsed .sidebar.sidebar-overlay-open .nav-link,
-  .app.sidebar-collapsed .sidebar.sidebar-overlay-open .sidebar-collapse-btn {
+  .app.sidebar-collapsed .sidebar.sidebar-overlay-open .nav-link {
     justify-content: flex-start;
     padding: 10px 14px;
   }
 
+  .app.sidebar-collapsed .sidebar.sidebar-overlay-open .sidebar-head {
+    justify-content: space-between;
+    padding-left: 14px;
+  }
+
   .app.sidebar-collapsed .sidebar.sidebar-overlay-open .sidebar-brand {
-    text-align: left;
-    padding: 4px 14px 24px;
-    font-size: 22px;
+    display: block;
   }
 }
 
@@ -387,7 +450,7 @@ body:has(.app.page-scaled) {
 }
 
 .nav-link.active {
-  background: linear-gradient(90deg, var(--accent-from), var(--accent-grad-to));
+  background: var(--accent-from);
   color: #fff;
   box-shadow: var(--shadow-primary);
 }
@@ -404,7 +467,7 @@ body:has(.app.page-scaled) {
 }
 
 .nav-link:focus-visible {
-  outline: 2px solid var(--accent-from);
+  outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
 
@@ -484,14 +547,18 @@ body:has(.app.page-scaled) {
   display: flex;
   flex-direction: column;
   min-height: calc(100vh - 56px);
+  min-height: calc(100dvh - 56px);
   max-height: calc(100vh - 56px);
+  max-height: calc(100dvh - 56px);
   overflow: hidden;
 }
 
 @media (min-width: 901px) {
   .content:has(#view-logs:not(.hidden)) {
     min-height: 100vh;
+    min-height: 100dvh;
     max-height: 100vh;
+    max-height: 100dvh;
   }
 }
 

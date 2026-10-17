@@ -1,5 +1,3 @@
-/* карточки */
-
 .card {
   background: var(--surface);
   border: 2px solid var(--border);
@@ -50,8 +48,6 @@
   opacity: 0.5;
   pointer-events: none;
 }
-
-/* таблицы */
 
 .table-wrap {
   overflow-x: auto;
@@ -126,9 +122,9 @@
   vertical-align: middle;
 }
 
-/* .table. в селекторе не для красоты: ниже стоит общее .table .col-status с
-   шириной 48px, и при равной специфичности оно перебивало эту ширину, потому
-   что идёт позже. Колонка схлопывалась до 48px, отсюда и короткая подпись */
+/* .table. тут не для красоты: ниже общее .table .col-status на 48px, и при
+   равной специфичности оно побеждало, потому что идет позже. Колонка
+   схлопывалась до 48px, отсюда была и короткая подпись */
 .table.table-dash-releases .col-status {
   width: 84px;
   max-width: 84px;
@@ -201,8 +197,8 @@ td.plan-recheck-cell {
     padding-right: 12px;
   }
 
-  /* .table. как у базового правила выше, иначе оно перебивает эту ширину
-     своей более высокой специфичностью и колонка остаётся 48px */
+  /* тоже с .table., иначе базовое правило выше перебьет ширину и колонка
+     останется 48px */
   .table.table-dash-releases .col-status {
     width: 76px;
     max-width: 76px;

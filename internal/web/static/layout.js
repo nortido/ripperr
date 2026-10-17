@@ -1,29 +1,25 @@
-import { hydrateIcons } from './icons.js';
 import { syncNameFilterLayout } from './namefilter.js';
 
-export const THEME_KEY = 'trackerr-theme';
-export const SIDEBAR_COLLAPSED_KEY = 'trackerr-sidebar-collapsed';
-export const PAGE_SCALE_BASE = 480;
-// ограничен только сверху. Выше 1 масштаб раздувал вёрстку: на 880px выходило
-// 1.83 и заголовок рисовался 44px вместо 24. Снизу ограничивать нельзя: мобильный
-// макет свёрстан под 480px, и ровно w/480 это единственный масштаб, при котором
-// он влезает в экран целиком. С порогом 0.8 на ширине меньше 384px приложение
-// получало меньше 480 и правый край уезжал за экран
+export const THEME_KEY = 'ripperr-theme';
+export const SIDEBAR_COLLAPSED_KEY = 'ripperr-sidebar-collapsed';
+export const PAGE_SCALE_BASE = 360;
+// масштаб ограничен только сверху: выше 1 на 880px выходил zoom 1.83 и заголовок в 44px.
+// Снизу нельзя, макет на 360px не тянется и влезает в экран только при w/360.
+// С базой 480px на iPhone (393px) все ужималось до 82%, текст 12px читался как 10
 export const PAGE_SCALE_MAX = 1;
 export const MOBILE_LAYOUT_MAX = 900;
 export let layoutWasMobile = false;
 
-export const ADVANCED_KEY = 'trackerr-advanced';
+export const ADVANCED_KEY = 'ripperr-advanced';
 
-// признак висит на корне документа, а не в состоянии карточек: расширенные
-// поля прячет CSS, поэтому переключатель не требует перерисовки трекеров и не
-// мешает несохранённым правкам в скрытых полях
 export function applyAdvanced(on) {
+  // признак на корне, а поля прячет CSS: трекеры не перерисовываем,
+  // и несохраненные правки в скрытых полях целы
   if (on) document.documentElement.setAttribute('data-advanced', '1');
   else document.documentElement.removeAttribute('data-advanced');
   try {
     localStorage.setItem(ADVANCED_KEY, on ? '1' : '0');
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
 }
 
 export function advancedEnabled() {
@@ -34,16 +30,27 @@ export function initAdvanced() {
   let on = false;
   try {
     on = localStorage.getItem(ADVANCED_KEY) === '1';
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
   if (on) document.documentElement.setAttribute('data-advanced', '1');
 }
 
+export const THEMES = ['dark', 'light', 'oled'];
+const THEME_COLORS = { dark: '#0a0d12', oled: '#000000', light: '#f3f4f6' };
+
+export function syncThemeColor() {
+  // полосу статуса iPhone и вкладку браузера красит meta, CSS туда не достает
+  const color = THEME_COLORS[document.documentElement.getAttribute('data-theme')];
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta && color) meta.setAttribute('content', color);
+}
+
 export function applyTheme(theme) {
-  const t = theme === 'light' ? 'light' : 'dark';
+  const t = THEMES.includes(theme) ? theme : 'dark';
   document.documentElement.setAttribute('data-theme', t);
+  syncThemeColor();
   try {
     localStorage.setItem(THEME_KEY, t);
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
 }
 
 export function loadSidebarCollapsedPref() {
@@ -59,13 +66,12 @@ export function loadSidebarCollapsedPref() {
 export function saveSidebarCollapsedPref(collapsed) {
   try {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
-  } catch (_) { /* ponytail: localStorage может быть недоступен */ }
+  } catch (_) { /* localStorage бывает недоступен */ }
 }
 
-// ширина макетного вьюпорта, а не window.innerWidth: на iOS тот меняется при
-// пинч-зуме и шлёт resize, из-за чего приложение пересчитывало масштаб прямо под
-// пальцами и уезжало с экрана; clientWidth зум не трогает
 export function layoutWidth() {
+  // не innerWidth: на iOS он меняется при пинч-зуме и шлет resize, и масштаб
+  // пересчитывался прямо под пальцами. clientWidth зум не трогает
   return document.documentElement.clientWidth || window.innerWidth;
 }
 
@@ -113,28 +119,13 @@ export function refreshSidebarChrome() {
   const app = document.querySelector('.app');
   const collapsed = app && app.classList.contains('sidebar-collapsed');
   const btn = document.getElementById('sidebar-collapse-btn');
-  const brand = document.getElementById('sidebar-brand');
   const overlay = isSidebarOverlayWidth() && sidebarOverlayOpen;
-  if (btn) {
-    const icon = btn.querySelector('[data-icon]');
-    if (icon) {
-      if (isSidebarOverlayWidth()) {
-        icon.setAttribute('data-icon', overlay ? 'chevronLeft' : 'chevronRight');
-      } else {
-        icon.setAttribute('data-icon', collapsed ? 'chevronRight' : 'chevronLeft');
-      }
-      hydrateIcons(btn);
-    }
-  }
-  // подсказка нужна только когда подпись скрыта. title="" это не отсутствие
-  // атрибута, а пустой атрибут, который остаётся висеть в разметке
-  if (brand) {
-    const showFull = !collapsed || overlay;
-    brand.textContent = showFull ? 'trackerr' : 't';
-    if (showFull) brand.removeAttribute('title');
-    else brand.setAttribute('title', 'trackerr');
-  }
   const hideLabels = collapsed && !overlay;
+  if (btn) {
+    const label = t(hideLabels ? 'nav.sidebarExpand' : 'nav.sidebarCollapse');
+    btn.setAttribute('aria-label', label);
+    btn.title = label + (/Mac|iPhone|iPad/.test(navigator.platform) ? ' (⌘B)' : ' (Ctrl+B)');
+  }
   document.querySelectorAll('.sidebar-nav .nav-link, .sidebar-footer .nav-link').forEach(function (link) {
     const label = link.querySelector('.nav-label');
     if (!label) return;
@@ -159,23 +150,31 @@ export function refreshSidebarLayout() {
   applySidebarCollapsed(effectiveSidebarCollapsed());
 }
 
+function toggleSidebar() {
+  const w = layoutWidth();
+  if (w <= 900) return;
+  if (w < SIDEBAR_WIDE_MIN) {
+    if (sidebarOverlayOpen) closeSidebarOverlay();
+    else openSidebarOverlay();
+    return;
+  }
+  const app = document.querySelector('.app');
+  const next = !(app && app.classList.contains('sidebar-collapsed'));
+  saveSidebarCollapsedPref(next);
+  applySidebarCollapsed(next);
+}
+
 export function initSidebarCollapse() {
   const btn = document.getElementById('sidebar-collapse-btn');
-  if (btn) {
-    btn.addEventListener('click', function () {
-      const w = layoutWidth();
-      if (w <= 900) return;
-      if (w < SIDEBAR_WIDE_MIN) {
-        if (sidebarOverlayOpen) closeSidebarOverlay();
-        else openSidebarOverlay();
-        return;
-      }
-      const app = document.querySelector('.app');
-      const next = !(app && app.classList.contains('sidebar-collapsed'));
-      saveSidebarCollapsedPref(next);
-      applySidebarCollapsed(next);
-    });
-  }
+  if (btn) btn.addEventListener('click', toggleSidebar);
+  document.addEventListener('keydown', function (e) {
+    // по коду клавиши, а не по символу: в русской раскладке там "и"
+    if (e.code !== 'KeyB' || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+    const target = e.target;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    e.preventDefault();
+    toggleSidebar();
+  });
   document.querySelectorAll('.sidebar-nav .nav-link').forEach(function (link) {
     link.addEventListener('click', function () {
       if (sidebarOverlayOpen) closeSidebarOverlay();
@@ -193,9 +192,6 @@ export function applyMobileLayout() {
   if (mobile) {
     const scale = w / PAGE_SCALE_BASE;
     document.documentElement.classList.add('mobile-layout');
-    // масштабируем только когда экран уже макета. Раньше класс висел всегда и на
-    // 880px давал zoom 1.83: заголовок рисовался 44px вместо 24, в окно влезала
-    // одна строка таблицы. Начиная с 480px ужимать нечего
     if (scale < PAGE_SCALE_MAX) {
       app.classList.add('page-scaled');
       // на корне, чтобы значение пережило перерисовку .app
@@ -214,10 +210,9 @@ export function applyMobileLayout() {
   if (layoutChanged) syncNameFilterLayout();
 }
 
-// свёрнутое состояние выводится из ширины окна, поэтому должно попасть в тот же
-// кадр, что и событие resize: перенос в rAF сначала рисует боковую панель развёрнутой
-// и только потом сворачивает её. Выполняется до придушенного applyMobileLayout.
 export function syncSidebarToWidth() {
+  // в том же кадре, что и resize: через rAF панель сначала мелькнула бы развернутой.
+  // Идет до придушенного applyMobileLayout
   const mobile = layoutWidth() > 0 && layoutWidth() < MOBILE_LAYOUT_MAX;
   const sidebar = mobile !== layoutWasMobile ? document.getElementById('sidebar') : null;
   if (sidebar) sidebar.classList.add('no-anim');

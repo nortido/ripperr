@@ -1,12 +1,9 @@
-/* iOS зумит страницу при фокусе на поле мельче 16px и назад её уже не отпускает:
-   после этого приложение выглядит уехавшим */
+/* iOS зумит страницу при фокусе на поле мельче 16px */
 html.mobile-layout input,
 html.mobile-layout select,
 html.mobile-layout textarea {
   font-size: 16px;
 }
-
-/* мобильные строки таблицы в столбик */
 
 html.mobile-layout .table-dash-releases .col-tracker,
 html.mobile-layout .table-dash-releases .col-category {
@@ -19,14 +16,15 @@ html.mobile-layout .table-dash-releases thead {
 
 html.mobile-layout .table-dash-releases tbody tr {
   display: grid;
-  gap: 6px 8px;
-  padding: 12px 16px;
+  gap: 4px 8px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--border-subtle);
   height: auto;
-  grid-template-columns: minmax(0, 1fr) var(--row-actions-w);
+  grid-template-columns: auto minmax(0, 1fr) var(--row-actions-w);
   grid-template-areas:
-    "name status"
-    "time actions";
+    "name name name"
+    "meta meta actions"
+    "status time actions";
   align-items: center;
 }
 
@@ -47,7 +45,10 @@ html.mobile-layout .table-dash-releases .col-name {
   padding: 0;
   height: auto;
   border: none;
-  line-height: 1.4;
+  line-height: 1.35;
+  font-size: 17px;
+  font-weight: 500;
+  margin-bottom: 2px;
 }
 
 html.mobile-layout .table-dash-releases .release-title-wrap {
@@ -55,74 +56,73 @@ html.mobile-layout .table-dash-releases .release-title-wrap {
   overflow-wrap: anywhere;
 }
 
-/* чипы уехали в нижний ряд, к дате: название остаётся сплошным текстом */
 html.mobile-layout .table-dash-releases .release-foot {
   display: none;
 }
 
 html.mobile-layout .table-dash-releases .release-meta {
-  display: inline-flex;
+  grid-area: meta;
+  display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  max-width: 100%;
 }
 
-/* чипы не жмём: обрезанное "rutra..." читается хуже, чем перенос на вторую строку */
+/* чипы не жмем, обрезанное "rutra..." читается хуже переноса */
 html.mobile-layout .table-dash-releases .release-meta .tracker-badge {
   flex: 0 0 auto;
   max-width: none;
 }
 
-/* col-time и plan-recheck-cell взаимоисключающи (режим сортировки выбирает одну),
-   поэтому обе занимают одну область сетки "time" и делят одно правило */
+/* видна одна из двух ячеек, ее выбирает сортировка */
 html.mobile-layout .table-dash-releases .col-time,
 html.mobile-layout .table-dash-releases .plan-recheck-cell {
-  grid-area: time;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  row-gap: 6px;
-  padding: 0;
-  /* ширина колонки от десктопной таблицы, а в карточке ячейка занимает свой ряд */
-  width: auto;
-  max-width: none;
-  height: auto;
-  border: none;
+  display: contents;
   font-size: 13px;
   color: var(--text-muted);
-  white-space: nowrap;
+}
+
+html.mobile-layout .table-dash-releases .col-time-text,
+html.mobile-layout .table-dash-releases .plan-recheck-text {
+  grid-area: time;
   min-width: 0;
-  overflow: visible;
-  text-overflow: unset;
-  align-self: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 html.mobile-layout .table-dash-releases .col-status {
   grid-area: status;
-  width: 92px;
-  max-width: 92px;
+  width: auto;
+  max-width: none;
   padding: 0;
   height: auto;
   border: none;
   text-align: center;
   align-self: center;
-  justify-self: center;
+  justify-self: start;
 }
 
 html.mobile-layout .table-dash-releases .col-actions {
   grid-area: actions;
-  width: var(--row-actions-w);
-  max-width: var(--row-actions-w);
+  width: auto;
+  max-width: none;
   padding: 0;
   height: auto;
   border: none;
   text-align: center;
   align-self: center;
-  justify-self: center;
+  justify-self: end;
 }
 
 html.mobile-layout .table-dash-releases .release-actions {
   justify-content: center;
-  width: 100%;
+  gap: 24px;
+  padding: 2px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-muted) 40%, transparent);
 }
 
 html.mobile-layout .table-dash-releases td {
@@ -146,8 +146,6 @@ html.mobile-layout .page-size-select {
   flex: 0 0 auto;
 }
 
-/* адаптив: мобильная шторка */
-
 @media (max-width: 900px) {
   .mobile-header {
     display: flex;
@@ -166,18 +164,30 @@ html.mobile-layout .page-size-select {
   }
 
   .mobile-header-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     margin-left: auto;
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
     text-decoration: none;
   }
 
+  .mobile-header-logo {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  .mobile-header-brand-text {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--brand-head);
+  }
+
   .sidebar-collapse-btn {
+    display: none;
+  }
+
+  .sidebar-head {
     display: none;
   }
 
@@ -231,9 +241,6 @@ html.mobile-layout .page-size-select {
   }
 }
 
-/* mobile dashboard (480px base; ниже 480px JS ужимает ровно в w/480, начиная с
-   480px не масштабирует вовсе, см. .app.page-scaled в base.css) */
-
 html.mobile-layout .content {
   padding-top: 12px;
 }
@@ -243,39 +250,51 @@ html.mobile-layout .page-title {
   margin-bottom: 4px;
 }
 
+html.mobile-layout .page-header {
+  margin-bottom: 16px;
+}
+
+html.mobile-layout .page-header > .page-title {
+  margin-bottom: 0;
+}
+
 html.mobile-layout .dash-page-header {
   margin-bottom: 16px;
 }
 
 html.mobile-layout .dash-page-header .page-header-row {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
 }
 
+/* статус и время двумя строками: в одну на 390px не влезали */
 html.mobile-layout .dash-header-top {
-  display: flex;
-  align-items: baseline;
+  flex: 1 1 auto;
   justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
+  gap: 12px;
 }
 
 html.mobile-layout .dash-page-header .dash-header-status-block {
-  margin-left: 0;
-  gap: 6px;
-  font-size: 12px;
-  flex-shrink: 1;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.3;
+  flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 html.mobile-layout .dash-page-header .page-title {
   flex-shrink: 0;
+  margin-bottom: 0;
 }
 
 html.mobile-layout .dash-page-header .dash-header-actions {
-  width: 100%;
+  flex: 1 1 220px;
   align-items: stretch;
   gap: 0;
 }
@@ -285,14 +304,81 @@ html.mobile-layout .page-header-row {
   align-items: stretch;
 }
 
+html.mobile-layout .input.tracker-filter {
+  width: 100%;
+}
+
 html.mobile-layout .page-header-actions {
   width: 100%;
   align-items: stretch;
   gap: 10px;
 }
 
+html.mobile-layout .logs-page-header .page-header-row,
+html.mobile-layout .page-header-row.tracker-page-header {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  justify-content: flex-start;
+}
+
+html.mobile-layout .logs-page-header .page-header-row {
+  row-gap: 0;
+}
+
+html.mobile-layout .logs-page-header .page-header-actions,
+html.mobile-layout .tracker-page-header .page-header-actions {
+  display: contents;
+}
+
+html.mobile-layout .logs-page-header .page-title,
+html.mobile-layout .tracker-page-header .page-title {
+  margin-bottom: 0;
+}
+
+html.mobile-layout .logs-page-header .page-header-row::after {
+  content: "";
+  flex-basis: 100%;
+  order: 1;
+}
+
+html.mobile-layout .logs-page-header .logs-last-updated {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+html.mobile-layout .logs-page-header .page-header-actions > .btn {
+  order: 2;
+  margin-top: 8px;
+}
+
+html.mobile-layout .tracker-page-header .btn-add-tracker-open {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+html.mobile-layout .tracker-page-header .input.tracker-filter {
+  order: 1;
+  flex-basis: 100%;
+}
+
+html.mobile-layout .logs-limit-group {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 html.mobile-layout .run-status {
   flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+/* при переносе статуса точка-разделитель повисала в конце строки */
+html.mobile-layout .dash-page-header .dash-meta-sep {
+  display: none;
 }
 
 html.mobile-layout .dash-last-updated {
@@ -312,25 +398,6 @@ html.mobile-layout .page-header-run-group .btn-restart {
   flex: 1;
 }
 
-html.mobile-layout .stat-card-next-run .stat-value {
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  padding-right: 2px;
-  font-size: clamp(18px, 11cqi, 22px);
-  /* десктопная фиксация строки тут не нужна: чип скрыт, а высота карточек
-     подогнана отдельно */
-  line-height: 1.2;
-}
-
-html.mobile-layout .stat-card-next-run .stat-label {
-  white-space: nowrap;
-}
-
-html.mobile-layout .stat-card-next-run .stat-sub {
-  display: none;
-}
-
 html.mobile-layout .card-header {
   flex-direction: row;
   flex-wrap: wrap;
@@ -341,35 +408,6 @@ html.mobile-layout .card-header {
 html.mobile-layout .card-header-left {
   flex: 0 1 auto;
   min-width: 0;
-}
-
-html.mobile-layout .stat-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-html.mobile-layout .stat-card {
-  padding: 14px 12px;
-}
-
-html.mobile-layout .stat-card-next-run .stat-card-body {
-  padding-right: 33px; /* icon right 10 + width 30 = 40, минус padding карточки 12 = 28, минус свои 2 у .stat-value, плюс 7 зазора = 33 */
-}
-
-html.mobile-layout .stat-card-next-run .stat-icon {
-  top: 12px;
-  right: 10px;
-  width: 30px;
-  height: 30px;
-}
-
-html.mobile-layout .stat-card-next-run .stat-icon svg {
-  width: 18px;
-  height: 18px;
-}
-
-html.mobile-layout .stat-value {
-  font-size: 22px;
 }
 
 html.mobile-layout .table th,
@@ -387,9 +425,35 @@ html.mobile-layout .table-dash-releases .col-name {
   max-width: none;
 }
 
+html.mobile-layout .tracker-list-head,
+html.mobile-layout .tracker-row-proxy,
+html.mobile-layout .tracker-row-limit {
+  display: none;
+}
+
 html.mobile-layout .tracker-row {
-  padding: 12px;
+  display: flex;
+  padding: 10px 8px 10px 12px;
   gap: 8px;
+}
+
+html.mobile-layout .tracker-row-main {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+html.mobile-layout .tracker-row-name,
+html.mobile-layout .tracker-row-domain {
+  display: block;
+}
+
+html.mobile-layout .tracker-row-domain {
+  margin-top: 2px;
+}
+
+html.mobile-layout .tracker-drag-handle {
+  display: none;
 }
 
 html.mobile-layout .tracker-row .btn-test-tracker {
@@ -402,8 +466,6 @@ html.mobile-layout .tracker-row .btn-test-tracker svg {
   height: var(--btn-icon-sm);
 }
 
-/* нижняя шторка фильтра истории: обходит зону домашней полосы и жестовой навигации
-   на телефонах с вырезом, та же идея, что и safe-area-inset-top у боковой панели выше */
 html.mobile-layout .hist-filter-panel-body {
   padding-bottom: calc(4px + env(safe-area-inset-bottom));
 }
@@ -412,7 +474,9 @@ html.mobile-layout .hist-filter-panel-body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 100vh в iOS Safari выше видимой области, dvh следит за панелью браузера */
   min-height: 100vh;
+  min-height: 100dvh;
   padding: 24px;
   background: var(--bg);
 }
@@ -459,9 +523,7 @@ html.mobile-layout .hist-filter-panel-body {
   margin-top: 16px;
 }
 
-/* в карточке .col-name это только верхняя ячейка сетки, и полоса статуса на ней
-   рисовалась огрызком у заголовка вместо метки всей записи: вешаем её на строку,
-   она тут grid-бокс и box-shadow на ней работает */
+/* в карточке .col-name лишь верхняя ячейка сетки: полосу вешаем на строку */
 html.mobile-layout .table-dash-releases tbody tr.release-row-checking .col-name,
 html.mobile-layout .table-dash-releases tbody tr.release-row-queued .col-name,
 html.mobile-layout .table-dash-releases tbody tr.release-row-broken .col-name {
@@ -473,8 +535,7 @@ html.mobile-layout .table-dash-releases tbody tr.release-row-checking {
   position: relative;
 }
 
-/* Safari на iOS не анимирует box-shadow строки, поэтому полоса там просто
-   висела статичной: рисуем её отдельным слоем и мигаем opacity */
+/* Safari на iOS не анимирует box-shadow строки: полоса отдельным слоем с opacity */
 html.mobile-layout .table-dash-releases tbody tr.release-row-checking::after {
   content: "";
   position: absolute;
@@ -503,4 +564,217 @@ html.mobile-layout .table-dash-releases tbody tr.release-row-broken {
   html.mobile-layout .table-dash-releases tbody tr.release-row-checking::after {
     animation: none;
   }
+}
+
+html.mobile-layout {
+  --btn-h-sm: 40px;
+  --btn-h-xs: 36px;
+  --btn-icon-sm: 20px;
+  --btn-icon-md: 20px;
+  --row-actions-gap: 6px;
+}
+
+html.mobile-layout .btn,
+html.mobile-layout .custom-select-trigger,
+html.mobile-layout .custom-select-option,
+html.mobile-layout .form-switch,
+html.mobile-layout .tracker-row-name {
+  font-size: 16px;
+}
+
+html.mobile-layout .btn-sm,
+html.mobile-layout .form-label,
+html.mobile-layout .form-hint,
+html.mobile-layout .chip,
+html.mobile-layout .logs-feed,
+html.mobile-layout .logs-last-updated,
+html.mobile-layout .test-result,
+html.mobile-layout .error-popover,
+html.mobile-layout .stat-label,
+html.mobile-layout .card-footer,
+html.mobile-layout .table-dash-releases .col-time,
+html.mobile-layout .table-dash-releases .plan-recheck-cell {
+  font-size: 14px;
+}
+
+/* подпись поля в виде заголовка раздела остается размера соседних заголовков */
+html.mobile-layout .form-label.form-section-title {
+  font-size: 12px;
+}
+
+html.mobile-layout .page-size-select,
+html.mobile-layout .select-compact {
+  font-size: 15px;
+}
+
+html.mobile-layout .tracker-badge,
+html.mobile-layout .tracker-row-domain,
+html.mobile-layout .chip-hint {
+  font-size: 13px;
+}
+
+html.mobile-layout .hist-filter-panel-title,
+html.mobile-layout .hist-filter-row,
+html.mobile-layout .hist-filter-option {
+  font-size: 16px;
+}
+
+html.mobile-layout .hist-filter-group-label,
+html.mobile-layout .streak-badge {
+  font-size: 12px;
+}
+
+/* ниже, чтобы левая часть карточки не выходила выше капсулы кнопок */
+html.mobile-layout .status-icon {
+  width: 22px;
+  height: 22px;
+}
+
+html.mobile-layout .status-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+html.mobile-layout .table-dash-releases .tracker-badge {
+  padding: 1px 7px;
+  line-height: 1.3;
+}
+
+html.mobile-layout .nav-link {
+  min-height: 52px;
+  gap: 14px;
+  font-size: 17px;
+}
+
+html.mobile-layout .nav-icon,
+html.mobile-layout .nav-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* при кнопках по 40px на 360px заголовок резался до "Ре..." */
+html.mobile-layout .releases-card-header,
+html.mobile-layout .card-body-flush + .card-footer {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+html.mobile-layout .releases-card-header .card-header-toolbar,
+html.mobile-layout .releases-card-header .card-header-toolbar-shift,
+html.mobile-layout .releases-card-header .card-header-left,
+html.mobile-layout .releases-card-header .card-toolbar-pre-search,
+html.mobile-layout .releases-card-header .card-toolbar-post-search {
+  gap: 6px;
+}
+
+html.mobile-layout .releases-card-header .seg-ctrl-btn {
+  padding: 4px 8px;
+}
+
+/* счетчики одной строкой: карточками в два ряда они ели почти полэкрана, а это еще и фильтры */
+html.mobile-layout .stat-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 20px;
+}
+
+html.mobile-layout .stat-card {
+  flex: 1 1 auto;
+  min-width: auto;
+  flex-direction: row-reverse;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 5px;
+}
+
+/* container-type обнуляет ширину по содержимому, карточка сжималась до "12:0" */
+html.mobile-layout .stat-card-next-run {
+  container-type: normal;
+}
+
+html.mobile-layout .stat-card .stat-icon,
+html.mobile-layout .stat-card-next-run .stat-icon {
+  position: static;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+}
+
+html.mobile-layout .stat-card .stat-icon svg,
+html.mobile-layout .stat-card-next-run .stat-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+html.mobile-layout .stat-card-body,
+html.mobile-layout .stat-card-next-run .stat-card-body {
+  flex: 0 0 auto;
+  min-width: auto;
+  padding-right: 0;
+}
+
+html.mobile-layout .stat-value,
+html.mobile-layout .stat-card-next-run .stat-value {
+  font-size: 18px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+/* места впритык: трехзначное число полным шрифтом выталкивало плитки во второй ряд */
+html.mobile-layout .stat-value[data-digits="3"] {
+  font-size: 15px;
+}
+
+html.mobile-layout .stat-value[data-digits="4"],
+html.mobile-layout .stat-value[data-digits="5"] {
+  font-size: 13px;
+}
+
+html.mobile-layout .stat-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+html.mobile-layout .stat-run-full {
+  display: none;
+}
+
+html.mobile-layout .stat-run-short {
+  display: inline;
+}
+
+html.mobile-layout .hint-toggle {
+  width: 32px;
+  height: 32px;
+  margin: -5px -5px -5px 2px;
+}
+
+html.mobile-layout .modal-overlay {
+  padding: 0;
+  align-items: stretch;
+}
+
+html.mobile-layout .modal {
+  max-width: none;
+  max-height: none;
+  height: 100vh;
+  height: 100dvh;
+  border: none;
+  border-radius: 0;
+}
+
+html.mobile-layout .modal-head {
+  padding-top: calc(12px + env(safe-area-inset-top));
+}
+
+html.mobile-layout .modal-foot {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
 }
