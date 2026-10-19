@@ -3,12 +3,15 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"net/mail"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	"ripperr/internal/config"
+	"ripperr/internal/notify"
 )
 
 var allowedRefreshPerDay = []int{1, 2, 3, 4, 6, 8, 12, 24}
@@ -52,9 +55,8 @@ func ValidateSchedule(s *Schedule) error {
 	if s.ErrorStreakThreshold != 0 && s.ErrorStreakThreshold < 1 {
 		return fmt.Errorf("error_streak_threshold must be >= 1")
 	}
-	// границы совпадают с ValidateSchedulePatch: 0 больше не особый случай
-	// "не задано", там это уже разрешено на уровне отсутствия ключа в патче
-	// (magnetTimeout по умолчанию 60 до вызова этой функции)
+	// границы как в ValidateSchedulePatch. 0 тут уже не значит "не задано":
+	// отсутствующий ключ превратился в 60 еще до этой функции
 	if s.MagnetTimeout < 5 || s.MagnetTimeout > 600 {
 		return fmt.Errorf("magnet_timeout must be 5..600")
 	}
@@ -121,7 +123,7 @@ func ValidateSchedulePatch(o scheduleOverlay) error {
 	if o.ThresholdYear == nil {
 		return fmt.Errorf("threshold_year is required")
 	}
-	// необязательное: отсутствует в документах, сохранённых до появления поля
+	// необязательное: в документах, сохраненных раньше, этого поля нет
 	errorStreakThreshold := 3
 	if o.ErrorStreakThreshold != nil {
 		if *o.ErrorStreakThreshold < 1 {
@@ -129,7 +131,7 @@ func ValidateSchedulePatch(o scheduleOverlay) error {
 		}
 		errorStreakThreshold = *o.ErrorStreakThreshold
 	}
-	// необязательное: отсутствует в документах, сохранённых до появления поля
+	// тоже может отсутствовать в старых документах
 	var magnetTimeout int64 = 60
 	if o.MagnetTimeout != nil {
 		if *o.MagnetTimeout < 5 || *o.MagnetTimeout > 600 {
@@ -163,12 +165,15 @@ func TrackerPatchFromJSON(raw json.RawMessage) (trackerItemOverlay, error) {
 	if err := ValidateTrackerPatch(o); err != nil {
 		return o, err
 	}
-	if o.Mirrors != nil {
-		n, err := normalizeMirrorList(*o.Mirrors)
+	for _, list := range []*[]string{o.Mirrors, o.Retired, o.Unconfirmed} {
+		if list == nil {
+			continue
+		}
+		n, err := normalizeMirrorList(*list)
 		if err != nil {
 			return o, err
 		}
-		o.Mirrors = &n
+		*list = n
 	}
 	if o.ActiveDomain != nil {
 		d := strings.TrimSpace(*o.ActiveDomain)
@@ -324,6 +329,31 @@ func WatchTagsFromEnv(tag string) []string {
 	return watchTagsFromLegacy(tag)
 }
 
+func validateEvents(field string, events *[]string) error {
+	if events == nil {
+		return nil
+	}
+	for _, kind := range *events {
+		if !notify.KnownEvent(kind) {
+			return fmt.Errorf("%s: unknown event %q", field, kind)
+		}
+	}
+	return nil
+}
+
+func dedupeEvents(events *[]string) {
+	if events == nil {
+		return
+	}
+	out := make([]string, 0, len(*events))
+	for _, kind := range *events {
+		if !slices.Contains(out, kind) {
+			out = append(out, kind)
+		}
+	}
+	*events = out
+}
+
 func IntegrationsPatchFromJSON(raw json.RawMessage) (integrationsOverlay, error) {
 	var o integrationsOverlay
 	if err := json.Unmarshal(raw, &o); err != nil {
@@ -335,22 +365,135 @@ func IntegrationsPatchFromJSON(raw json.RawMessage) (integrationsOverlay, error)
 	if err := normalizeIntegrationsPatch(&o); err != nil {
 		return o, err
 	}
+	dedupeEvents(o.Notifications.Telegram.Events)
+	dedupeEvents(o.Notifications.Webhook.Events)
+	dedupeEvents(o.Notifications.Email.Events)
+	dedupeEvents(o.Notifications.Pushover.Events)
 	return o, nil
 }
 
 func ValidateIntegrationsPatch(o integrationsOverlay) error {
-	// пустая строка = не менять активный клиент; неизвестное значение отклоняем на
-	// границе, а не молча роняем в applyIntegrations (там это вторая линия обороны
-	// для старых баз, куда битое значение попало в обход этой проверки). Сравниваем
-	// нормализованное значение, иначе "Transmission" из UI/старого патча 400-ится
-	// здесь же, хотя applyIntegrations его бы принял.
+	// пустая строка: клиент не меняем. Неизвестное значение отклоняем здесь, applyIntegrations
+	// только подстраховка для старых баз. Сравниваем после нормализации, иначе "Transmission"
+	// из UI получит 400, хотя applyIntegrations его примет
 	if o.Client != nil {
-		if client := config.NormalizeClient(*o.Client); client != "" && client != "qbit" && client != "transmission" {
-			return fmt.Errorf("client must be qbit or transmission")
+		if client := config.NormalizeClient(*o.Client); client != "" && client != "qbit" && client != "transmission" && client != "deluge" {
+			return fmt.Errorf("client must be qbit, transmission or deluge")
 		}
 	}
 	if o.Flaresolverr.TimeoutMS != nil && *o.Flaresolverr.TimeoutMS < 1 {
 		return fmt.Errorf("flaresolverr.timeout_ms must be >= 1")
 	}
+	// в отличие от client, пустой тип не пропускаем: UI всегда шлет выбранное значение
+	if t := o.MirrorSource.Type; t != nil && *t != "github" && *t != "jsdelivr" && *t != "custom" {
+		return fmt.Errorf("mirror_source.type must be github, jsdelivr or custom")
+	}
+	if err := validateEvents("notifications.telegram.events", o.Notifications.Telegram.Events); err != nil {
+		return err
+	}
+	if err := validateEvents("notifications.webhook.events", o.Notifications.Webhook.Events); err != nil {
+		return err
+	}
+	if err := validateEvents("notifications.email.events", o.Notifications.Email.Events); err != nil {
+		return err
+	}
+	if err := validateEvents("notifications.pushover.events", o.Notifications.Pushover.Events); err != nil {
+		return err
+	}
+	return validateEmail(o)
+}
+
+func validateEmail(o integrationsOverlay) error {
+	e := o.Notifications.Email
+	if e.Port != nil && (*e.Port < 0 || *e.Port > 65535) {
+		return fmt.Errorf("notifications.email.port must be 0..65535")
+	}
+	if e.Security != nil {
+		switch *e.Security {
+		case "", "starttls", "tls", "none":
+		default:
+			return fmt.Errorf("notifications.email.security must be starttls, tls, or none")
+		}
+	}
+	if e.From != nil && strings.TrimSpace(*e.From) != "" {
+		if _, err := mail.ParseAddress(*e.From); err != nil {
+			return fmt.Errorf("notifications.email.from: %w", err)
+		}
+	}
+	if e.To != nil && strings.TrimSpace(*e.To) != "" {
+		if _, err := mail.ParseAddressList(*e.To); err != nil {
+			return fmt.Errorf("notifications.email.to: %w", err)
+		}
+	}
 	return nil
+}
+
+func WebPatchFromJSON(raw json.RawMessage) (webOverlay, error) {
+	var o webOverlay
+	if err := json.Unmarshal(raw, &o); err != nil {
+		return o, err
+	}
+	if o.Port != nil && (*o.Port < 1 || *o.Port > 65535) {
+		return o, fmt.Errorf("port must be 1..65535")
+	}
+	if o.AllowedHosts != nil {
+		n, err := normalizeAllowedHosts(*o.AllowedHosts)
+		if err != nil {
+			return o, err
+		}
+		o.AllowedHosts = &n
+	}
+	if o.AppURL != nil {
+		n, err := normalizeAppURL(*o.AppURL)
+		if err != nil {
+			return o, err
+		}
+		o.AppURL = &n
+	}
+	return o, nil
+}
+
+func normalizeAllowedHosts(ss []string) ([]string, error) {
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		h := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s)), ".")
+		if h == "" {
+			continue
+		}
+		if strings.ContainsAny(h, "/@* \t\r\n") {
+			return nil, fmt.Errorf("allowed_hosts: invalid entry %q", s)
+		}
+		if strings.Contains(h, ":") {
+			if _, err := netip.ParseAddr(h); err != nil {
+				return nil, fmt.Errorf("allowed_hosts: invalid entry %q", s)
+			}
+		}
+		if !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+
+func normalizeAppURL(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", fmt.Errorf("app_url: need an http(s) address with a host, for example https://ripperr.example.com")
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Hostname() == "" {
+		return "", fmt.Errorf("app_url: need an http(s) address with a host, for example https://ripperr.example.com")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("app_url: login and password are not allowed")
+	}
+	// ? и # ловим по строке: url.Parse молча сбрасывает пустые запрос и фрагмент
+	if strings.ContainsAny(s, "?#") {
+		return "", fmt.Errorf("app_url: query and fragment are not allowed")
+	}
+	return scheme + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.EscapedPath(), "/"), nil
 }

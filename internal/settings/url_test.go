@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -83,5 +84,50 @@ func TestNormalizeIntegrationsPatchTransmissionHost(t *testing.T) {
 	}
 	if *o.Transmission.Host != "http://localhost:9091" {
 		t.Errorf("transmission host = %q", *o.Transmission.Host)
+	}
+}
+
+func TestNormalizeIntegrationsPatchDelugeHost(t *testing.T) {
+	host := "localhost:8112"
+	o := integrationsOverlay{}
+	o.Deluge.Host = &host
+	if err := normalizeIntegrationsPatch(&o); err != nil {
+		t.Fatal(err)
+	}
+	if *o.Deluge.Host != "http://localhost:8112" {
+		t.Errorf("deluge host = %q", *o.Deluge.Host)
+	}
+}
+
+func TestURLValidationErrorsHideRawURL(t *testing.T) {
+	_, ensureErr := EnsureScheme("http://u:SEC-pw@host:bad/SEC-path", "http")
+	for name, err := range map[string]error{
+		"EnsureScheme":          ensureErr,
+		"ValidateDownloadProxy": ValidateDownloadProxy("socks5://u:SEC-pw@host:bad"),
+		"ValidateWebhookURL":    ValidateWebhookURL("https://u:SEC-pw@host:bad/SEC-path?q=SEC-q"),
+	} {
+		if err == nil {
+			t.Errorf("%s: expected error", name)
+			continue
+		}
+		if msg := err.Error(); strings.Contains(msg, "SEC-") || !strings.Contains(msg, "invalid port") {
+			t.Errorf("%s: %s", name, msg)
+		}
+	}
+}
+
+func TestURLParseErrorsQuoteNoInput(t *testing.T) {
+	for _, raw := range []string{"socks5://u:abc/def@p:1080", "http://abc def.example", "http://h/%zzabc"} {
+		err := ValidateDownloadProxy(raw)
+		if raw != "socks5://u:abc/def@p:1080" {
+			_, err = EnsureScheme(raw, "http")
+		}
+		if err == nil {
+			t.Errorf("%s: expected error", raw)
+			continue
+		}
+		if msg := err.Error(); strings.Contains(msg, "abc") || !strings.HasPrefix(msg, "invalid url") {
+			t.Errorf("%s: %s", raw, msg)
+		}
 	}
 }

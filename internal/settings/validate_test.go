@@ -2,6 +2,7 @@ package settings
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -143,8 +144,8 @@ func TestSchedulePatchMagnetTimeoutBounds(t *testing.T) {
 }
 
 func TestValidateScheduleMagnetTimeoutBounds(t *testing.T) {
-	// границы совпадают с ValidateSchedulePatch (5..600), 0 больше не особый
-	// случай "не задано" - это разошлось бы с реальным RUNNER_MAGNET_TIMEOUT=0
+	// границы как в ValidateSchedulePatch (5..600). Если считать 0 за "не задано",
+	// разойдемся с реальным RUNNER_MAGNET_TIMEOUT=0
 	base := Schedule{StartHour: 7, ListRefreshPerDay: 2, ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1}
 	for _, v := range []int64{5, 60, 600} {
 		s := base
@@ -176,18 +177,98 @@ func TestSchedulePatchMagnetTimeoutAbsentAllowed(t *testing.T) {
 }
 
 func TestIntegrationsPatchFromJSONClient(t *testing.T) {
-	// "Transmission" в любом регистре и с пробелами должен проходить валидацию
-	// так же, как канонический "transmission": UI и MANAGER_CLIENT из env
-	// присылают его без гарантии регистра
-	for _, v := range []string{"qbit", "transmission", "", "Transmission", " transmission ", "QBIT"} {
+	// UI и MANAGER_CLIENT из env шлют имя клиента в любом регистре и с пробелами
+	for _, v := range []string{"qbit", "transmission", "", "Transmission", " transmission ", "QBIT", "deluge", " Deluge "} {
 		if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"client":"` + v + `"}`)); err != nil {
 			t.Errorf("client=%q: unexpected error: %v", v, err)
 		}
 	}
-	if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"client":"deluge"}`)); err == nil {
+	if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"client":"utorrent"}`)); err == nil {
 		t.Fatal("expected error for unknown client")
 	}
 	if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"qbit":{"host":"x"}}`)); err != nil {
 		t.Fatalf("missing client key should not error: %v", err)
+	}
+}
+
+func TestIntegrationsPatchRejectsUnknownEvent(t *testing.T) {
+	for _, body := range []string{
+		`{"notifications":{"telegram":{"events":["updated","nope"]}}}`,
+		`{"notifications":{"webhook":{"events":["test"]}}}`,
+	} {
+		if _, err := IntegrationsPatchFromJSON(json.RawMessage(body)); err == nil {
+			t.Errorf("expected error for %s", body)
+		}
+	}
+	for _, body := range []string{
+		`{"notifications":{"telegram":{"events":[]}}}`,
+		`{"notifications":{"webhook":{"events":["check_failed","mirror_switched"]}}}`,
+	} {
+		if _, err := IntegrationsPatchFromJSON(json.RawMessage(body)); err != nil {
+			t.Errorf("%s: unexpected error %v", body, err)
+		}
+	}
+}
+
+func TestIntegrationsPatchValidatesEmail(t *testing.T) {
+	for _, body := range []string{
+		`{"notifications":{"email":{"port":70000}}}`,
+		`{"notifications":{"email":{"port":-1}}}`,
+		`{"notifications":{"email":{"security":"ssl"}}}`,
+		`{"notifications":{"email":{"from":"not an address"}}}`,
+		`{"notifications":{"email":{"to":"a@b.example, nope"}}}`,
+		`{"notifications":{"email":{"events":["nope"]}}}`,
+		`{"notifications":{"pushover":{"events":["test"]}}}`,
+	} {
+		if _, err := IntegrationsPatchFromJSON(json.RawMessage(body)); err == nil {
+			t.Errorf("expected error for %s", body)
+		}
+	}
+	for _, body := range []string{
+		`{"notifications":{"email":{"host":"smtp.example.com","port":0,"security":"","from":"","to":""}}}`,
+		`{"notifications":{"email":{"port":65535,"security":"tls","from":"Ripperr <bot@example.com>","to":"a@b.example, c@d.example"}}}`,
+		`{"notifications":{"email":{"security":"none","events":[]},"pushover":{"app_token":"t","user_key":"u","events":["check_failed"]}}}`,
+	} {
+		if _, err := IntegrationsPatchFromJSON(json.RawMessage(body)); err != nil {
+			t.Errorf("%s: unexpected error %v", body, err)
+		}
+	}
+	o, err := IntegrationsPatchFromJSON(json.RawMessage(`{"notifications":{"email":{"events":["updated","updated"]},"pushover":{"events":["broken","broken"]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := *o.Notifications.Email.Events; len(got) != 1 {
+		t.Errorf("email events not deduped: %v", got)
+	}
+	if got := *o.Notifications.Pushover.Events; len(got) != 1 {
+		t.Errorf("pushover events not deduped: %v", got)
+	}
+}
+
+func TestWebPatchFromJSON(t *testing.T) {
+	for _, p := range []string{`{"port":0}`, `{"port":-1}`, `{"port":65536}`, `{"port":"80"}`} {
+		if _, err := WebPatchFromJSON(json.RawMessage(p)); err == nil {
+			t.Errorf("%s: expected error", p)
+		}
+	}
+	for _, p := range []string{`{"port":1}`, `{"port":65535}`} {
+		if _, err := WebPatchFromJSON(json.RawMessage(p)); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	for _, h := range []string{"https://x", "x:443", "a b", "*.x", "u@x"} {
+		raw, _ := json.Marshal(map[string][]string{"allowed_hosts": {"ok.lan", h}})
+		_, err := WebPatchFromJSON(raw)
+		if err == nil || !strings.Contains(err.Error(), h) {
+			t.Errorf("host %q: err = %v, want error naming the entry", h, err)
+		}
+	}
+	o, err := WebPatchFromJSON(json.RawMessage(`{"allowed_hosts":["MY.Keenetic.PRO."," x.lan ","","::1","x.lan","my.keenetic.pro"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"my.keenetic.pro", "x.lan", "::1"}
+	if o.AllowedHosts == nil || !slices.Equal(*o.AllowedHosts, want) {
+		t.Errorf("hosts = %v, want %v", o.AllowedHosts, want)
 	}
 }

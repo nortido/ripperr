@@ -1,21 +1,36 @@
 package web
 
-import "ripperr/internal/config"
+import (
+	"ripperr/internal/config"
+	"ripperr/internal/settings"
+)
 
 type trackerResp struct {
 	ID  int    `json:"id"`
 	Key string `json:"key"`
-	// логин и пароль вынуты из строки credentials, чтобы форма не заставляла
-	// пользователя редактировать тело POST-запроса ради смены пароля
+	// закрывают одноименные поля TrackerItem: пароль уходит маской, а credentials
+	// у трекера с формой входа только шаблон с плейсхолдерами
 	Login         string `json:"login"`
 	Password      string `json:"password"`
 	SupportsLogin bool   `json:"supports_login"`
 	config.TrackerItem
 }
 
+type trackerListResp struct {
+	trackerResp
+	Suggestions []settings.MirrorSuggestion `json:"suggestions,omitempty"`
+	Paused      string                      `json:"paused,omitempty"`
+	Auto        []settings.MirrorAuto       `json:"auto,omitempty"`
+	ConfirmOn   bool                        `json:"confirm_on"`
+}
+
+type trackerTypeResp struct {
+	trackerResp
+	Added bool `json:"added"`
+}
+
 type healthResp struct {
 	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
 }
 
 type errorResp struct {
@@ -94,6 +109,7 @@ type ignoreItemResp struct {
 type testResultResp struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+	Hosts int    `json:"hosts,omitempty"`
 }
 
 type categoriesResp struct {
