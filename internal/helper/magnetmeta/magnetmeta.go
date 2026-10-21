@@ -15,29 +15,20 @@ import (
 	"ripperr/internal/helper/torrentmeta"
 )
 
-// mkdirTemp это os.MkdirTemp за переменной пакета: тесту на guard-проверку
-// hasAnnounceURL нужен способ доказать, что временный каталог (а с ним и
-// клиент torrent) не создаётся вовсе, а не просто убирается через defer к
-// моменту возврата Fetch - тем же приёмом, что magnetFetch у клиентов
-// загрузок
-var mkdirTemp = os.MkdirTemp
+var mkdirTemp = os.MkdirTemp // тест подменяет, чтобы видеть: без tr каталог и клиент вообще не создаются
 
 func Fetch(ctx context.Context, magnet string) (data []byte, err error) {
-	// пустую строку отсекаем сразу, чтобы не поднимать клиент ради заведомо мусорного входа
 	if strings.TrimSpace(magnet) == "" {
-		return nil, fmt.Errorf("magnetmeta: пустая магнет-ссылка")
+		return nil, fmt.Errorf("magnetmeta: пустая magnet-ссылка")
 	}
 
-	// DHT выключен (см. cc.NoDHT ниже), значит единственный способ найти рой -
-	// адреса анонсеров прямо в магните (параметр tr). Без них AddMagnet всё
-	// равно поднимет клиент и провисит весь таймаут в ожидании метаданных,
-	// которые взять неоткуда - это чистая трата слота часового лимита трекера
-	// на каждом прогоне. Проверяем до создания временного каталога и клиента.
+	// DHT выключен, рой можно найти только по анонсерам из tr. Без них клиент провисит
+	// весь таймаут впустую и съест слот часового лимита трекера
 	if !hasAnnounceURL(magnet) {
-		return nil, fmt.Errorf("magnetmeta: в магните нет адреса анонсера (tr), а DHT выключен")
+		return nil, fmt.Errorf("magnetmeta: в magnet-ссылке нет адреса трекера (tr), а DHT выключен")
 	}
 
-	dir, err := mkdirTemp("", "trackerr-magnetmeta-*")
+	dir, err := mkdirTemp("", "ripperr-magnetmeta-*")
 	if err != nil {
 		return nil, fmt.Errorf("magnetmeta: не удалось создать временный каталог: %w", err)
 	}
@@ -47,67 +38,49 @@ func Fetch(ctx context.Context, magnet string) (data []byte, err error) {
 	cc.DataDir = dir
 	cc.Seed = false
 	cc.NoUpload = true
-	// DHT-серверы (dht.NewServer, отдельно на IPv4 и IPv6) не закрываются
-	// cl.Close() и держат горутину с живым UDP-сокетом до конца процесса на
-	// каждый вызов Fetch, а демон вызывает Fetch на каждом магнитном сабмите
-	// неделями подряд - упор в лимит дескрипторов неизбежен. Отключаем DHT
-	// вовсе: приватные раздачи помечены private и по протоколу трекера не
-	// анонсируются через DHT, а у публичных нужный адрес уже есть в самом
-	// магните (параметр tr) и работает обмен пирами (PEX); если рой всё же не
-	// нашёлся, submit уходит в запасной путь со скачиванием .torrent с трекера
+	// DHT-серверы не закрываются в cl.Close() и держат UDP-сокет до конца процесса, а Fetch
+	// зовут на каждый магнет неделями. Приватные раздачи в DHT и так не анонсируются, у
+	// публичных есть tr и PEX, а если рой не нашелся, submit качает .torrent с трекера
 	cc.NoDHT = true
-	// дефолт библиотеки фиксирует порт 42069: параллельные вызовы Fetch (runner
-	// держит по горутине на трекер, до нескольких submit одновременно) дерутся
-	// за один и тот же порт и часть из них не поднимается вовсе. 0 отдаёт выбор
-	// свободного порта ядру
+	// дефолтный порт 42069 один на всех: параллельные Fetch (по горутине на трекер)
+	// за него дерутся и часть не стартует. С 0 свободный порт выберет ядро
 	cc.ListenPort = 0
-	// UPnP-проброс порта (по умолчанию включён) на каждый Fetch ищет роутер по
-	// SSDP и шлёт ему SOAP-запрос через net/http; это независимые от cl.Close()
-	// горутины, которые могут провисеть секундами и не гарантированно
-	// остановлены к моменту возврата Fetch. Нам входящая доступность не нужна:
-	// мы только читаем метаданные, а не раздаём
+	// UPnP на каждом Fetch ищет роутер по SSDP, и эти горутины живут отдельно от cl.Close().
+	// Входящие нам не нужны, мы только читаем метаданные
 	cc.NoDefaultPortForwarding = true
-	// webtorrent (веб-транспорт через pion/webrtc, пиры с tr=wss://...) включён
-	// в библиотеке по умолчанию и реально в графе сборки: ICE-gathering, STUN и
-	// mDNS-слушатель (pion/mdns) поднимаются на каждый вызов. Метаданные
-	// добываются по обычному BitTorrent, веб-транспорт нам не нужен
+	// webtorrent включен по умолчанию и на каждый вызов поднимает ICE, STUN и mDNS из pion.
+	// Метаданные идут по обычному BitTorrent
 	cc.DisableWebtorrent = true
-	// дефолт библиотеки - 50 установленных соединений и 25 полуоткрытых НА
-	// КАЖДЫЙ клиент, а клиент поднимается на каждый вызов Fetch, причём
-	// параллельно (runner держит горутину на трекер). Нам нужны только
-	// метаданные, десятка пиров с запасом хватает с головой; иначе пик равен
-	// числу трекеров, умноженному на 75 сокетов, и упирается в лимит
-	// дескрипторов контейнера
+	// по дефолту 50+25 сокетов на клиент, а клиентов в параллель столько же, сколько трекеров.
+	// Для метаданных хватит десятка пиров, иначе упремся в лимит дескрипторов контейнера
 	cc.EstablishedConnsPerTorrent = 20
 	cc.HalfOpenConnsPerTorrent = 10
 
 	lg := log.NewLogger()
-	lg.SetHandlers() // без хендлеров - тихо, библиотека не должна засорять наши логи
+	lg.SetHandlers() // без хендлеров библиотека молчит и не засоряет наши логи
 	cc.Logger = lg
 
 	cl, err := torrent.NewClient(cc)
 	if err != nil {
-		return nil, fmt.Errorf("magnetmeta: не удалось создать клиент torrent: %w", err)
+		return nil, fmt.Errorf("magnetmeta: не удалось создать torrent-клиент: %w", err)
 	}
 	defer cl.Close()
 
 	t, err := cl.AddMagnet(magnet)
 	if err != nil {
-		return nil, fmt.Errorf("magnetmeta: не удалось добавить магнит: %w", err)
+		return nil, fmt.Errorf("magnetmeta: не удалось добавить magnet-ссылку: %w", err)
 	}
 	defer t.Drop()
 
 	select {
 	case <-t.GotInfo():
 	case <-ctx.Done():
-		return nil, fmt.Errorf("magnetmeta: ожидание метаданных по магниту прервано: %w", ctx.Err())
+		return nil, fmt.Errorf("magnetmeta: ожидание метаданных magnet прервано: %w", ctx.Err())
 	}
 
 	mi := t.Metainfo()
-	// библиотека при сборке metainfo из магнита заполняет только AnnounceList,
-	// поле Announce остаётся пустым; qBittorrent и Transmission такое едят, но
-	// файл получается нестандартным. Announce лежит вне словаря info, поэтому
-	// правка не трогает инфохеш
+	// из магнита библиотека заполняет только AnnounceList. qBittorrent и Transmission
+	// это едят, но файл выходит нестандартный. Announce лежит вне info, инфохеш не меняется
 	fillAnnounce(&mi)
 	var buf bytes.Buffer
 	if err = mi.Write(&buf); err != nil {
@@ -123,10 +96,7 @@ func Fetch(ctx context.Context, magnet string) (data []byte, err error) {
 }
 
 func hasAnnounceURL(magnet string) bool {
-	// net/url.Parse практически никогда не ошибается (даже на "not a magnet" и
-	// произвольных схемах), поэтому отдельная ветка на err была недостижима на
-	// практике; ошибка разбора трактуется так же, как отсутствие tr - дальше
-	// AddMagnet всё равно даст точную причину отказа для мусорного входа
+	// url.Parse почти никогда не падает, даже на "not a magnet". Если упал, считаем что tr нет
 	u, err := url.Parse(magnet)
 	if err != nil {
 		return false
@@ -156,15 +126,15 @@ func fillAnnounce(mi *metainfo.MetaInfo) {
 func verifyInfoHash(built []byte, magnet string) error {
 	wantHash, ok := torrentmeta.BtihFromMagnet(magnet)
 	if !ok {
-		// AddMagnet тот же URI уже распарсил успешно, так что это подозрительно само по себе
-		return fmt.Errorf("magnetmeta: не удалось извлечь инфохеш из магнит-ссылки")
+		// AddMagnet этот URI уже разобрал, так что сюда попадать не должны
+		return fmt.Errorf("magnetmeta: не удалось извлечь infohash из magnet-ссылки")
 	}
 	gotHash, err := torrentmeta.InfoHash(built)
 	if err != nil {
-		return fmt.Errorf("magnetmeta: не удалось вычислить инфохеш собранного файла: %w", err)
+		return fmt.Errorf("magnetmeta: не удалось вычислить infohash собранного файла: %w", err)
 	}
 	if !strings.EqualFold(wantHash, gotHash) {
-		return fmt.Errorf("magnetmeta: инфохеш собранного .torrent (%s) не совпадает с магнитом (%s)", gotHash, wantHash)
+		return fmt.Errorf("magnetmeta: infohash собранного .torrent (%s) не совпадает с magnet-ссылкой (%s)", gotHash, wantHash)
 	}
 	return nil
 }

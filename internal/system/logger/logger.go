@@ -1,10 +1,6 @@
 package logger
 
-import (
-	"fmt"
-	"strings"
-	"time"
-)
+import "strings"
 
 type Level int
 
@@ -36,16 +32,14 @@ func log(level Level, label, msg string) {
 	if level < minLevel {
 		return
 	}
-	now := time.Now()
-	fmt.Println(now.Format(time.DateTime), label, msg)
-	globalBuffer.add(Entry{Time: now, Level: strings.TrimSuffix(label, ":"), Message: msg})
+	emit(label, msg, true)
 }
 
 func Debug(msg string) {
 	if minLevel > LevelDebug {
 		return
 	}
-	fmt.Println(time.Now().Format(time.DateTime), "DEBUG:", msg)
+	emit("DEBUG:", msg, false)
 }
 
 func Info(msg string) {

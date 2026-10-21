@@ -13,17 +13,20 @@ import (
 	"ripperr/internal/helper/breakeralerts"
 	"ripperr/internal/helper/tlsclient"
 	"ripperr/internal/manager"
+	"ripperr/internal/mirrorsync"
 	"ripperr/internal/model"
 	proxyModel "ripperr/internal/model/proxy"
 	"ripperr/internal/notify"
 	"ripperr/internal/proxy"
 	"ripperr/internal/runner"
+	"ripperr/internal/settings"
 	"ripperr/internal/storage"
 	"ripperr/internal/system/logger"
 	"ripperr/internal/tracker"
+	"ripperr/internal/tracker/registry"
 )
 
-func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg model.HandlerConfig, runnerState *runner.State, alerts *breakeralerts.Registry) error {
+func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg model.HandlerConfig, runnerState *runner.State, alerts *breakeralerts.Registry, reload func()) error {
 	var (
 		mc         manager.Client
 		px         proxy.IClient
@@ -39,22 +42,30 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		DeleteCategories:   cfg.Manager.DeleteFilesCategories,
 		BlackholeDir:       cfg.BlackholeDirPath(),
 	}
-	// поля хоста/логина/пароля берутся у активного клиента, остальные общие для обоих;
-	// нормализация в одном месте, иначе MANAGER_CLIENT=Transmission (регистр,
-	// пробелы из env) уходит в ветку qbit за учётными данными и потом падает с
-	// ErrUnknownClient
+	// хост, логин и пароль берутся у активного клиента, остальное общее. Имя нормализуем
+	// здесь, иначе MANAGER_CLIENT=Transmission (регистр, пробелы из env) уйдет в ветку
+	// qbit за учетными данными и упадет с ErrUnknownClient
 	clientName := manager.NormalizeClient(cfg.Manager.Client)
-	if clientName == manager.ClientTransmission {
+	switch clientName {
+	case manager.ClientTransmission:
 		mcfg.Host = cfg.Manager.Transmission.Host
 		mcfg.Username = cfg.Manager.Transmission.Username
 		mcfg.Password = cfg.Manager.Transmission.Password
-	} else {
+	case manager.ClientDeluge:
+		mcfg.Host = cfg.Manager.Deluge.Host
+		mcfg.Password = cfg.Manager.Deluge.Password
+	default:
 		mcfg.Host = cfg.Manager.QbitTorrent.Host
 		mcfg.Username = cfg.Manager.QbitTorrent.Username
 		mcfg.Password = cfg.Manager.QbitTorrent.Password
 		if clientName == "" {
 			clientName = manager.ClientQbit
 		}
+	}
+	// у Deluge нет тегов: непустой watch_tags отсеял бы все его торренты
+	if !manager.SupportsTags(clientName) && len(handlerCfg.WatchTags) > 0 {
+		logger.Info(fmt.Sprintf("%s has no tags, watch_tags %v ignored", clientName, handlerCfg.WatchTags))
+		handlerCfg.WatchTags = nil
 	}
 	for {
 		if ctx.Err() != nil {
@@ -118,6 +129,45 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	}, tracker.ConfigFromApp(cfg), alerts)
+	nt := notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy).WithAppURL(cfg.Web.AppURL)
+	tr.SetMirrorSwitchHook(func(name, from, to string) {
+		nt.Notify(notify.MirrorSwitchedEvent(name, from, to))
+	})
+	tr.SetMirrorPauseHook(func(ttid int, host string) {
+		key := registry.Key(ttid)
+		if key == "" {
+			return
+		}
+		// хук зовется под блокировкой кэша трекера: только короткая запись в БД, без сети
+		changed := false
+		err := settings.UpdateMirrorSync(ctx, db, func(d *settings.MirrorSync) {
+			changed = false
+			prev, ok := d.Paused[key]
+			switch {
+			case host == "":
+				delete(d.Paused, key)
+			case !ok || settings.MirrorHostKey(prev.Host) != settings.MirrorHostKey(host):
+				if d.Paused == nil {
+					d.Paused = map[string]settings.MirrorPause{}
+				}
+				d.Paused[key] = settings.MirrorPause{Host: host, Since: time.Now()}
+				changed = true
+			}
+		})
+		if err != nil {
+			logger.Warn(fmt.Sprintf("mirror sync: save failed: %v", err))
+			return
+		}
+		if !changed {
+			return
+		}
+		name := key
+		if item := cfg.Tracker[key]; item != nil && item.Name != "" {
+			name = item.Name
+		}
+		// Notify только запускает горутины отправки, сети под блокировкой нет
+		nt.Notify(notify.MirrorPausedEvent(name, host))
+	})
 	defer func() {
 		tr.DestroyFlareSessions()
 		if alerts != nil {
@@ -126,16 +176,58 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 			}
 		}
 	}()
+	mgr := manager.NewManager(mc)
+	msDeps := mirrorsync.Deps{
+		Store:     db,
+		Items:     cfg.Tracker,
+		HTTP:      mirrorsync.Client(cfg.MirrorSource, cfg.Runner.DownloadProxy, 30*time.Second),
+		Sources:   mirrorsync.SourceURLs(cfg.MirrorSource),
+		Check:     tracker.HostChecker(ht),
+		ConfirmOn: cfg.Runner.MirrorConfirm,
+		Notify:    nt.Notify,
+		Reload:    reload,
+		Idle:      func() bool { return !runnerState.Running() },
+		Entries: func(ctx context.Context) ([]string, error) {
+			list, err := mgr.GetEntries(ctx, model.FilterOptions{})
+			urls := make([]string, 0, len(list))
+			for _, e := range list {
+				if e != nil && e.URL != "" {
+					urls = append(urls, e.URL)
+				}
+			}
+			return urls, err
+		},
+		StoredURLs: func(ctx context.Context) ([]string, error) {
+			items, err := db.ListItems(ctx)
+			if err != nil {
+				return nil, err
+			}
+			urls := make([]string, 0, len(items))
+			for _, it := range items {
+				urls = append(urls, it.URL)
+			}
+			return urls, nil
+		},
+	}
 	if err = tr.BuildCache(ctx); err != nil {
+		// без единого живого трекера приложение уходит в повтор и фоновая проверка не дожила бы до запуска,
+		// а новое зеркало нужнее всего именно тогда
+		mirrorsync.RunOnceIfDue(ctx, msDeps)
 		return err
 	}
 
-	rn := runner.NewRunner(tr, manager.NewManager(mc), db, handlerCfg, runnerState, notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy))
+	rn := runner.NewRunner(tr, mgr, db, handlerCfg, runnerState, nt)
 
 	bhDone := make(chan struct{})
 	go func() {
 		mc.SweepBlackhole(ctx)
 		close(bhDone)
+	}()
+
+	msDone := make(chan struct{})
+	go func() {
+		mirrorsync.Run(ctx, msDeps)
+		close(msDone)
 	}()
 
 	done := make(chan struct{})
@@ -145,5 +237,6 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 	}()
 	<-done
 	<-bhDone
+	<-msDone
 	return ctx.Err()
 }

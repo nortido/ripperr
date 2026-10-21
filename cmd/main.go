@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -22,7 +24,9 @@ import (
 	"ripperr/internal/runner"
 	"ripperr/internal/settings"
 	"ripperr/internal/storage"
+	"ripperr/internal/storage/client/sqlite"
 	"ripperr/internal/system/logger"
+	"ripperr/internal/tracker"
 	"ripperr/internal/tracker/registry"
 	_ "ripperr/internal/tracker/registry/all"
 	webpkg "ripperr/internal/web"
@@ -31,13 +35,19 @@ import (
 func main() {
 	loadEnv()
 
+	if len(os.Args) > 1 && os.Args[1] == "decrypt-secrets" {
+		os.Exit(decryptSecrets())
+	}
+
+	// до envconfig, чтобы ошибки конфига при падении контейнера в цикле попали в файл
+	logger.InitFile(filepath.Join(configDirFromEnv(), "logs"))
+
 	ctx, stop := signalNotify()
 	defer stop()
 
 	baseCfg := config.DefaultApp()
-	// набор трекеров приходит из реестра: значения по умолчанию объявляет сам
-	// пакет трекера, а env накладывается отдельным проходом, потому что ключи
-	// известны только в рантайме
+	// дефолты трекеров объявляет сам пакет трекера. env накладываем отдельным проходом:
+	// ключи известны только в рантайме
 	baseCfg.Tracker = registry.ConfigDefaults()
 	if err := envconfig.Process(ctx, &baseCfg); err != nil {
 		logger.Error(err.Error())
@@ -52,24 +62,45 @@ func main() {
 		return
 	}
 	baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
-	// из БД адрес режет ValidateDownloadProxy при сохранении, а из env он приходит
-	// как есть: без схемы ProxyTransport молча вернул бы прямое соединение
+	// адрес из БД проверен еще при сохранении, а из env приходит как есть.
+	// Без схемы ProxyTransport молча пошел бы напрямую
 	if err := settings.ValidateDownloadProxy(baseCfg.Runner.DownloadProxy); err != nil {
 		logger.Error("RUNNER_DOWNLOAD_PROXY: " + err.Error())
 		return
 	}
+	if err := settings.ValidateMirrorSource(baseCfg.MirrorSource); err != nil {
+		logger.Error("MIRROR_SOURCE: " + err.Error())
+		return
+	}
 	logger.SetLevel(baseCfg.Log.Level)
 
-	dbConn, db, err := connectDB(ctx, baseCfg)
+	dbConn, err := connectDB(ctx, baseCfg)
 	if err != nil {
 		logger.Error(err.Error())
 		return
 	}
 	defer func() { _ = dbConn.Close() }()
 
-	if err = db.Bootstrap(ctx); err != nil {
+	db, openInfo, err := storage.Open(ctx, dbConn, baseCfg.SecretsDir(), os.LookupEnv)
+	if err != nil {
 		logger.Error(err.Error())
 		return
+	}
+	logger.Info("secrets key: " + openInfo.KeySource)
+	if openInfo.KeyCheckResealed {
+		logger.Info("secrets: key check re-sealed, older builds can no longer open this database")
+	}
+	if openInfo.Migrated {
+		logger.Info("secrets: stored settings and tracker credentials encrypted")
+	}
+	if openInfo.Vacuumed {
+		logger.Info("secrets: database compacted, old plaintext purged")
+	}
+	if openInfo.VacuumErr != nil {
+		logger.Warn("secrets: vacuum pending, retry on next start: " + openInfo.VacuumErr.Error())
+	}
+	if err := tracker.MigrateSettings(ctx, db, baseCfg); err != nil {
+		logger.Error("trackers: settings migration: " + err.Error())
 	}
 
 	reloadCh := make(chan struct{}, 1)
@@ -84,19 +115,18 @@ func main() {
 	}
 
 	effective := func() config.App {
-		cfg := baseCfg // структура копируется по значению, срезы в секциях overlay всегда переприсваивает
+		cfg := baseCfg // копии по значению хватает: overlay срезы в секциях всегда переприсваивает
 		if err := settings.ApplyOverrides(context.Background(), &cfg, db); err != nil {
 			logger.Error(err.Error())
 		}
 		return cfg
 	}
 
-	// реестр переживает перезагрузку, поэтому хук вешается здесь один раз; каждый
-	// вызов берёт свежий конфиг через effective(), чтобы подхватить настройки,
-	// сохранённые уже после старта
+	// реестр переживает перезагрузку, хук вешаем один раз. Конфиг берем через effective(),
+	// чтобы видеть настройки, сохраненные после старта
 	breakerAlerts.SetHook(func(open bool, tracker, errMsg string) {
 		ecfg := effective()
-		n := notify.New(notify.Config(ecfg.Notify), ecfg.Runner.DownloadProxy)
+		n := notify.New(notify.Config(ecfg.Notify), ecfg.Runner.DownloadProxy).WithAppURL(ecfg.Web.AppURL)
 		if open {
 			n.Notify(notify.TrackerDownEvent(tracker, errMsg))
 		} else {
@@ -121,7 +151,7 @@ func main() {
 
 	first := true
 	for {
-		cfg := baseCfg // структура копируется по значению, срезы в секциях overlay всегда переприсваивает
+		cfg := baseCfg // см. выше, копии по значению хватает
 		if err := settings.ApplyOverrides(ctx, &cfg, db); err != nil {
 			logger.Error(err.Error())
 		}
@@ -155,7 +185,7 @@ func main() {
 		done := make(chan struct{})
 		var runErr error
 		go func() {
-			runErr = app.Run(appCtx, cfg, db, handlerCfg, runnerState, breakerAlerts)
+			runErr = app.Run(appCtx, cfg, db, handlerCfg, runnerState, breakerAlerts, reload)
 			close(done)
 		}()
 
@@ -194,29 +224,56 @@ func main() {
 	}
 }
 
-func connectDB(ctx context.Context, cfg config.App) (*sql.DB, *storage.Service, error) {
+func decryptSecrets() int {
+	ctx := context.Background()
+	cfg := config.DefaultApp()
+	if err := envconfig.Process(ctx, &cfg); err != nil {
+		logger.Error(err.Error())
+		return 1
+	}
+	logger.SetLevel(cfg.Log.Level)
+
+	dbConn, err := connectDB(ctx, cfg)
+	if err != nil {
+		logger.Error("secrets: decrypt failed: " + err.Error())
+		return 1
+	}
+	err = storage.DecryptSecrets(ctx, dbConn, cfg.SecretsDir(), os.LookupEnv)
+	_ = dbConn.Close()
+	switch {
+	case errors.Is(err, sqlite.ErrNotEncrypted):
+		logger.Info("secrets: database is not encrypted, nothing to do")
+		return 0
+	case err != nil:
+		logger.Error("secrets: decrypt failed: " + strings.TrimPrefix(err.Error(), "secrets: "))
+		return 1
+	}
+	logger.Info("secrets: decrypted, database is back at schema version " + strconv.Itoa(sqlite.SecretsVersion-1))
+	return 0
+}
+
+func connectDB(ctx context.Context, cfg config.App) (*sql.DB, error) {
 	path := cfg.DBPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// _txlock=immediate: пишущая блокировка берётся на BEGIN, а не на первой записи.
-	// Приложение однопоточно по БД (SetMaxOpenConns(1)), внутри процесса это ничего не
-	// стоит, но накат миграций перестаёт зависеть от гонки с чужим процессом на том же файле
+	// _txlock=immediate берет пишущую блокировку сразу на BEGIN. Соединение у нас одно, так что
+	// внутри процесса это бесплатно, зато накат миграций не гоняется с чужим процессом
+	// на том же файле
 	dsn := path + "?_pragma=journal_mode(DELETE)&_pragma=busy_timeout(5000)&_pragma=synchronous(FULL)&_txlock=immediate"
 	dbConn, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// единственное пишущее соединение полностью снимает ошибки "database is locked".
-	// журнал отката используется вместо WAL, потому что WAL нужен файл индекса в
-	// разделяемой памяти, а bind mount в macOS не держит его согласованным, и процесс
-	// на хосте, открывший тот же файл, может потерять закоммиченные транзакции
+	// одно соединение, и "database is locked" больше не бывает. WAL не берем: ему нужен индекс
+	// в разделяемой памяти, а bind mount в macOS его не синхронизирует, и процесс на хосте
+	// может потерять закомиченные транзакции
 	dbConn.SetMaxOpenConns(1)
 	if err := dbConn.PingContext(ctx); err != nil {
 		_ = dbConn.Close()
-		return nil, nil, err
+		return nil, err
 	}
-	return dbConn, storage.New(dbConn), nil
+	return dbConn, nil
 }
 
 func signalNotify() (context.Context, context.CancelFunc) {
@@ -224,18 +281,20 @@ func signalNotify() (context.Context, context.CancelFunc) {
 }
 
 func loadEnv() {
-	dir := os.Getenv("CONFIG_DIR")
-	if dir == "" {
-		dir = config.DefaultConfigDir
-	}
-	// сам CONFIG_DIR на этом этапе ещё не разобран через envconfig (курица и яйцо:
-	// его нужно знать до загрузки .env, который может выставить остальные переменные),
-	// поэтому читаем его прямо из окружения ОС.
-	if envPath := filepath.Join(dir, ".env"); fileExists(envPath) {
+	// CONFIG_DIR тут еще не разобран envconfig: он нужен до загрузки .env, а .env может
+	// задать остальное. Поэтому читаем его прямо из окружения
+	if envPath := filepath.Join(configDirFromEnv(), ".env"); fileExists(envPath) {
 		_ = godotenv.Load(envPath)
 		return
 	}
 	_ = godotenv.Load()
+}
+
+func configDirFromEnv() string {
+	if dir := os.Getenv("CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	return config.DefaultConfigDir
 }
 
 func fileExists(path string) bool {

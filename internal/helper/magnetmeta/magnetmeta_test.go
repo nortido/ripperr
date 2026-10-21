@@ -45,9 +45,8 @@ func TestVerifyInfoHash_Match(t *testing.T) {
 
 func TestVerifyInfoHash_Mismatch(t *testing.T) {
 	built := buildTestTorrentBytes(t)
-	// strings.Repeat, а не хардкод строки: ошибиться в счёте f-ов руками легко
-	// (уже случилось), а неверная длина хеша тихо меняет проверяемый сценарий
-	// с "расхождение" на "магнит без разбираемого btih"
+	// через strings.Repeat: руками в счете f уже ошибались, и с неверной длиной тест
+	// тихо проверяет "магнит без btih" вместо расхождения
 	other := strings.Repeat("f", 40)
 	err := verifyInfoHash(built, "magnet:?xt=urn:btih:"+other)
 	if err == nil {
@@ -77,10 +76,8 @@ func TestFetch_EmptyMagnet(t *testing.T) {
 }
 
 func TestFetch_GarbageMagnet(t *testing.T) {
-	// с tr, иначе мусорную строку отсекает hasAnnounceURL раньше, чем она
-	// доходит до cl.AddMagnet, и тест перестаёт проверять то, для чего
-	// написан - отказ библиотеки на мусорном URI (схема не "magnet",
-	// а разбирается net/url без ошибки, поэтому guard её пропускает)
+	// с tr, иначе мусор отсечет hasAnnounceURL и до отказа библиотеки в AddMagnet
+	// дело не дойдет. Такую схему net/url разбирает без ошибки
 	_, err := Fetch(context.Background(), "garbage://not-a-real-magnet?tr=http://tracker.example/announce")
 	if err == nil {
 		t.Fatal("ожидалась ошибка для мусорной строки")
@@ -102,8 +99,7 @@ func TestHasAnnounceURL_WithoutTracker(t *testing.T) {
 }
 
 func TestHasAnnounceURL_EmptyTrackerValue(t *testing.T) {
-	// tr= с пустым значением (или только из пробелов) это тот же случай, что и
-	// отсутствие параметра вовсе - разбирать такую "ссылку" клиенту нечем
+	// пустой tr или из одних пробелов все равно что его нет
 	magnet := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=%20"
 	if hasAnnounceURL(magnet) {
 		t.Fatal("пустой tr не должен считаться анонсером")
@@ -111,11 +107,8 @@ func TestHasAnnounceURL_EmptyTrackerValue(t *testing.T) {
 }
 
 func TestFetch_NoAnnounce_FastFailWithoutClient(t *testing.T) {
-	// проверка каталога ПОСЛЕ возврата Fetch ничего не доказывает: defer
-	// os.RemoveAll(dir) убирает временный каталог клиента в любом случае,
-	// независимо от того, где по коду стоит guard. Считаем реальные вызовы
-	// mkdirTemp через подменяемую переменную пакета - только так видно, что
-	// клиент вообще не создаётся, а не просто убирается за собой
+	// смотреть каталог после Fetch бесполезно, defer RemoveAll уберет его в любом
+	// случае. Считаем вызовы mkdirTemp, так видно, что клиент вообще не создавался
 	var calls int
 	orig := mkdirTemp
 	mkdirTemp = func(dir, pattern string) (string, error) {
@@ -129,7 +122,7 @@ func TestFetch_NoAnnounce_FastFailWithoutClient(t *testing.T) {
 	if err == nil {
 		t.Fatal("ожидалась ошибка для магнита без tr при выключенном DHT")
 	}
-	if !strings.Contains(err.Error(), "анонсера") {
+	if !strings.Contains(err.Error(), "адреса трекера") {
 		t.Errorf("текст ошибки %q не поясняет причину (нет анонсера)", err.Error())
 	}
 	if calls != 0 {
@@ -181,17 +174,15 @@ func TestFillAnnounce_RoundTripPreservesInfoHash(t *testing.T) {
 }
 
 func TestFetch_CanceledContext(t *testing.T) {
-	// подменяем TMPDIR уникальным каталогом теста, чтобы после Fetch
-	// проверить, что временный каталог клиента библиотеки был убран через defer
+	// свой TMPDIR, чтобы после Fetch проверить, что каталог клиента убран
 	tmpDir := t.TempDir()
 	t.Setenv("TMPDIR", tmpDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// с tr, иначе новая проверка hasAnnounceURL отсекает магнит раньше, чем
-	// поднимается клиент, и тест перестаёт проверять то, для чего он написан -
-	// уборку временного каталога клиента библиотеки через defer
+	// с tr, иначе hasAnnounceURL отсечет магнит до клиента и уборку каталога
+	// тест не проверит
 	const validMagnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=http://tracker.example/announce"
 
 	_, err := Fetch(ctx, validMagnet)
@@ -209,19 +200,15 @@ func TestFetch_CanceledContext(t *testing.T) {
 }
 
 func TestFetch_NoGoroutineLeak(t *testing.T) {
-	// DHT-серверы и UPnP-проброс порта (оба по умолчанию включены в
-	// torrent.NewDefaultClientConfig) заводят фоновые горутины с живыми
-	// сокетами, которые не гарантированно останавливаются к моменту возврата
-	// Fetch; демон вызывает Fetch на каждом магнитном сабмите неделями подряд,
-	// так что счёт горутин обязан вернуться к исходному после каждого вызова
+	// DHT и UPnP по умолчанию оставляют после Fetch фоновые горутины с сокетами.
+	// Демон зовет Fetch неделями, так что число горутин должно вернутся к исходному
 	runtime.GC()
 	time.Sleep(100 * time.Millisecond)
 	before := runtime.NumGoroutine()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	// с tr, чтобы реально пройти до создания клиента (без tr магнит теперь
-	// отсекается hasAnnounceURL раньше, и тест не проверял бы горутины клиента)
+	// с tr, иначе до клиента не дойдем и его горутины не проверим
 	const validMagnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=http://tracker.example/announce"
 	for i := 0; i < 5; i++ {
 		_, _ = Fetch(ctx, validMagnet)
@@ -230,8 +217,7 @@ func TestFetch_NoGoroutineLeak(t *testing.T) {
 		_, _ = Fetch(context.Background(), "not a magnet")
 	}
 
-	// библиотека гасит announcer/uTP/порт-форвардинг асинхронно после Close/Drop,
-	// даём им время реально завершиться, прежде чем считать горутины
+	// announcer, uTP и проброс порта библиотека гасит асинхронно после Close/Drop, ждем
 	time.Sleep(500 * time.Millisecond)
 	runtime.GC()
 	after := runtime.NumGoroutine()
