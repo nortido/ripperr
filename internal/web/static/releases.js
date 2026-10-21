@@ -11,9 +11,9 @@ export let ignoreHashesCache = null;
 let checkingHashes = new Set();
 let queuedHashes = new Set();
 
-// подсветка идёт от опроса статуса, а таблица перерисовывается своим циклом,
-// поэтому набор хранится тут и накладывается обоими путями
 export function setCheckProgress(checking, queued) {
+  // подсветку дает опрос статуса, а таблица перерисовывается своим циклом,
+  // поэтому набор держим тут и накладываем с обеих сторон
   checkingHashes = new Set(checking || []);
   queuedHashes = new Set(queued || []);
   applyCheckProgress();
@@ -47,12 +47,13 @@ export function updateIgnoredStatCard(count) {
   const cards = document.querySelectorAll('#view-dashboard .stat-grid .stat-card');
   if (cards.length < 4) return;
   const valueEl = cards[3].querySelector('.stat-value');
-  if (valueEl) valueEl.textContent = String(count);
+  if (!valueEl) return;
+  valueEl.textContent = String(count);
+  valueEl.dataset.digits = String(String(count).length);
 }
 
-// в покое иконка показывает текущее состояние, на ховере противоположное:
-// наведение на выключенное показывает, что получится после клика
 export function ignoreButtonIconsHtml(ignored) {
+  // на ховере иконка показывает, что будет после клика
   const idleIcon = ignored ? 'eyeHidden' : 'eye';
   const hoverIcon = ignored ? 'eye' : 'eyeHidden';
   return html`<span class="icon-idle" data-icon="${idleIcon}"></span><span class="icon-hover" data-icon="${hoverIcon}"></span>`;
@@ -86,7 +87,7 @@ export async function refreshIgnoreState() {
       updateHistoryIgnoreButtons(dash);
       updateIgnoredStatCard(items.length);
     }
-  } catch (_) { /* ponytail: по возможности, без гарантий */ }
+  } catch (_) { /* кнопки останутся как были */ }
 }
 
 export function planItemForced(item) {
@@ -139,7 +140,7 @@ export function updateReleaseRow(hash, force) {
   if (recheckCell) {
     const dateShort = recheckCell.getAttribute('data-recheck-short') || '';
     const dateFull = recheckCell.getAttribute('data-recheck-full') || '';
-    // подменяем только текст даты: рядом в ячейке лежат чипы, и innerHTML стёр бы их
+    // меняем только текст даты: рядом в ячейке чипы, innerHTML стер бы их
     const textEl = recheckCell.querySelector('.plan-recheck-text');
     const nextHtml = planRecheckSpanHtml(dateShort, dateFull, isUrlIgnored(hash));
     if (textEl) textEl.outerHTML = nextHtml;
@@ -149,8 +150,6 @@ export function updateReleaseRow(hash, force) {
   if (btn) updatePlanForceButton(btn, hash, forced);
 }
 
-// режим сортировки выбирает, какая из двух колонок времени важна, поэтому в шапке
-// и в каждой строке рисуется только одна из checked_at/recheck_at
 export function buildTimeColumnHeader() {
   const recheckMode = historyState.sort === 'recheck';
   const cls = recheckMode ? 'plan-recheck-cell' : 'col-time';
@@ -160,8 +159,8 @@ export function buildTimeColumnHeader() {
 }
 
 function planRecheckSpanHtml(short, full, ignored) {
-  // игнорируемые релизы никогда не перепроверяются, поэтому дата перепроверки тут выдумка;
-  // в атрибутах остаётся настоящая дата, подменяется только отображение
+  // игнорируемые не перепроверяются, и дата тут была бы выдумкой.
+  // В атрибутах остается настоящая, меняем только то, что видно
   const text = ignored ? t('common.emDash') : short;
   const title = ignored ? '' : full;
   return html`<span class="plan-recheck-text" title="${title}">${text}</span>`;
@@ -185,16 +184,16 @@ function categoryBadgeHtml(item) {
   return category ? trackerBadgeHtml(category) : '';
 }
 
-// чипы дублируются рядом с датой: в мобильной вёрстке колонка трекера скрыта, и
-// внизу карточки они встают в ряд с датой, а не разрывают название
 function releaseMetaHtml(item) {
+  // чипы еще раз рядом с датой: на мобильном колонка трекера скрыта, и внизу
+  // карточки они встают в ряд с датой, не разрывая название
   return html`<span class="release-meta">${trackerBadgeHtml(item.tracker_name)}${categoryBadgeHtml(item)}</span>`;
 }
 
 export function buildReleaseRows(histItems) {
   if (!histItems || histItems.length === 0) {
-    // пустой результат под фильтром это не пустая база: раньше оба случая
-    // показывали «Проверок ещё не было» и это вводило в заблуждение
+    // пустой результат под фильтром не значит пустую базу. Раньше в обоих случях
+    // писали «Проверок еще не было», и это путало
     const key = historyFiltered() ? 'dash.empty.filtered' : 'dash.empty.releases';
     return html`<tr class="table-empty"><td colspan="5">${t(key)}</td></tr>`;
   }
@@ -248,8 +247,8 @@ export function updateForceAllButton(el, histItems) {
 
 export function updateDashboardTable(el, history) {
   const histItems = history.items || [];
-  // переключатель сортировки живёт вне tbody, в thead, который эта функция иначе
-  // не трогает, поэтому заголовку колонки времени нужна своя явная синхронизация
+  // переключатель сортировки в thead, а функция трогает только tbody,
+  // поэтому заголовок колонки времени синхронизируем отдельно
   const theadRow = el.querySelector('.table-dash-releases thead tr');
   const timeTh = theadRow && theadRow.querySelector('.col-time, .plan-recheck-cell');
   const wantCls = historyState.sort === 'recheck' ? 'plan-recheck-cell' : 'col-time';
@@ -300,8 +299,8 @@ export function bindDashboardReleaseRows(root) {
         if (historyState.ignored) {
           loadDashboard();
         } else if (historyState.sort === 'recheck') {
-          // строка остаётся на месте (без полной перезагрузки), поэтому её ячейка перепроверки
-          // должна сразу догнать новое состояние игнора, а не показывать устаревшую дату
+          // строка остается на месте без полной перезагрузки, так что ее ячейка
+          // перепроверки должна сразу показать новое состояние игнора
           const row = btn.closest('tr');
           const cell = row && row.querySelector('.plan-recheck-cell');
           if (cell) {
@@ -325,8 +324,8 @@ export function bindDashboardReleaseRows(root) {
       if (!hash) return;
       const enable = btn.getAttribute('data-force') !== '1';
       btn.disabled = true;
-      // включение форса запускает внеплановый проход, поэтому элементы управления
-      // переключаются по клику, не дожидаясь опроса статуса
+      // включение форса сразу запускает внеплановый проход, поэтому кнопки
+      // переключаем по клику, не дожидаясь опроса статуса
       if (enable) {
         setRunPending(true);
         updateRunStatusUI(true);
@@ -339,8 +338,8 @@ export function bindDashboardReleaseRows(root) {
         nextDashboardFetchGen();
         const queued = !res || res.force_queued !== false;
         if (enable && !queued) {
-          // флаг выставлен, но очередь форса была полна: внеплановый проход
-          // не начнётся, поэтому оптимистичный индикатор запуска надо убрать
+          // флаг стоит, но очередь форса была полна и прохода не будет.
+          // Убираем оптимистичный индикатор запуска
           setRunPending(false);
           updateRunStatusUI(effectiveRunning(dashboardServerRunning));
           showToast(t('dash.forceQueueFull'), 'info');

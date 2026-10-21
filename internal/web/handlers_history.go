@@ -7,17 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"ripperr/internal/config"
 	"ripperr/internal/manager"
+	"ripperr/internal/manager/client/deluge"
 	"ripperr/internal/manager/client/transmission"
 	"ripperr/internal/model"
 	"ripperr/internal/model/storage"
+	trackerModel "ripperr/internal/model/tracker"
 	storagePkg "ripperr/internal/storage"
 	"ripperr/internal/system/logger"
+	trackerPkg "ripperr/internal/tracker"
+	"ripperr/internal/tracker/registry"
 )
 
 func queryInt(r *http.Request, key string, def, min, max int) int {
@@ -25,7 +31,7 @@ func queryInt(r *http.Request, key string, def, min, max int) int {
 	if v < min {
 		v = def
 	}
-	// max <= 0 значит без верхнего ограничения; значения выше max обрезаются, а не сбрасываются
+	// max <= 0: без верхней границы. Что выше max, обрезаем до max, а не сбрасываем
 	if max > 0 && v > max {
 		v = max
 	}
@@ -37,8 +43,7 @@ func queryTrimmed(r *http.Request, key string, maxBytes int) string {
 	if len(v) <= maxBytes {
 		return v
 	}
-	// отступаем от точки реза до последней полной границы руны, чтобы
-	// многобайтовый символ на границе maxBytes никогда не разрезало пополам
+	// откатываемся к началу руны, чтобы не разрезать символ на границе maxBytes
 	cut := maxBytes
 	for cut > 0 && !utf8.RuneStart(v[cut]) {
 		cut--
@@ -46,9 +51,8 @@ func queryTrimmed(r *http.Request, key string, maxBytes int) string {
 	return v[:cut]
 }
 
-// checkLogFilterFromQuery читает фильтры списка релизов из query. Один разбор на
-// список и на форс всем: иначе кнопка форса набирала бы не те записи, что видны.
 func (s *Server) checkLogFilterFromQuery(r *http.Request) storage.CheckLogFilter {
+	// один разбор на список и на форс всем, иначе форс набирал бы не те записи, что видны
 	sortBy := r.URL.Query().Get("sort")
 	if sortBy != "recheck" {
 		sortBy = "checked"
@@ -57,8 +61,8 @@ func (s *Server) checkLogFilterFromQuery(r *http.Request) storage.CheckLogFilter
 	return storage.CheckLogFilter{
 		Status:      r.URL.Query().Get("status"),
 		IgnoredOnly: ignoredOnly,
-		// игнорируемые релизы никогда не перепроверяются, поэтому в плане их показывать
-		// нечем; в истории они всё равно видны, пока не попросят отфильтровать
+		// игнорируемые не перепроверяются, в плане им делать нечего. В истории
+		// они видны, пока их не отфильтруют
 		ExcludeIgnored: sortBy == "recheck" && !ignoredOnly,
 		SortBy:         sortBy,
 		Name:           queryTrimmed(r, "name", 200),
@@ -95,8 +99,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			Error:       e.Error,
 			ErrorStreak: e.ErrorStreak,
 			Category:    e.Category,
-			// порог живёт в настройках расписания, поэтому флаг вычисляется
-			// здесь, а не выводится заново каждым клиентом
+			// порог лежит в настройках расписания, так что флаг считаем тут,
+			// а не в каждом клиенте
 			Broken:     f.BrokenStreak >= 1 && e.ErrorStreak >= f.BrokenStreak,
 			RecheckAt:  recheckAt,
 			ForceCheck: e.ForceCheck,
@@ -139,10 +143,9 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "history item not found")
 		return
 	}
-	// один только флаг дожил бы лишь до следующего запуска по расписанию; просьба к
-	// раннеру запускает проверку сейчас, и несколько форсированных релизов идут одним проходом.
-	// очередь ограничена, поэтому шквал кликов всё ещё может потерять запрос:
-	// флаг остаётся выставленным, и запись проверится на следующем проходе по расписанию
+	// один флаг дождался бы только планового запуска, а просьба к раннеру проверяет сразу,
+	// и несколько форсов идут одним проходом. Очередь ограничена, шквал кликов может
+	// потерять запрос, но флаг останется и запись проверится в плановом проходе
 	queued := true
 	if req.Force {
 		queued = s.runnerState.RequestForce(hash)
@@ -169,9 +172,8 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// как и у одиночного форса, флага мало: он дожил бы только до планового
-	// прогона, а кнопка должна запускать проверку сразу. Очередь ограничена,
-	// не влезшие релизы сохраняют флаг и уйдут в ближайший плановый прогон
+	// как и с одиночным форсом, одного флага мало, кнопка должна проверять сразу.
+	// Не влезшие в очередь релизы сохраняют флаг и уйдут в плановый прогон
 	queued := 0
 	if force {
 		for _, hash := range hashes {
@@ -186,11 +188,14 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 	cfg := s.effective()
 	if manager.NormalizeClient(cfg.Manager.Client) == manager.ClientTransmission {
-		// известно заранее и без обращения к клиенту: не занимаем общий семафор
-		// перекачек и не тянем список торрентов ради ошибки, которая не зависит
-		// ни от одного из них. errors.Is(err, transmission.ErrRedownloadUnsupported)
-		// ниже остаётся второй линией на случай прямого вызова ForceRedownload.
+		// это ясно и без клиента: не занимаем семафор перекачек и не тянем список
+		// торрентов ради ошибки, которая от них не зависит. errors.Is ниже
+		// страхует прямой вызов ForceRedownload
 		writeError(w, http.StatusNotImplemented, transmission.ErrRedownloadUnsupported.Error())
+		return
+	}
+	if manager.NormalizeClient(cfg.Manager.Client) == manager.ClientDeluge {
+		writeError(w, http.StatusNotImplemented, deluge.ErrRedownloadUnsupported.Error())
 		return
 	}
 
@@ -203,6 +208,8 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
+	// перекачки строго по одной: qBittorrent удаляет торренты асинхронно, и
+	// повторное добавление до конца удаления молча отвергается
 	select {
 	case redownloadSlot <- struct{}{}:
 		defer func() { <-redownloadSlot }()
@@ -224,6 +231,7 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	partialList := errors.Is(err, model.ErrPartialList)
 
 	var entry *model.Entry
 	for _, e := range entries {
@@ -237,7 +245,26 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = mc.ForceRedownload(ctx, entry.Hash); err != nil {
+	newComment := primaryTopicURL(cfg, entry.URL)
+	newHash := storagePkg.URLHash(newComment)
+	var ignored *storage.IgnoreEntry
+	if newComment != "" && newHash != urlHash {
+		// игнор привязан к хешу комментария: читаем его до перекачки, чтобы
+		// при сбое БД не потерять отметку на уже перекачанном торренте
+		items, lerr := s.db.ListIgnore(ctx)
+		if lerr != nil {
+			writeError(w, http.StatusInternalServerError, lerr.Error())
+			return
+		}
+		for i := range items {
+			if items[i].URLHash == urlHash {
+				ignored = &items[i]
+				break
+			}
+		}
+	}
+
+	if err = mc.ForceRedownload(ctx, entry.Hash, model.RedownloadOptions{Comment: newComment}); err != nil {
 		if errors.Is(err, transmission.ErrRedownloadUnsupported) {
 			writeError(w, http.StatusNotImplemented, err.Error())
 			return
@@ -246,7 +273,51 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ignored != nil {
+		// торрент уже перекачан: отметку переносим даже если клиент отключился
+		ctx := context.WithoutCancel(ctx)
+		// сначала новая запись, потом удаление старой: при сбое второй записи отметка остаеться
+		if err = s.db.AddIgnore(ctx, newHash, ignored.ItemName, newComment); err != nil {
+			writeError(w, http.StatusInternalServerError, "redownloaded, but the ignore mark was not moved: "+err.Error())
+			return
+		}
+		sibling := partialList
+		for _, e := range entries {
+			if e != entry && storagePkg.URLHash(e.URL) == urlHash {
+				sibling = true
+				break
+			}
+		}
+		// старая отметка еще прикрывает торрент-близнец с тем же комментарием.
+		// В неполном списке близнец мог не попасть, поэтому там ее не трогаем
+		if !sibling {
+			if err = s.db.DeleteIgnore(ctx, urlHash); err != nil {
+				logger.Error(fmt.Sprintf("delete old ignore mark %s: %v", urlHash, err))
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func primaryTopicURL(cfg config.App, comment string) string {
+	if u, err := url.Parse(comment); err != nil || u.Host == "" {
+		return ""
+	}
+	// трекер ищем как раннер: Detect включенных трекеров из действующего конфига
+	trCfg := trackerPkg.ConfigFromApp(cfg)
+	for _, d := range registry.All() {
+		t, ok := trCfg[d.Key]
+		if !ok || !t.Enabled || !d.New(t).Detect(comment) {
+			continue
+		}
+		primary := strings.TrimSpace(t.Domain)
+		if out := trackerModel.ReplaceURLHost(comment, primary); out != comment {
+			return out
+		}
+		return ""
+	}
+	return ""
 }
 
 func (s *Server) handleGetIgnore(w http.ResponseWriter, r *http.Request) {
@@ -302,15 +373,12 @@ func (s *Server) handleDeleteIgnore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// иначе серия ошибок, из-за которой запись автоигнорируется, переживёт снятие игнора
-	// и самая первая ошибка отправит её прямо обратно в список игнора
+	// иначе серия ошибок переживет снятие игнора, и первая же ошибка вернет
+	// запись обратно в игнор
 	if err := s.db.ResetErrorStreak(r.Context(), hash); err != nil {
 		logger.Error(fmt.Sprintf("reset error streak for %s: %v", hash, err))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// redownloadSlot выстраивает форсированные перекачки в очередь: qBittorrent удаляет
-// торренты асинхронно, поэтому добавление заново во время ещё не законченного удаления
-// молча отвергается.
 var redownloadSlot = make(chan struct{}, 1)

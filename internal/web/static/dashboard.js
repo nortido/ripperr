@@ -10,11 +10,11 @@ import { bindDashboardReleaseRows, buildReleaseRows, buildTimeColumnHeader, isUr
 import { applyDashboardFilter, currentView } from './router.js';
 import { openCustomSelect } from './select.js';
 import { historyState } from './state.js';
-import { formatRunSlot, formatThenSlot, html, pageSizeQueryLimit, updateRefreshedAt } from './util.js';
+import { formatRunSlot, formatRunSlotTime, formatThenSlot, html, pageSizeQueryLimit, updateRefreshedAt } from './util.js';
 
 export const STOP_PENDING_MS = 90000;
-// запущенному прогону нужно время, чтобы его подхватили и загрузили список торрентов
-// до того, как сервер сообщит о работе; до этого интерфейс верит клику
+// сервер не сразу отчитается о прогоне: его надо подхватить и загрузить торренты.
+// До тех пор верим клику
 export const RUN_PENDING_MS = 12000;
 
 
@@ -30,8 +30,8 @@ export let dashboardDryRun = false;
 let dashboardQueuedTotal = 0;
 
 export let dashboardFetchGen = 0;
-// импортированные привязки только на чтение, поэтому другие модули двигают поколение через это
 export function nextDashboardFetchGen() {
+  // импорт только на чтение, поэтому другие модули двигают счетчик через эту функцию
   return ++dashboardFetchGen;
 }
 export function setStopPending(active) {
@@ -144,22 +144,22 @@ export function updateNextRunCard(slots) {
   if (!card) return;
   const runs = slots || [];
   const valueEl = card.querySelector('.stat-value');
-  const subEl = card.querySelector('.stat-sub');
-  if (valueEl) valueEl.textContent = runs[0] ? formatRunSlot(runs[0]) : t('common.emDash');
+  if (valueEl) {
+    valueEl.innerHTML = nextRunValueHtml(runs);
+    fitNextRunValue(valueEl);
+  }
+  const labelEl = card.querySelector('.stat-label');
+  if (!labelEl) return;
+  let thenEl = labelEl.querySelector('.stat-then');
   if (runs.length >= 2) {
-    if (!subEl) {
-      const body = card.querySelector('.stat-card-body');
-      const labelEl = card.querySelector('.stat-label');
-      if (body && labelEl) {
-        const sub = document.createElement('div');
-        sub.className = 'stat-sub';
-        labelEl.insertAdjacentElement('afterend', sub);
-      }
+    if (!thenEl) {
+      thenEl = document.createElement('span');
+      thenEl.className = 'stat-then';
+      labelEl.appendChild(thenEl);
     }
-    const sub = card.querySelector('.stat-sub');
-    if (sub) sub.innerHTML = html`<span class="stat-then-pill">${t('dash.then', { time: formatThenSlot(runs[1]) })}</span>`;
-  } else if (subEl) {
-    subEl.remove();
+    thenEl.textContent = t('dash.then', { time: formatThenSlot(runs[1]) });
+  } else if (thenEl) {
+    thenEl.remove();
   }
 }
 
@@ -176,7 +176,7 @@ export async function pollDashboardStatus() {
     applyRunStatus(effectiveRunning(status.running));
     updateNextRunCard(status.next_runs || []);
     updateDashboardAlerts(status.alerts || []);
-  } catch (_) { /* ponytail: опрос по возможности, без гарантий */ }
+  } catch (_) { /* следующий опрос попробует снова */ }
 }
 
 export async function triggerRunCheck() {
@@ -197,7 +197,7 @@ export async function triggerRunCheck() {
     const text = await res.text();
     let data = null;
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { /* игнорируем */ }
+      try { data = JSON.parse(text); } catch (_) { /* не JSON, обойдемся кодом ответа */ }
     }
     if (res.status === 202) {
       showToast(isRestart ? t('dash.checkRestarted') : t('dash.checkStarted'), 'success');
@@ -236,7 +236,7 @@ export async function triggerStopCheck() {
     const text = await res.text();
     let data = null;
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { /* игнорируем */ }
+      try { data = JSON.parse(text); } catch (_) { /* не JSON, хватит статуса */ }
     }
     if (res.status === 202) {
       showToast(t('dash.checkStopped'), 'success');
@@ -271,16 +271,15 @@ export function statCard(value, label, iconName, variant, filterType) {
       : !historyState.ignored && historyState.status === filterType;
     filterCls = ' stat-card-filter stat-card-filter-' + variant;
     if (active) filterCls += ' stat-card-active';
-    // активный фильтр показывался только цветом рамки, скринридер о нём молчал
+    // раньше активный фильтр было видно только по рамке, скринридер про него молчал
     filterAttr = html` data-stat-filter="${filterType}" role="button" tabindex="0" aria-pressed="${active ? 'true' : 'false'}"`;
   }
-  return html`<div class="stat-card${filterCls}"${filterAttr}><div class="stat-card-body"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div><div class="${iconCls}" data-icon="${iconName}"></div></div>`;
+  return html`<div class="stat-card${filterCls}"${filterAttr}><div class="stat-card-body"><div class="stat-value" data-digits="${String(value).length}">${value}</div><div class="stat-label">${label}</div></div><div class="${iconCls}" data-icon="${iconName}"></div></div>`;
 }
 
 
-// набор фильтров списка отдельно от пагинации: тот же хвост уходит в форс всем,
-// чтобы кнопка накрывала ровно отфильтрованные релизы
 export function buildHistoryFilterParams() {
+  // без пагинации: этот же хвост уходит в форс всем, чтобы кнопка взяла ровно отфильтрованные релизы
   let q = '&sort=' + encodeURIComponent(historyState.sort);
   if (historyState.ignored) q += '&ignored=1';
   else if (historyState.status) q += '&status=' + encodeURIComponent(historyState.status);
@@ -302,11 +301,31 @@ export function buildSortControls() {
   ], historyState.sort, t('dash.sortLabel'));
 }
 
+function fitNextRunValue(valueEl) {
+  if (!valueEl) return;
+  const range = document.createRange();
+  range.selectNodeContents(valueEl);
+  const width = range.getBoundingClientRect().width;
+  const size = parseFloat(getComputedStyle(valueEl).fontSize);
+  // +1px: без запаса последняя цифра на дробной ширине обрезается
+  if (width > 0 && size > 0) valueEl.style.setProperty('--nr-w28', (width * 28 / size + 1).toFixed(1));
+  if (document.fonts && document.fonts.status !== 'loaded') {
+    document.fonts.ready.then(function () { fitNextRunValue(valueEl); });
+  }
+}
+
+function nextRunValueHtml(runs) {
+  if (!runs[0]) return html`${t('common.emDash')}`;
+  // на телефоне счетчики в одну строку и там только время, без "сегодня".
+  // Рисуем обе формы, нужную выбирает CSS
+  return html`<span class="stat-run-full">${formatRunSlot(runs[0])}</span><span class="stat-run-short">${formatRunSlotTime(runs[0])}</span>`;
+}
+
 export function nextRunStatCard(slots) {
   const runs = slots || [];
-  const first = runs[0] ? formatRunSlot(runs[0]) : t('common.emDash');
-  const subLine = runs.length >= 2 ? html`<div class="stat-sub"><span class="stat-then-pill">${t('dash.then', { time: formatThenSlot(runs[1]) })}</span></div>` : '';
-  return html`<div class="stat-card stat-card-next-run"><div class="stat-card-body"><div class="stat-value">${first}</div><div class="stat-label">${t('dash.nextRun')}</div>${subLine}</div><div class="stat-icon stat-icon-green" data-icon="clock"></div></div>`;
+  const first = nextRunValueHtml(runs);
+  const thenSpan = runs.length >= 2 ? html`<span class="stat-then">${t('dash.then', { time: formatThenSlot(runs[1]) })}</span>` : '';
+  return html`<div class="stat-card stat-card-next-run"><div class="stat-card-body"><div class="stat-value">${first}</div><div class="stat-label"><span class="stat-label-text">${t('dash.nextRun')}</span>${thenSpan}</div></div><div class="stat-icon stat-icon-neutral" data-icon="clock"></div></div>`;
 }
 
 export async function fetchDashboardData() {
@@ -367,7 +386,7 @@ export async function refreshDashboard(manual) {
     syncPlanForceLocal((data.history && data.history.items) || []);
     renderDashboard(el, data.status, data.history, data.stats);
     updateRefreshedAt('dash-last-updated', 'dash.lastUpdated');
-  } catch (_) { /* ponytail: тихое обновление по возможности, без гарантий */ }
+  } catch (_) { /* фоновое обновление, ошибку не показываем */ }
 
   if (manual) {
     const refreshBtn = document.getElementById('dash-refresh-btn');
@@ -407,10 +426,11 @@ export function renderDashboard(el, status, history, stats) {
   const forceAllCls = 'btn btn-sm btn-ghost btn-icon btn-force-all' + (allForced ? ' is-active' : '');
   const mobileSearch = buildMobileNameSearchSlot();
 
-  el.innerHTML = html`<div class="page-header dash-page-header"><div class="page-header-row"><div class="dash-header-top"><h1 class="page-title">${t('dash.title')}</h1><div class="dash-header-status-block"><div class="run-status" id="dash-run-status"></div><span class="dash-meta-sep" aria-hidden="true">·</span><span class="dash-last-updated text-muted" id="dash-last-updated"></span></div></div><div class="page-header-actions dash-header-actions"><div class="page-header-run-group"><button type="button" class="btn btn-stop" id="dash-stop-btn"${effectiveRunning(status.running) ? '' : html` style="display:none"`} data-i18n-aria="dash.stopCheck" aria-label="${t('dash.stopCheck')}" title="${t('dash.stopCheck')}"><span data-icon="stop"></span><span class="btn-stop-label">${t('dash.stop')}</span></button><button type="button" class="btn ${effectiveRunning(status.running) ? 'btn-restart' : 'btn-primary'}" id="dash-run-btn">${effectiveRunning(status.running) ? t('dash.restartCheck') : t('dash.runCheck')}</button></div></div></div></div>${renderAlertsHtml(status.alerts || [])}<div class="stat-grid">${nextRunStatCard(nextRuns)}${statCard(stats.updated, t('dash.filter.updated'), 'check', 'green', 'updated')}${statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error')}${statCard(stats.ignored, t('dash.ignored'), 'eyeHidden', 'cyan', 'ignored')}</div><div class="card"><div class="card-header releases-card-header${mobileSearch.headerClass}"><div class="card-header-toolbar"><div class="card-header-toolbar-shift"><div class="card-header-left"><h2 class="card-title">${t('dash.releasesTitle')}</h2><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="dash-refresh-btn" data-i18n-aria="dash.refresh" aria-label="${t('dash.refresh')}" title="${t('dash.refresh')}"><span data-icon="refresh"></span></button></div><div class="card-toolbar-pre-search">${sortHtml}<button type="button" class="${forceAllCls}" id="dash-force-all-btn" title="${forceAllTitle}" aria-label="${forceAllTitle}" aria-pressed="${allForced ? 'true' : 'false'}"><span data-icon="zapForceAll"></span></button></div></div><div class="card-toolbar-post-search">${mobileSearch.html}${filterHtml}</div></div></div><div class="card-body-flush"><div class="table-wrap"><table class="table table-dash-releases"><thead><tr>${buildNameColumnHeader()}<th class="col-tracker">${t('dash.col.tracker')}</th><th class="col-category">${t('dash.col.category')}</th><th class="col-status"><span class="th-label-full">${t('dash.col.status')}</span><span class="th-label-short">${t('dash.col.statusShort')}</span></th>${buildTimeColumnHeader()}<th class="col-actions"></th></tr></thead><tbody>${releaseRows}</tbody></table></div></div><div class="card-footer"><span class="text-muted">${t('dash.pagination', { from: from, to: to, total: total })}</span><div class="pagination-controls">${buildPageSizeSelect(historyState.limit)}<div class="btn-group pagination-nav">${paginationButtons('hist-prev', 'hist-next', historyState.offset <= 0, historyState.offset + pageLimit >= total)}</div></div></div>`;
+  el.innerHTML = html`<div class="page-header dash-page-header"><div class="page-header-row"><div class="dash-header-top"><h1 class="page-title">${t('dash.title')}</h1><div class="dash-header-status-block"><div class="run-status" id="dash-run-status"></div><span class="dash-meta-sep" aria-hidden="true">·</span><span class="dash-last-updated text-muted" id="dash-last-updated"></span></div></div><div class="page-header-actions dash-header-actions"><div class="page-header-run-group"><button type="button" class="btn btn-stop" id="dash-stop-btn"${effectiveRunning(status.running) ? '' : html` style="display:none"`} data-i18n-aria="dash.stopCheck" aria-label="${t('dash.stopCheck')}" title="${t('dash.stopCheck')}"><span data-icon="stop"></span><span class="btn-stop-label">${t('dash.stop')}</span></button><button type="button" class="btn ${effectiveRunning(status.running) ? 'btn-restart' : 'btn-primary'}" id="dash-run-btn">${effectiveRunning(status.running) ? t('dash.restartCheck') : t('dash.runCheck')}</button></div></div></div></div>${renderAlertsHtml(status.alerts || [])}<div class="stat-grid">${nextRunStatCard(nextRuns)}${statCard(stats.updated, t('dash.filter.updated'), 'check', 'green', 'updated')}${statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error')}${statCard(stats.ignored, t('dash.ignored'), 'eyeHidden', 'cyan', 'ignored')}</div><div class="card"><div class="card-header releases-card-header${mobileSearch.headerClass}"><div class="card-header-toolbar"><div class="card-header-toolbar-shift"><div class="card-header-left"><h2 class="card-title">${t('dash.releasesTitle')}</h2><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="dash-refresh-btn" data-i18n-aria="dash.refresh" aria-label="${t('dash.refresh')}" title="${t('dash.refresh')}"><span data-icon="refresh"></span></button></div><div class="card-toolbar-pre-search">${sortHtml}<button type="button" class="${forceAllCls}" id="dash-force-all-btn" style="display:none" title="${forceAllTitle}" aria-label="${forceAllTitle}" aria-pressed="${allForced ? 'true' : 'false'}"><span data-icon="zapForceAll"></span></button></div></div><div class="card-toolbar-post-search">${mobileSearch.html}${filterHtml}</div></div></div><div class="card-body-flush"><div class="table-wrap"><table class="table table-dash-releases"><thead><tr>${buildNameColumnHeader()}<th class="col-tracker">${t('dash.col.tracker')}</th><th class="col-category">${t('dash.col.category')}</th><th class="col-status"><span class="th-label-full">${t('dash.col.status')}</span><span class="th-label-short">${t('dash.col.statusShort')}</span></th>${buildTimeColumnHeader()}<th class="col-actions"></th></tr></thead><tbody>${releaseRows}</tbody></table></div></div><div class="card-footer"><span class="text-muted">${t('dash.pagination', { from: from, to: to, total: total })}</span><div class="pagination-controls">${buildPageSizeSelect(historyState.limit)}<div class="btn-group pagination-nav">${paginationButtons('hist-prev', 'hist-next', historyState.offset <= 0, historyState.offset + pageLimit >= total)}</div></div></div>`;
 
   hydrateIcons(el);
   bindDashboardAlerts(el);
+  fitNextRunValue(el.querySelector('.stat-card-next-run .stat-value'));
   dashboardServerRunning = !!status.running;
   setStopPending(!!status.stopping);
   dashboardDryRun = !!status.dry_run;
@@ -527,7 +547,7 @@ export async function triggerDryRun(btn) {
     const text = await res.text();
     let data = null;
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { /* игнорируем */ }
+      try { data = JSON.parse(text); } catch (_) { /* тело не JSON, покажем HTTP-код */ }
     }
     if (res.status === 202) {
       showToast(t('logs.dryRunStarted'), 'success');
@@ -552,7 +572,7 @@ export async function updateDryRunButtonState() {
     const busy = !!(status.running || status.stopping);
     btn.disabled = busy;
     btn.title = busy ? t('logs.dryRunBusy') : t('logs.dryRunHint');
-  } catch (_) { /* ponytail: по возможности, без гарантий */ }
+  } catch (_) { /* кнопка останется как была */ }
 }
 
 
