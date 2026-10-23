@@ -226,3 +226,52 @@ func effectiveMirrorsAfter(t *testing.T, srv *Server) []string {
 	cfg := srv.effective()
 	return cfg.Tracker.ByKey("rutracker").Mirrors
 }
+
+func TestTrackerDomainSwapDropsShownMain(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, key, body string
+		wantDomain              string
+		wantMirrors             []string
+		wantRetired             []string
+	}{
+		{"shown main removed", http.MethodPut, "rutracker",
+			`{"domain":"rutracker.net","mirrors":["rutracker.net","b.example"],"mirrors_seen":["rutracker.net"," RuTracker.ORG "]}`,
+			"rutracker.net", []string{"b.example"}, []string{"rutracker.org"}},
+		{"shown main kept", http.MethodPut, "rutracker",
+			`{"domain":"rutracker.net","mirrors":["b.example","rutracker.net","rutracker.org"],"mirrors_seen":["rutracker.net","rutracker.org"]}`,
+			"rutracker.net", []string{"b.example", "rutracker.org"}, []string{}},
+		{"main not shown", http.MethodPut, "rutracker",
+			`{"domain":"rutracker.net","mirrors":["rutracker.net"],"mirrors_seen":["rutracker.net"]}`,
+			"rutracker.net", []string{"rutracker.org"}, nil},
+		{"mirrors not sent", http.MethodPut, "rutracker",
+			`{"domain":"rutracker.net","mirrors_seen":["rutracker.org","rutracker.net"]}`,
+			"rutracker.net", []string{"rutracker.org"}, nil},
+		{"add flow", http.MethodPost, "kinozal",
+			`{"domain":"kinozal.guru","mirrors":["kinozal.me","kinozal.guru"],"mirrors_seen":["kinozal.me","kinozal.guru","kinozal.tv"]}`,
+			"kinozal.guru", []string{"kinozal.me"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docs := map[string]json.RawMessage{"trackers": json.RawMessage(`{"rutracker":{"hour_limit":5}}`)}
+			if tc.method == http.MethodPost {
+				docs = map[string]json.RawMessage{"trackers_added": json.RawMessage(`["rutracker"]`)}
+			}
+			store := &fakeStore{settings: docs}
+			var reloads int
+			srv := newAddedServer(store, &reloads)
+			if w := serveAdded(srv, tc.method, "/api/trackers/"+tc.key, tc.body); w.Code != http.StatusNoContent {
+				t.Fatalf("%s %s = %d %s, want 204", tc.method, tc.body, w.Code, w.Body.String())
+			}
+			if got := storedOverlay(t, store)[tc.key]["domain"]; got != tc.wantDomain {
+				t.Errorf("domain = %v, want %s", got, tc.wantDomain)
+			}
+			if got := storedMirrors(t, store, tc.key); !slices.Equal(got, tc.wantMirrors) {
+				t.Errorf("mirrors = %v, want %v", got, tc.wantMirrors)
+			}
+			if tc.wantRetired != nil {
+				if got, _ := storedTrackerList(t, store, tc.key, "retired"); !slices.Equal(got, tc.wantRetired) {
+					t.Errorf("retired = %v, want %v", got, tc.wantRetired)
+				}
+			}
+		})
+	}
+}

@@ -12,25 +12,38 @@ let dialog = null;
 let closingOverlay = null;
 let trackerTypes = [];
 
-function domainOptionsHtml(base, mirrors, selected) {
-  const seen = [base.toLowerCase()];
-  const parts = [html`<option value="${base}"${selected === base ? ' selected' : ''}>${base}</option>`];
-  (mirrors || []).forEach(function (m) {
-    if (!m || seen.indexOf(m.toLowerCase()) !== -1) return;
-    seen.push(m.toLowerCase());
-    parts.push(html`<option value="${m}"${selected === m ? ' selected' : ''}>${m}</option>`);
+function domainOptionsHtml(base, hosts, selected) {
+  const list = hosts || [];
+  const first = list.filter(function (h) { return mirrorHostKey(h) === mirrorHostKey(base); }).slice(0, 1);
+  const seen = [];
+  const parts = [];
+  first.concat(list).forEach(function (h) {
+    if (!h || seen.indexOf(mirrorHostKey(h)) !== -1) return;
+    seen.push(mirrorHostKey(h));
+    parts.push(html`<option value="${h}"${selected === h ? ' selected' : ''}>${h}</option>`);
   });
   return html`${parts}`;
 }
 
-function syncTrackerDomainSelects(root, base, mirrors) {
+function syncTrackerDomainSelects(root, base, hosts) {
   const select = root.querySelector('.tr-domain');
-  if (select) {
-    // зеркало, выбранное основным, убрали из списка: возвращаемся к текущему домену
-    const next = (mirrors || []).indexOf(select.value) === -1 ? base : select.value;
-    select.innerHTML = domainOptionsHtml(base, mirrors, next);
+  if (select && hosts && hosts.length) {
+    // выбранный основным адрес убрали из списка: берем первый оставшийся
+    const next = hosts.indexOf(select.value) === -1 ? hosts[0] : select.value;
+    select.innerHTML = domainOptionsHtml(base, hosts, next);
     select.value = next;
   }
+  hideDomainChip(root);
+}
+
+function hideDomainChip(root) {
+  const domain = root.querySelector('.tr-domain')?.value;
+  // основной домен в списке зеркал не зеркало. Чип только прячем: выпадающий список доменов
+  // строится из этих значений, и выбранный в нем домен пропал бы
+  root.querySelectorAll('.tr-mirrors .chip').forEach(function (chip) {
+    const label = chip.querySelector('.chip-label');
+    chip.classList.toggle('chip-is-domain', !!label && mirrorHostKey(label.textContent) === mirrorHostKey(domain));
+  });
 }
 
 function syncMirrorsVisibility(root) {
@@ -97,7 +110,7 @@ export function gatherTrackerConfig(root, mirrorValues, enabled) {
     ...trackerLoginValues(root),
     cookies: root.querySelector('.tr-cookies').value,
     publicity: root.querySelector('.tr-publicity').value,
-    mirrors: (mirrorValues || []).slice(),
+    mirrors: mirrorsForSave(mirrorValues, root.querySelector('.tr-domain').value, root._trackerBase),
     active_domain: root.querySelector('.tr-use-mirrors').checked ? '' : root.querySelector('.tr-domain').value,
   };
 }
@@ -134,7 +147,7 @@ function loginFieldsHtml(tracker, key) {
 
 function trackerFormHtml(tracker, key, pub, mirrors) {
   const choice = trackerDomainChoice(tracker, mirrors);
-  const address = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-domain-${key}">${t('trackers.domain')}</label><select class="select tr-domain" id="tr-domain-${key}">${domainOptionsHtml(tracker.domain || '', mirrors, choice.domain)}</select><p class="form-hint">${t('trackers.domainMirrorHint')}</p></div><div class="form-group tr-use-mirrors-group"><label class="form-switch"><input type="checkbox" class="tr-use-mirrors"${choice.useMirrors ? ' checked' : ''}><span>${t('trackers.useMirrors')}</span></label><p class="form-hint">${t('trackers.useMirrorsHint')}</p></div>`, 'tr-address-row');
+  const address = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-domain-${key}">${t('trackers.domain')}</label><select class="select tr-domain" id="tr-domain-${key}">${domainOptionsHtml(tracker.domain || '', trackerHosts(tracker.domain, mirrors), choice.domain)}</select><p class="form-hint">${t('trackers.domainMirrorHint')}</p></div><div class="form-group tr-use-mirrors-group"><label class="form-switch"><input type="checkbox" class="tr-use-mirrors"${choice.useMirrors ? ' checked' : ''}><span>${t('trackers.useMirrors')}</span></label><p class="form-hint">${t('trackers.useMirrorsHint')}</p></div>`, 'tr-address-row');
 
   const mirrorsRow = html`<div class="form-group form-group-full"><label class="form-label" for="tr-mirrors-${key}">${t('trackers.mirrors')}</label><div class="chip-input tr-mirrors"><div class="chip-input-chips"></div><input type="text" id="tr-mirrors-${key}" class="chip-input-field" autocomplete="off" name="${randomFieldName('tr-mirror')}" placeholder="${t('trackers.mirrorsPlaceholder')}"></div></div>`;
 
@@ -163,6 +176,21 @@ function trackerFormHtml(tracker, key, pub, mirrors) {
 
 function mirrorHostKey(host) {
   return String(host || '').trim().toLowerCase();
+}
+
+function trackerHosts(domain, mirrors) {
+  const out = [];
+  // основной последним: после смены основного прежний встает в конец ротации, как раньше дописывал сервер
+  (mirrors || []).concat([domain]).forEach(function (h) {
+    if (h && !hostIn(out, h)) out.push(h);
+  });
+  return out;
+}
+
+function mirrorsForSave(chips, selected, base) {
+  // при смене основного сервер принимает новый адрес только из присланных зеркал
+  if (mirrorHostKey(selected) !== mirrorHostKey(base)) return (chips || []).slice();
+  return (chips || []).filter(function (h) { return mirrorHostKey(h) !== mirrorHostKey(base); });
 }
 
 function hostIn(list, host) {
@@ -570,12 +598,7 @@ function renderMirrorSuggestions(d) {
   const domain = root.querySelector('.tr-domain').value;
   const useMirrors = root.querySelector('.tr-use-mirrors').checked;
   syncMirrorsVisibility(root);
-  // основной домен в списке зеркал не зеркало. Чип только прячем: выпадающий список доменов
-  // строится из этих значений, и выбранный в нем домен пропал бы
-  root.querySelectorAll('.tr-mirrors .chip').forEach(function (chip) {
-    const label = chip.querySelector('.chip-label');
-    chip.classList.toggle('chip-is-domain', !!label && mirrorHostKey(label.textContent) === mirrorHostKey(domain));
-  });
+  hideDomainChip(root);
   const ms = mirrorState(tr, chips, domain, useMirrors ? '' : domain);
   const marked = tr.confirm_on === true ? chips.filter(function (m) { return hostIn(tr.unconfirmed, m); }) : [];
   const pending = root.querySelector('.tr-mirrors-pending');
@@ -716,7 +739,7 @@ async function addTrackerFromDialog(d) {
   try {
     await fetchJSON('/api/trackers/' + encodeURIComponent(key), {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify(Object.assign({}, body, { mirrors_seen: d.mirrorsSeen })),
     });
   } catch (err) {
     showToast(err.message, 'error');
@@ -736,22 +759,28 @@ function selectAddType(d, tp) {
   holder.innerHTML = trackerFormHtml(tp, tp.key, tp.publicity || 'public', tp.mirrors || []);
   // трекера еще нет, раскрывать маску по /secret нечем: сервер ответит 404
   holder.querySelectorAll('[data-reveal]').forEach(function (el) { el.removeAttribute('data-reveal'); });
+  const hosts0 = trackerHosts(tp.domain, tp.mirrors);
+  root._trackerBase = tp.domain;
+  d.mirrorsSeen = hosts0.slice();
   d.mirrors = initChipInput(
     holder.querySelector('.tr-mirrors'),
     null,
-    tp.mirrors || [],
+    hosts0,
     null,
     function (values) {
       syncTrackerDomainSelects(root, tp.domain || '', values);
-    }
+    },
+    { pinned: function (val) { return mirrorHostKey(val) === mirrorHostKey(root.querySelector('.tr-domain').value); } }
   );
+  hideDomainChip(root);
+  holder.querySelector('.tr-domain').addEventListener('change', function () { hideDomainChip(root); });
   initCustomSelects(holder);
   initPasswordToggles(root);
   initHintToggles(holder);
   syncMirrorsVisibility(holder);
   holder.querySelector('.tr-use-mirrors').addEventListener('change', function () { syncMirrorsVisibility(holder); });
   hydrateIcons(holder);
-  root._trackerSaved = Object.assign(trackerConfigFromApi(tp), { enabled: true, mirrors: (tp.mirrors || []).slice() });
+  root._trackerSaved = Object.assign(trackerConfigFromApi(tp), { enabled: true, mirrors: mirrorsForSave(hosts0, tp.domain, tp.domain) });
 
   if (d.testBtn) d.testBtn.remove();
   forgetTest(tp.key);
@@ -823,29 +852,35 @@ function openTrackerDialog(key) {
   const saved = item._trackerSaved;
   // форма стартует с выбором trackerDomainChoice, снимок обязан совпасть с ней, иначе диалог сразу "грязный"
   const choice = trackerDomainChoice(tracker, tracker.mirrors || []);
+  const hosts0 = trackerHosts(tracker.domain, tracker.mirrors);
+  root._trackerBase = tracker.domain;
   root._trackerSaved = Object.assign({}, saved, {
     domain: choice.domain,
     active_domain: choice.useMirrors ? '' : choice.domain,
-    mirrors: (saved.mirrors || []).slice(),
+    mirrors: mirrorsForSave(hosts0, choice.domain, tracker.domain),
   });
   const section = mirrorSectionEl(root);
 
   const mirrors = initChipInput(
     root.querySelector('.tr-mirrors'),
     null,
-    tracker.mirrors || [],
+    hosts0,
     null,
     function (values) {
       syncTrackerDomainSelects(root, tracker.domain || '', values);
       if (dialog && dialog.root === root) renderMirrorSuggestions(dialog);
     },
-    { decorate: function (val, chipEl) { markMirrorChip(trackersByKey.get(key), val, chipEl); } }
+    {
+      decorate: function (val, chipEl) { markMirrorChip(trackersByKey.get(key), val, chipEl); },
+      pinned: function (val) { return mirrorHostKey(val) === mirrorHostKey(root.querySelector('.tr-domain').value); },
+    }
   );
+  hideDomainChip(root);
 
   const testBtn = root.querySelector('.btn-test-tracker');
   const saveBtn = root.querySelector('.btn-save-tracker');
   const removeBtn = root.querySelector('.btn-remove-tracker');
-  const d = { key: key, overlay: overlay, root: root, mirrors: mirrors, saveBtn: saveBtn, removeBtn: removeBtn, line: root.querySelector('.modal-test-result'), suggestions: section, mirrorsSeen: (tracker.mirrors || []).slice(), mirrorItems: [], mirrorBusy: new Set() };
+  const d = { key: key, overlay: overlay, root: root, mirrors: mirrors, saveBtn: saveBtn, removeBtn: removeBtn, line: root.querySelector('.modal-test-result'), suggestions: section, mirrorsSeen: hosts0.slice(), mirrorItems: [], mirrorBusy: new Set() };
   dialog = d;
   bindAdvancedToggle(root);
   const attn = trackerMirrorState(tracker);

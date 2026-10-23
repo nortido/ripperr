@@ -181,7 +181,11 @@ export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onCha
       e.preventDefault();
       addChip(input.value.replace(/,/g, ''));
     } else if (e.key === 'Backspace' && !input.value && chips.length) {
-      chips.pop();
+      // закрепленный чип поле может прятать, Backspace его не трогает
+      let i = chips.length - 1;
+      while (i >= 0 && opts && opts.pinned && opts.pinned(chips[i])) i--;
+      if (i < 0) return;
+      chips.splice(i, 1);
       renderChips();
       renderHints();
       notifyChange();

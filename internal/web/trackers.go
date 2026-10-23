@@ -185,6 +185,7 @@ func prepareTrackerPatchInfo(cfg config.App, key string, patch json.RawMessage) 
 	changed := false
 	var info trackerPatchInfo
 	var shown map[string]bool
+	var seen []string
 	if raw, sent := body["mirrors_confirm"]; sent {
 		var confirm []string
 		if string(raw) != "null" && json.Unmarshal(raw, &confirm) != nil {
@@ -202,6 +203,7 @@ func prepareTrackerPatchInfo(cfg config.App, key string, patch json.RawMessage) 
 		if info.removed, err = keepUnseenMirrors(cfg, key, body, raw); err != nil {
 			return nil, trackerPatchInfo{}, err
 		}
+		_ = json.Unmarshal(raw, &seen)
 		delete(body, "mirrors_seen")
 		changed = true
 	}
@@ -219,7 +221,7 @@ func prepareTrackerPatchInfo(cfg config.App, key string, patch json.RawMessage) 
 				changed = true
 			}
 		} else {
-			if err := swapTrackerDomain(cfg, key, body, domain, current); err != nil {
+			if err := swapTrackerDomain(cfg, key, body, domain, current, seen); err != nil {
 				return nil, trackerPatchInfo{}, err
 			}
 			changed = true
@@ -279,10 +281,12 @@ func hostKey(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-func swapTrackerDomain(cfg config.App, key string, body map[string]json.RawMessage, sent, current string) error {
+func swapTrackerDomain(cfg config.App, key string, body map[string]json.RawMessage, sent, current string, shown []string) error {
 	mirrors := effectiveTrackerMirrors(cfg, key)
+	mirrorsSent := false
 	if raw, ok := body["mirrors"]; ok && string(raw) != "null" {
 		mirrors = nil
+		mirrorsSent = true
 		if json.Unmarshal(raw, &mirrors) != nil {
 			return errDomainReadOnly
 		}
@@ -295,7 +299,12 @@ func swapTrackerDomain(cfg config.App, key string, body map[string]json.RawMessa
 	next := strings.TrimSpace(mirrors[i])
 	seen := map[string]bool{want: true}
 	rest := make([]string, 0, len(mirrors))
-	for _, m := range slices.Concat(mirrors, []string{current}) {
+	tail := []string{current}
+	// прежний основной диалог показал среди адресов, а в списке его нет: пользователь его убрал
+	if mirrorsSent && slices.ContainsFunc(shown, func(h string) bool { return hostKey(h) == hostKey(current) }) {
+		tail = nil
+	}
+	for _, m := range slices.Concat(mirrors, tail) {
 		m = strings.TrimSpace(m)
 		if m == "" || seen[hostKey(m)] {
 			continue
