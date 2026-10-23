@@ -19,6 +19,7 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 	"ripperr/internal/config"
 	"ripperr/internal/storage/client/sqlite"
+	"ripperr/internal/system/logger"
 )
 
 const (
@@ -122,6 +123,18 @@ func randomBytes(n int) ([]byte, error) {
 	b := make([]byte, n)
 	_, err := rand.Read(b)
 	return b, err
+}
+
+func passwordMatches(doc *authDoc, password string) (bool, error) {
+	salt, err := base64.RawURLEncoding.DecodeString(doc.Salt)
+	if err != nil {
+		return false, err
+	}
+	storedHash, err := base64.RawURLEncoding.DecodeString(doc.Hash)
+	if err != nil {
+		return false, err
+	}
+	return subtle.ConstantTimeCompare(hashPassword(password, salt), storedHash) == 1, nil
 }
 
 func signSession(secret []byte, username string, exp time.Time) string {
@@ -592,22 +605,13 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	salt, err := base64.RawURLEncoding.DecodeString(doc.Salt)
+	passwordMatch, err := passwordMatches(doc, req.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
 	}
-
-	storedHash, err := base64.RawURLEncoding.DecodeString(doc.Hash)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "auth error")
-		return
-	}
-
-	computedHash := hashPassword(req.Password, salt)
 
 	usernameMatch := strings.EqualFold(req.Username, doc.Username)
-	passwordMatch := subtle.ConstantTimeCompare(computedHash, storedHash) == 1
 
 	if !usernameMatch || !passwordMatch {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
@@ -661,4 +665,109 @@ func (s *Server) rotateSecret(ctx context.Context) error {
 	nd := *doc
 	nd.Secret = base64.RawURLEncoding.EncodeToString(secret)
 	return s.saveAuth(ctx, &nd)
+}
+
+func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	doc, err := s.loadAuth(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+	if doc == nil {
+		writeError(w, http.StatusUnauthorized, "account setup required")
+		return
+	}
+	// чужие и битые запросы отсекаем до слота и лимитера, попытку тратит только реальная проверка пароля
+	if !s.authorized(r, doc) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req struct {
+		Current string `json:"current"`
+		New     string `json:"new"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(req.New) < minPasswordLen {
+		writeError(w, http.StatusBadRequest, "password must be at least 8 chars")
+		return
+	}
+
+	if !s.acquireHashSlot() {
+		writeError(w, http.StatusTooManyRequests, "too many login attempts at once, try later")
+		return
+	}
+	defer s.releaseHashSlot()
+
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+
+	// сессию сверяем еще раз по свежему документу: logout или другая смена могли сменить секрет, пока ждали замок
+	cur, err := s.readAuth(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+	if !s.authorized(r, cur) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	ipStr := "unknown"
+	if ip := s.clientIP(r); ip != nil {
+		ipStr = ip.String()
+	}
+
+	// общий счет с входом: иначе украденная кука дала бы лишние попытки подбора
+	if !s.loginFails.reserve(ipStr) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts, try later")
+		return
+	}
+
+	ok, err := passwordMatches(cur, req.Current)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+	// 403, а не 401: сессия жива, неверен только пароль, и интерфейс не уводит на вход
+	if !ok {
+		writeError(w, http.StatusForbidden, "invalid current password")
+		return
+	}
+	s.loginFails.success(ipStr)
+
+	salt, err := randomBytes(authSaltLen)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+	secret, err := randomBytes(authSecretLen)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+
+	// новый секрет в той же записи, что и хеш: все старые куки перестают сходиться одним сохранением
+	nd := *cur
+	nd.Salt = base64.RawURLEncoding.EncodeToString(salt)
+	nd.Hash = base64.RawURLEncoding.EncodeToString(hashPassword(req.New, salt))
+	nd.Secret = base64.RawURLEncoding.EncodeToString(secret)
+	if err := s.saveAuth(ctx, &nd); err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+
+	if err := s.setSessionCookie(w, r, &nd); err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+
+	logger.Info("auth: password changed, other sessions revoked, client " + ipStr)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

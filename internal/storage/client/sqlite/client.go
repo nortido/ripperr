@@ -323,6 +323,9 @@ func (c *Client) DeleteItem(ctx context.Context, urlHash string) error {
 	if _, err := c.db.ExecContext(ctx, `DELETE FROM check_log WHERE url_hash = ?`, urlHash); err != nil {
 		return err
 	}
+	if _, err := c.db.ExecContext(ctx, `DELETE FROM release_times WHERE url_hash = ?`, urlHash); err != nil {
+		return err
+	}
 	_, err := c.db.ExecContext(ctx, `DELETE FROM history WHERE url_hash = ?`, urlHash)
 	return err
 }
@@ -340,6 +343,9 @@ func (c *Client) PurgeDuplicateNames(ctx context.Context, winners map[string]str
 	for name, hash := range winners {
 		norm := strings.ToLower(strings.TrimSpace(name))
 		if _, err := tx.ExecContext(ctx, `DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?`, norm, hash); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM release_times WHERE url_hash IN (SELECT url_hash FROM history WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?)`, norm, hash); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM history WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?`, norm, hash); err != nil {
@@ -450,6 +456,9 @@ func (c *Client) PurgeCategoriesExcept(ctx context.Context, allowed []string) (i
 	if _, err = tx.ExecContext(ctx, `DELETE FROM check_log WHERE url_hash IN (SELECT url_hash FROM history WHERE `+cond+`)`, args...); err != nil {
 		return 0, err
 	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM release_times WHERE url_hash IN (SELECT url_hash FROM history WHERE `+cond+`)`, args...); err != nil {
+		return 0, err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM history WHERE `+cond, args...)
 	if err != nil {
 		return 0, err
@@ -459,4 +468,42 @@ func (c *Client) PurgeCategoriesExcept(ctx context.Context, allowed []string) (i
 		return 0, err
 	}
 	return n, tx.Commit()
+}
+
+func (c *Client) AddReleaseTime(ctx context.Context, urlHash string, at time.Time, keep int) error {
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO release_times (url_hash, released_at) VALUES (?, ?)`, urlHash, at.Unix()); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx,
+		`DELETE FROM release_times WHERE url_hash = ? AND released_at NOT IN (
+		    SELECT released_at FROM release_times WHERE url_hash = ? ORDER BY released_at DESC LIMIT ?)`,
+		urlHash, urlHash, keep); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (c *Client) RecentReleaseTimes(ctx context.Context, urlHash string, since time.Time, limit int) ([]time.Time, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT released_at FROM release_times WHERE url_hash = ? AND released_at >= ? ORDER BY released_at DESC LIMIT ?`,
+		urlHash, since.Unix(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []time.Time
+	for rows.Next() {
+		var v int64
+		if err = rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, time.Unix(v, 0))
+	}
+	return out, rows.Err()
 }

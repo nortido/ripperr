@@ -30,3 +30,18 @@ func NextRunsWithin(now time.Time, startHour, listRefreshPerDay int, within time
 	}
 	return runs
 }
+
+func slotFloor(t time.Time, startHour, perDay int, loc *time.Location) time.Time {
+	if perDay <= 0 {
+		return t
+	}
+	loc = scheduleLocation(loc)
+	t = t.In(loc)
+	interval := time.Duration(24/perDay) * time.Hour
+	anchor := time.Date(t.Year(), t.Month(), t.Day(), startHour, 0, 0, 0, loc)
+	k := t.Sub(anchor) / interval
+	if anchor.Add(k * interval).After(t) {
+		k--
+	}
+	return anchor.Add(k * interval)
+}

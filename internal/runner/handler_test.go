@@ -40,6 +40,33 @@ type fakeStorage struct {
 	ignoreCalls []string
 	marks       map[string]storageModel.ErrorMark
 	marksErr    error
+	releases    []releaseCall
+	releaseErr  error
+	recent      []time.Time
+	recentErr   error
+	recentCalls []recentCall
+}
+
+type recentCall struct {
+	hash  string
+	since time.Time
+	limit int
+}
+
+type releaseCall struct {
+	hash string
+	at   time.Time
+	keep int
+}
+
+func (f *fakeStorage) AddReleaseTime(_ context.Context, urlHash string, at time.Time, keep int) error {
+	f.releases = append(f.releases, releaseCall{hash: urlHash, at: at, keep: keep})
+	return f.releaseErr
+}
+
+func (f *fakeStorage) RecentReleaseTimes(_ context.Context, urlHash string, since time.Time, limit int) ([]time.Time, error) {
+	f.recentCalls = append(f.recentCalls, recentCall{hash: urlHash, since: since, limit: limit})
+	return f.recent, f.recentErr
 }
 
 func (f *fakeStorage) SaveItem(context.Context, *runnerModel.HistoryItem) error { return nil }
@@ -407,6 +434,9 @@ func TestGetRecheckAt(t *testing.T) {
 		ThresholdOld:      90,
 	}}
 
+	msk := time.FixedZone("MSK", 3*60*60)
+	slot := time.Date(2026, 3, 15, 22, 0, 0, 0, msk)
+	now := time.Date(2026, 3, 15, 22, 6, 0, 0, msk)
 	cases := []struct {
 		name     string
 		tm       *time.Time
@@ -414,22 +444,85 @@ func TestGetRecheckAt(t *testing.T) {
 	}{
 		{"nil timestamp", nil, 1},
 		{"zero-value year", timePtr(time.Time{}), 1},
-		{"under a month old", timePtr(time.Now().Add(-24 * time.Hour)), 1},
-		{"a couple months old", timePtr(time.Now().Add(-60 * 24 * time.Hour)), 7},
-		{"under a year old", timePtr(time.Now().Add(-200 * 24 * time.Hour)), 30},
-		{"over a year old", timePtr(time.Now().Add(-400 * 24 * time.Hour)), 90},
+		{"two hours old", timePtr(now.Add(-2 * time.Hour)), 1},
+		{"a couple months old", timePtr(now.Add(-60 * 24 * time.Hour)), 7},
+		{"under a year old", timePtr(now.Add(-200 * 24 * time.Hour)), 30},
+		{"over a year old", timePtr(now.Add(-400 * 24 * time.Hour)), 90},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := h.getRecheckAt(c.tm)
+			got := h.getRecheckAt(c.tm, slot, now, false, nil)
 			if got == nil {
 				t.Fatal("expected non-nil result")
 			}
-			want := time.Now().AddDate(0, 0, c.wantDays)
-			if diff := got.Sub(want); diff < -time.Minute || diff > time.Minute {
-				t.Errorf("getRecheckAt(%v) = %v, want ~%v (+%d days)", c.tm, got, want, c.wantDays)
+			want := time.Date(2026, 3, 15+c.wantDays, 22, 0, 0, 0, msk)
+			if !got.Equal(want) {
+				t.Errorf("getRecheckAt(%v) = %v, want %v (+%d days)", c.tm, got, want, c.wantDays)
 			}
 		})
+	}
+}
+
+func TestWorkerUsesEntryPassSlot(t *testing.T) {
+	msk := time.FixedZone("MSK", 3*60*60)
+	d := time.Now().Add(-2 * time.Hour)
+	h, store, _ := newPickHandler(pickPageClient{pick: tracker.Pick{Date: &d}})
+	h.config.ListRefreshPerDay = 12
+	h.config.Location = msk
+	e := &model.Entry{
+		URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", Timestamp: &d, Update: true,
+		PassSlot: time.Date(2026, 3, 15, 22, 0, 0, 0, msk),
+	}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.saved) != 1 || store.saved[0].RecheckAt == nil {
+		t.Fatalf("saved = %+v, want one item with RecheckAt", store.saved)
+	}
+	want := time.Date(2026, 3, 16, 22, 0, 0, 0, msk)
+	if got := *store.saved[0].RecheckAt; !got.Equal(want) {
+		t.Fatalf("RecheckAt = %v, want %v", got, want)
+	}
+}
+
+func TestPushRecheckOnPassSlot(t *testing.T) {
+	const url = "https://pick.example/t/1"
+	urlHash := storagePkg.URLHash(url)
+	date := time.Now().Add(-2 * time.Hour)
+	h, store, _ := newPickHandler(pickPageClient{pick: tracker.Pick{Date: &date}})
+	h.config = model.HandlerConfig{
+		ListRefreshPerDay: 24, StartHour: 0, Location: time.UTC,
+		ThresholdMonth: 1, ThresholdHalfYear: 7, ThresholdYear: 30, ThresholdOld: 30,
+	}
+	store.items = map[string]*runnerModel.HistoryItem{urlHash: {
+		URLHash: urlHash, URL: url, TrackerTypeID: 1, Exists: true, CreatedAt: &date,
+	}}
+	h.manager = &fakeManager{all: []*model.Entry{{URL: url, Name: "test"}}}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	before := time.Now()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	var tk *task
+	select {
+	case tk = <-h.idx[1]:
+	default:
+		t.Fatal("entry was not queued")
+	}
+	if err := h.worker(ctx, 1, tk.entry, nil); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now()
+	if len(store.saved) != 1 || store.saved[0].RecheckAt == nil {
+		t.Fatalf("saved = %+v, want one item with RecheckAt", store.saved)
+	}
+	got := *store.saved[0].RecheckAt
+	want1 := before.UTC().Truncate(time.Hour).Add(24 * time.Hour)
+	want2 := after.UTC().Truncate(time.Hour).Add(24 * time.Hour)
+	if !got.Equal(want1) && !got.Equal(want2) {
+		t.Fatalf("RecheckAt = %v, want %v (pass slot + 1 day)", got, want1)
 	}
 }
 
@@ -2428,5 +2521,97 @@ func TestLogCheckCountsMetric(t *testing.T) {
 	h.logCheck(context.Background(), e, ttid, "unchanged", "", &dryReport{})
 	if got := metrics.Checks.Value("metrics_probe", "unchanged"); got != known+1 {
 		t.Fatalf("dry-run must not count, got %d want %d", got, known+1)
+	}
+}
+
+func newReleaseHandler(date time.Time) (*handler, *loggingStorage) {
+	h, store, _ := newPickHandler(pickPageClient{pick: tracker.Pick{DownloadID: "1", Date: &date}})
+	return h, store
+}
+
+func TestWorkerRecordsReleaseTime(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	d := time.Now().Add(-2 * time.Hour)
+	h, store := newReleaseHandler(d)
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "updated" {
+		t.Fatalf("logs = %+v, want one updated", store.logs)
+	}
+	if len(store.releases) != 1 {
+		t.Fatalf("release calls = %+v, want one", store.releases)
+	}
+	if c := store.releases[0]; c.hash != "abc" || !c.at.Equal(d) || c.keep != 8 {
+		t.Fatalf("release call = %+v, want abc %v keep 8", c, d)
+	}
+}
+
+func TestWorkerNoReleaseTimeWithoutPageDate(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	h, store, _ := newDownloadIDHandler(time.Now().Add(-2 * time.Hour))
+	// смена id темы: дата берется из time.Now(), а не со страницы
+	e := &model.Entry{URL: "https://nnm.example/t/830137", Name: "test", URLHash: "abc", TopicID: "830137", Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "updated" {
+		t.Fatalf("logs = %+v, want one updated", store.logs)
+	}
+	if len(store.releases) != 0 {
+		t.Fatalf("release calls = %+v, want none", store.releases)
+	}
+}
+
+func TestWorkerNoReleaseTimeWhenUnchanged(t *testing.T) {
+	d := time.Now().Add(-2 * time.Hour)
+	h, store := newReleaseHandler(d)
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &d, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "unchanged" {
+		t.Fatalf("logs = %+v, want one unchanged", store.logs)
+	}
+	if len(store.releases) != 0 {
+		t.Fatalf("release calls = %+v, want none", store.releases)
+	}
+}
+
+func TestWorkerNoReleaseTimeOnDryRun(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	h, store := newReleaseHandler(time.Now().Add(-2 * time.Hour))
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &old, Update: true}
+	rep := &dryReport{}
+	if err := h.worker(context.Background(), 1, e, rep); err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.updated.Load(); got != 1 {
+		t.Fatalf("dry updated = %d, want 1", got)
+	}
+	if len(store.releases) != 0 || len(store.saved) != 0 {
+		t.Fatalf("release calls = %+v, saved = %d, want none", store.releases, len(store.saved))
+	}
+}
+
+func TestWorkerReleaseTimeErrorWarns(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	h, store := newReleaseHandler(time.Now().Add(-2 * time.Hour))
+	store.releaseErr = errors.New("boom")
+	const msg = "release time of test not saved: boom"
+	before := countLogged(msg)
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &old, Update: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := countLogged(msg) - before; got != 1 {
+		t.Fatalf("WARN %q logged %d times, want 1", msg, got)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "updated" {
+		t.Fatalf("logs = %+v, want one updated", store.logs)
+	}
+	if len(store.saved) != 1 {
+		t.Fatalf("saved = %d, want 1", len(store.saved))
 	}
 }

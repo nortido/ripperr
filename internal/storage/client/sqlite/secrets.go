@@ -317,8 +317,9 @@ func (c *Client) DecryptSecrets(ctx context.Context) (err error) {
 		err = ErrNotEncrypted
 		return
 	}
-	if version > SecretsVersion {
-		err = fmt.Errorf("schema version %d is newer than %d, decrypt it with the build that wrote it", version, SecretsVersion)
+	// поздние миграции секреты не трогают: их таблицы остаются, следующий старт снова дойдет до последней
+	if version > len(migrations) {
+		err = fmt.Errorf("schema version %d is newer than %d, decrypt it with the build that wrote it", version, len(migrations))
 		return
 	}
 	if c.box == nil {

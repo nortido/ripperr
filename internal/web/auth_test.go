@@ -18,6 +18,7 @@ import (
 	"ripperr/internal/config"
 	"ripperr/internal/runner"
 	"ripperr/internal/storage/client/sqlite"
+	"ripperr/internal/system/logger"
 )
 
 type countingSettingStore struct {
@@ -303,6 +304,7 @@ func TestCrossOriginStateChangeBlocked(t *testing.T) {
 		{"session delete same origin", "DELETE", "/api/ignore/abc", "http://192.168.1.5:6410", true, http.StatusNoContent},
 		{"session get foreign origin", "GET", "/api/history", "http://evil.example", true, http.StatusOK},
 		{"no auth force-all foreign origin", "POST", "/api/plan/force-all", "http://evil.example", false, http.StatusForbidden},
+		{"password foreign origin", "POST", "/api/auth/password", "http://evil.example", true, http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -445,6 +447,7 @@ func TestApiClosedUntilAccount(t *testing.T) {
 		{"GET", "/api/status", ""},
 		{"POST", "/api/run", ""},
 		{"POST", "/api/integrations/secret", `{"field":"qbit.password"}`},
+		{"POST", "/api/auth/password", `{"current":"x","new":"yyyyyyyy"}`},
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
@@ -1079,5 +1082,299 @@ func TestSessionCookieSecureFromScheme(t *testing.T) {
 	w = authPost(bare, "/api/auth/setup", "192.168.1.200:6410", "https://my.keenetic.pro", rightLogin)
 	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || !c.Secure {
 		t.Errorf("setup over https proxy: code %d, cookie set %t, Secure %t, want Secure", w.Code, c != nil, c != nil && c.Secure)
+	}
+}
+
+const (
+	changeBody  = `{"current":"adminpass123","new":"newpass4567"}`
+	wrongChange = `{"current":"wrongpass1","new":"newpass4567"}`
+	newLogin    = `{"username":"admin","password":"newpass4567"}`
+)
+
+func passwordWith(srv *Server, cookie *http.Cookie, remote, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/auth/password", strings.NewReader(body))
+	req.RemoteAddr = remote
+	req.Host = "192.168.1.5:6410"
+	req.Header.Set("Origin", "http://192.168.1.5:6410")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func sessionCookiesAll(w *httptest.ResponseRecorder) []*http.Cookie {
+	var out []*http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == authCookieName {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func storedAuth(t *testing.T, srv *Server) string {
+	t.Helper()
+	raw, ok, err := srv.db.GetSetting(context.Background(), sqlite.SettingAuth)
+	if err != nil || !ok {
+		t.Fatalf("stored auth: ok %t, err %v", ok, err)
+	}
+	return string(raw)
+}
+
+func TestPasswordChangeRevokesOtherSessions(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	b := sessionCookie(loginFrom(srv, "192.168.1.11:1234", rightLogin))
+	if a == nil || b == nil {
+		t.Fatalf("login cookies: A %t, B %t", a != nil, b != nil)
+	}
+	before, err := srv.readAuth(context.Background())
+	if err != nil || before == nil {
+		t.Fatalf("read auth before: %v, %v", before, err)
+	}
+	n := loggedCount("auth: password changed")
+
+	w := passwordWith(srv, a, "192.168.1.10:1234", changeBody)
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"ok":true}` {
+		t.Fatalf("change: code %d body %s, want 200 {\"ok\":true}", w.Code, w.Body.String())
+	}
+	cookies := sessionCookiesAll(w)
+	if len(cookies) != 1 {
+		t.Fatalf("change set %d session cookies, want 1", len(cookies))
+	}
+	fresh := cookies[0]
+	if fresh.Value == a.Value || !fresh.HttpOnly || fresh.SameSite != http.SameSiteLaxMode || fresh.Path != "/" ||
+		fresh.MaxAge != int(authSessionTTL.Seconds()) || fresh.Secure {
+		t.Errorf("fresh cookie = %+v, want new value, HttpOnly, Lax, Path /, MaxAge %d, not Secure", fresh, int(authSessionTTL.Seconds()))
+	}
+
+	const host = "192.168.1.5:6410"
+	if w := historyWith(srv, a, host, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("history with old cookie A: code %d, want 401", w.Code)
+	}
+	if w := historyWith(srv, b, host, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("history with other session B: code %d, want 401", w.Code)
+	}
+	if w := historyWith(srv, fresh, host, ""); w.Code != http.StatusOK {
+		t.Errorf("history with fresh cookie: code %d, want 200", w.Code)
+	}
+
+	after, err := srv.readAuth(context.Background())
+	if err != nil || after == nil {
+		t.Fatalf("read auth after: %v, %v", after, err)
+	}
+	if after.Salt == before.Salt || after.Hash == before.Hash || after.Secret == before.Secret {
+		t.Errorf("salt, hash, secret changed: %t %t %t, want all", after.Salt != before.Salt, after.Hash != before.Hash, after.Secret != before.Secret)
+	}
+	if after.Username != before.Username || after.CreatedAt != before.CreatedAt {
+		t.Errorf("username %q created %q, want %q %q", after.Username, after.CreatedAt, before.Username, before.CreatedAt)
+	}
+
+	if w := loginFrom(srv, "192.168.1.12:1234", rightLogin); w.Code != http.StatusUnauthorized {
+		t.Errorf("login with old password: code %d, want 401", w.Code)
+	}
+	if w := loginFrom(srv, "192.168.1.12:1234", newLogin); w.Code != http.StatusOK {
+		t.Errorf("login with new password: code %d, want 200", w.Code)
+	}
+	if got := loggedCount("auth: password changed") - n; got != 1 {
+		t.Errorf("password changed log lines = %d, want 1", got)
+	}
+	for _, e := range logger.Snapshot(0) {
+		if strings.Contains(e.Message, "newpass4567") || strings.Contains(e.Message, "adminpass123") {
+			t.Errorf("password in log: %q", e.Message)
+		}
+	}
+}
+
+func TestPasswordChangeWrongCurrentCountsAsLoginFailure(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login: no cookie")
+	}
+	raw := storedAuth(t, srv)
+	const remote = "198.51.100.7:1000"
+	for i := range 5 {
+		w := passwordWith(srv, a, remote, wrongChange)
+		if w.Code != http.StatusForbidden || errorText(t, w) != "invalid current password" {
+			t.Fatalf("wrong change %d: code %d body %s, want 403 invalid current password", i+1, w.Code, w.Body.String())
+		}
+		if c := sessionCookie(w); c != nil {
+			t.Errorf("wrong change %d set a session cookie", i+1)
+		}
+	}
+	if w := passwordWith(srv, a, remote, wrongChange); w.Code != http.StatusTooManyRequests || errorText(t, w) != "too many attempts, try later" {
+		t.Fatalf("6th wrong change: code %d body %s, want 429 too many attempts, try later", w.Code, w.Body.String())
+	}
+	if w := passwordWith(srv, a, remote, changeBody); w.Code != http.StatusTooManyRequests {
+		t.Errorf("right change during lock: code %d, want 429", w.Code)
+	}
+	if w := loginFrom(srv, remote, rightLogin); w.Code != http.StatusTooManyRequests {
+		t.Errorf("right login during lock: code %d, want 429", w.Code)
+	}
+	if w := historyWith(srv, a, "192.168.1.5:6410", ""); w.Code != http.StatusOK {
+		t.Errorf("history with A after wrong changes: code %d, want 200", w.Code)
+	}
+	if got := storedAuth(t, srv); got != raw {
+		t.Errorf("stored auth changed by rejected changes")
+	}
+
+	srv = newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a = sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login on second server: no cookie")
+	}
+	for i := range 4 {
+		if w := passwordWith(srv, a, remote, wrongChange); w.Code != http.StatusForbidden {
+			t.Fatalf("second server wrong change %d: code %d, want 403", i+1, w.Code)
+		}
+	}
+	w := passwordWith(srv, a, remote, changeBody)
+	fresh := sessionCookie(w)
+	if w.Code != http.StatusOK || fresh == nil {
+		t.Fatalf("right change after 4 failures: code %d, cookie %t, want 200 with cookie", w.Code, fresh != nil)
+	}
+	for i := range 4 {
+		if w := passwordWith(srv, fresh, remote, wrongChange); w.Code != http.StatusForbidden {
+			t.Errorf("wrong change %d after success: code %d, want 403", i+1, w.Code)
+		}
+	}
+}
+
+func TestPasswordChangeRejectsBeforeHashing(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login: no cookie")
+	}
+	raw := storedAuth(t, srv)
+	const remote = "198.51.100.9:1000"
+	forged := &http.Cookie{Name: authCookieName, Value: signSession([]byte("not the secret"), "admin", time.Now().Add(time.Hour))}
+	cases := []struct {
+		name   string
+		cookie *http.Cookie
+		body   string
+		slots  bool
+		code   int
+		text   string
+	}{
+		{"no cookie", nil, changeBody, false, http.StatusUnauthorized, "unauthorized"},
+		{"forged cookie", forged, changeBody, false, http.StatusUnauthorized, "unauthorized"},
+		{"bad body", a, `{bad`, false, http.StatusBadRequest, "invalid body"},
+		{"short new", a, `{"current":"adminpass123","new":"short7x"}`, false, http.StatusBadRequest, "password must be at least 8 chars"},
+		{"slots busy", a, changeBody, true, http.StatusTooManyRequests, "too many login attempts at once, try later"},
+	}
+	for _, tc := range cases {
+		if tc.slots {
+			fillHashSlots(srv)
+		}
+		w := passwordWith(srv, tc.cookie, remote, tc.body)
+		if tc.slots {
+			drainHashSlots(srv)
+		}
+		if w.Code != tc.code || errorText(t, w) != tc.text {
+			t.Errorf("%s: code %d body %s, want %d %s", tc.name, w.Code, w.Body.String(), tc.code, tc.text)
+		}
+	}
+	if got := storedAuth(t, srv); got != raw {
+		t.Errorf("stored auth changed by rejected requests")
+	}
+	if w := passwordWith(srv, a, remote, wrongChange); w.Code != http.StatusForbidden {
+		t.Errorf("wrong change after rejects: code %d, want 403", w.Code)
+	}
+}
+
+func TestPasswordChangeSaveErrorKeepsPassword(t *testing.T) {
+	store := &failingSaveStore{}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+	if w := authPost(srv, "/api/auth/setup", "192.168.1.5:6410", "http://192.168.1.5:6410", rightLogin); w.Code != http.StatusOK {
+		t.Fatalf("setup: code %d", w.Code)
+	}
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login: no cookie")
+	}
+	store.fail = true
+
+	w := passwordWith(srv, a, "192.168.1.10:1234", changeBody)
+	if w.Code != http.StatusInternalServerError || errorText(t, w) != "auth error" {
+		t.Errorf("change with failing save: code %d body %s, want 500 auth error", w.Code, w.Body.String())
+	}
+	if c := sessionCookie(w); c != nil {
+		t.Errorf("change with failing save set a session cookie")
+	}
+	if w := historyWith(srv, a, "192.168.1.5:6410", ""); w.Code != http.StatusOK {
+		t.Errorf("history after failed change: code %d, want 200", w.Code)
+	}
+	if w := loginFrom(srv, "192.168.1.10:1234", rightLogin); w.Code != http.StatusOK {
+		t.Errorf("login with old password after failed change: code %d, want 200", w.Code)
+	}
+	if w := loginFrom(srv, "192.168.1.10:1234", newLogin); w.Code != http.StatusUnauthorized {
+		t.Errorf("login with new password after failed change: code %d, want 401", w.Code)
+	}
+}
+
+func TestPasswordChangeCookieSecure(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true, AllowedHosts: []string{"my.keenetic.pro"}})
+	a := loginCookie(t, srv)
+
+	req := httptest.NewRequest("POST", "/api/auth/password", strings.NewReader(changeBody))
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.200:6410"
+	req.Header.Set("Origin", "https://my.keenetic.pro")
+	req.AddCookie(a)
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("change over https proxy: code %d body %s, want 200", w.Code, w.Body.String())
+	}
+	cookies := sessionCookiesAll(w)
+	if len(cookies) != 1 || !cookies[0].Secure {
+		t.Errorf("change over https proxy: %d session cookies, want 1 Secure", len(cookies))
+	}
+}
+
+func TestPasswordChangeConcurrentOneWins(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login: no cookie")
+	}
+	passwords := []string{"firstpass111", "secondpass222"}
+	codes := make([]int, len(passwords))
+	var wg sync.WaitGroup
+	for i, p := range passwords {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body := fmt.Sprintf(`{"current":"adminpass123","new":%q}`, p)
+			codes[i] = passwordWith(srv, a, "192.168.1.10:1234", body).Code
+		}()
+	}
+	wg.Wait()
+
+	winner, loser := -1, -1
+	for i, c := range codes {
+		switch c {
+		case http.StatusOK:
+			winner = i
+		case http.StatusUnauthorized:
+			loser = i
+		}
+	}
+	if winner < 0 || loser < 0 {
+		t.Fatalf("codes = %v, want one 200 and one 401", codes)
+	}
+	loginBody := func(p string) string { return fmt.Sprintf(`{"username":"admin","password":%q}`, p) }
+	if w := loginFrom(srv, "192.168.1.12:1234", loginBody(passwords[loser])); w.Code != http.StatusUnauthorized {
+		t.Errorf("login with loser password: code %d, want 401", w.Code)
+	}
+	if w := loginFrom(srv, "192.168.1.12:1234", rightLogin); w.Code != http.StatusUnauthorized {
+		t.Errorf("login with old password: code %d, want 401", w.Code)
+	}
+	if w := loginFrom(srv, "192.168.1.12:1234", loginBody(passwords[winner])); w.Code != http.StatusOK {
+		t.Errorf("login with winner password: code %d, want 200", w.Code)
 	}
 }

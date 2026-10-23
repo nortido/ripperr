@@ -15,7 +15,7 @@ func TestParseDate(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected parsed date")
 	}
-	want := time.Date(2024, time.March, 15, 10, 30, 0, 0, time.UTC)
+	want := time.Date(2024, time.March, 15, 10, 30, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}

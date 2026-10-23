@@ -86,6 +86,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("POST /api/auth/setup", withMaxBody(s.handleAuthSetup))
 	mux.HandleFunc("POST /api/auth/login", withMaxBody(s.handleAuthLogin))
 	mux.HandleFunc("POST /api/auth/logout", withMaxBody(s.handleAuthLogout))
+	mux.HandleFunc("POST /api/auth/password", withMaxBody(s.handleAuthPassword))
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("POST /api/run", withMaxBody(s.handleRun))

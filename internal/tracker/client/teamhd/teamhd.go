@@ -9,6 +9,8 @@ import (
 	"ripperr/internal/model/tracker"
 )
 
+var mskZone = time.FixedZone("MSK", 3*60*60) // даты на странице московские, летнего времени нет
+
 type Tracker struct {
 	tracker.Tracker
 }
@@ -34,7 +36,7 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	if len(matches) <= 1 {
 		return
 	}
-	r, _ = time.Parse("02-01-2006 15:04:05", matches[1])
+	r, _ = time.ParseInLocation("02-01-2006 15:04:05", matches[1], mskZone)
 	result = &r
 
 	return

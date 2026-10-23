@@ -637,3 +637,162 @@ func TestDeleteTrackerRemovesRow(t *testing.T) {
 		t.Fatalf("GetTracker(1) exists=%v creds=%q err=%v, want true SEC-c1 nil", tr.Exists, tr.Credentials, err)
 	}
 }
+
+func releaseUnix(t *testing.T, c *Client, hash string) []int64 {
+	t.Helper()
+	rows, err := c.db.QueryContext(t.Context(), `SELECT released_at FROM release_times WHERE url_hash = ? ORDER BY released_at DESC`, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestAddReleaseTimeKeepsNewest(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	base := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	if err := c.AddReleaseTime(ctx, "other", base, 8); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 10 {
+		if err := c.AddReleaseTime(ctx, "h1", base.AddDate(0, 0, i), 8); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := c.AddReleaseTime(ctx, "h1", base.AddDate(0, 0, 9), 8); err != nil {
+		t.Fatalf("duplicate: %v", err)
+	}
+	var want []int64
+	for i := 9; i >= 2; i-- {
+		want = append(want, base.AddDate(0, 0, i).Unix())
+	}
+	if got := releaseUnix(t, c, "h1"); !slices.Equal(got, want) {
+		t.Fatalf("h1 = %v, want %v", got, want)
+	}
+	if got := releaseUnix(t, c, "other"); !slices.Equal(got, []int64{base.Unix()}) {
+		t.Fatalf("other = %v, want [%d]", got, base.Unix())
+	}
+}
+
+func TestRecentReleaseTimes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	base := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	for i := range 5 {
+		if err := c.AddReleaseTime(ctx, "h1", base.AddDate(0, 0, i), 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.AddReleaseTime(ctx, "h2", base.AddDate(0, 0, 4), 8); err != nil {
+		t.Fatal(err)
+	}
+	unix := func(ts []time.Time) []int64 {
+		out := make([]int64, len(ts))
+		for i, v := range ts {
+			out[i] = v.Unix()
+		}
+		return out
+	}
+	got, err := c.RecentReleaseTimes(ctx, "h1", base.AddDate(0, 0, 1), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{base.AddDate(0, 0, 4).Unix(), base.AddDate(0, 0, 3).Unix(), base.AddDate(0, 0, 2).Unix(), base.AddDate(0, 0, 1).Unix()}
+	if !slices.Equal(unix(got), want) {
+		t.Fatalf("since inclusive = %v, want %v", unix(got), want)
+	}
+	got, err = c.RecentReleaseTimes(ctx, "h1", base, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(unix(got), want[:2]) {
+		t.Fatalf("limit 2 = %v, want %v", unix(got), want[:2])
+	}
+	got, err = c.RecentReleaseTimes(ctx, "none", base, 10)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("unknown hash = %v err=%v, want empty nil", got, err)
+	}
+}
+
+func TestDeleteItemDropsReleaseTimes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	for _, h := range []string{"gone", "kept"} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: h, Name: h}); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.AddReleaseTime(ctx, h, at, 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.DeleteItem(ctx, "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if got := releaseUnix(t, c, "gone"); len(got) != 0 {
+		t.Fatalf("gone = %v, want none", got)
+	}
+	if got := releaseUnix(t, c, "kept"); len(got) != 1 {
+		t.Fatalf("kept = %v, want one row", got)
+	}
+}
+
+func TestPurgeDuplicateNamesDropsReleaseTimes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	for _, h := range []string{"winner", "loser"} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: h, Name: "Same Release"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.AddReleaseTime(ctx, h, at, 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.PurgeDuplicateNames(ctx, map[string]string{"same release": "winner"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := releaseUnix(t, c, "loser"); len(got) != 0 {
+		t.Fatalf("loser = %v, want none", got)
+	}
+	if got := releaseUnix(t, c, "winner"); len(got) != 1 {
+		t.Fatalf("winner = %v, want one row", got)
+	}
+}
+
+func TestPurgeCategoriesExceptDropsReleaseTimes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	for _, s := range []struct{ hash, category string }{{"keep", "radarr"}, {"drop", "lidarr"}, {"unknown", ""}} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Category: s.category, Name: s.hash}); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.AddReleaseTime(ctx, s.hash, at, 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.PurgeCategoriesExcept(ctx, []string{"radarr"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := releaseUnix(t, c, "drop"); len(got) != 0 {
+		t.Fatalf("drop = %v, want none", got)
+	}
+	for _, h := range []string{"keep", "unknown"} {
+		if got := releaseUnix(t, c, h); len(got) != 1 {
+			t.Fatalf("%s = %v, want one row", h, got)
+		}
+	}
+}

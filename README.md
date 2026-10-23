@@ -41,6 +41,9 @@ tags or file selection.
 - Recheck schedule by release age; topics that keep failing are marked broken instead of being
   hammered forever (the pause between checks of a failing topic grows up to 24 hours), and you can put
   any release on an ignore list.
+- Rechecks stay in the pass slot where they ran, so the check time does not creep through the day.
+  When a release keeps a regular release time, it is rechecked in the first slot after that time,
+  and up to two next slots if the usual time varies.
 - Tracker mirrors with automatic choice of a live domain and a switch to another mirror when the
   active one starts failing (you get a notification), FlareSolverr support for sites behind
   Cloudflare, optional download proxy (HTTP or SOCKS5).
@@ -196,6 +199,9 @@ Every log line goes to stdout and to `/config/logs/ripperr.log`. The file rotate
   Create the account before you expose the port.
 - The session lasts 30 days and is extended once a day while you use it. Sign out ends the sessions on
   all devices.
+- Change the password in Settings, card Password: the current password and the new one twice (at least 8
+  characters, as at setup). The change signs out every other device; this browser stays signed in. A wrong
+  current password counts as a failed login attempt for the limit below.
 - The session cookie is `Secure` over HTTPS, also behind a reverse proxy that ends TLS (the browser's
   `Origin` or `Referer` shows the scheme).
 - 5 login attempts per minute from one client address lock login for that address for 1 minute. Behind Docker

@@ -15,7 +15,7 @@ func TestParseDate_PostedSince(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected parsed date")
 	}
-	want, _ := time.Parse("02-01-06 15:04", "15-03-24 10:30")
+	want := time.Date(2024, time.March, 15, 10, 30, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -28,7 +28,7 @@ func TestParseDate_PLinkFallback(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected parsed date from fallback regex")
 	}
-	want, _ := time.Parse("02-01-06 15:04", "15-03-24 10:30")
+	want := time.Date(2024, time.March, 15, 10, 30, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}

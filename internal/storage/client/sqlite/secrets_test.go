@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"ripperr/internal/model/storage"
 	"ripperr/internal/secrets"
@@ -263,8 +265,8 @@ func TestMigrationEncryptsLegacyRows(t *testing.T) {
 	if err := c.Bootstrap(ctx); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	if got := userVersion(t, db); got != 2 {
-		t.Fatalf("user_version = %d, want 2", got)
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Fatalf("user_version = %d, want %d", got, len(migrations))
 	}
 	var plain int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM settings WHERE CAST(value AS TEXT) NOT LIKE 'enc:v1:%'`).Scan(&plain); err != nil {
@@ -384,8 +386,8 @@ func TestMigrationKeepsOwnEnvelopes(t *testing.T) {
 	if err := c.Bootstrap(ctx); err != nil {
 		t.Fatalf("second bootstrap: %v", err)
 	}
-	if got := userVersion(t, db); got != 2 {
-		t.Errorf("user_version = %d, want 2", got)
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Errorf("user_version = %d, want %d", got, len(migrations))
 	}
 	if after := snapshot(t, db); !slices.Equal(before, after) {
 		t.Errorf("rows changed by a repeated migration:\nbefore %q\nafter  %q", before, after)
@@ -447,8 +449,8 @@ func TestDecryptSecretsRestoresExactRows(t *testing.T) {
 	if err := c.Bootstrap(ctx); err != nil {
 		t.Fatalf("bootstrap after decrypt: %v", err)
 	}
-	if got := userVersion(t, db); got != 2 {
-		t.Errorf("user_version after re-encrypt = %d, want 2", got)
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Errorf("user_version after re-encrypt = %d, want %d", got, len(migrations))
 	}
 	if raw, _ := rawSetting(t, db, SettingAuth); !secrets.IsSealed(raw) {
 		t.Errorf("auth raw after re-encrypt = %q, want sealed", raw)
@@ -468,17 +470,18 @@ func TestDecryptSecretsRefuses(t *testing.T) {
 	if err := New(db, otherBox(t)).DecryptSecrets(ctx); !errors.Is(err, ErrKeyMismatch) {
 		t.Errorf("DecryptSecrets other key = %v, want ErrKeyMismatch", err)
 	}
-	if after := snapshot(t, db); !slices.Equal(before, after) || userVersion(t, db) != 2 {
+	if after := snapshot(t, db); !slices.Equal(before, after) || userVersion(t, db) != len(migrations) {
 		t.Errorf("DB changed by a refused decrypt")
 	}
-	if _, err := db.Exec("PRAGMA user_version = 3"); err != nil {
+	newer := len(migrations) + 1
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", newer)); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.DecryptSecrets(ctx); err == nil {
-		t.Error("DecryptSecrets at version 3: want error, got nil")
+		t.Errorf("DecryptSecrets at version %d: want error, got nil", newer)
 	}
-	if got := userVersion(t, db); got != 3 {
-		t.Errorf("user_version = %d, want 3", got)
+	if got := userVersion(t, db); got != newer {
+		t.Errorf("user_version = %d, want %d", got, newer)
 	}
 }
 
@@ -515,5 +518,40 @@ func TestTrackerEnvelopeGolden(t *testing.T) {
 	got, err := c.GetTracker(t.Context(), 7)
 	if err != nil || got.Credentials != legacyCredentials || got.Cookies != "" {
 		t.Fatalf("GetTracker = %+v err=%v", got, err)
+	}
+}
+
+func TestDecryptSecretsKeepsReleaseTimes(t *testing.T) {
+	c, db := migratedClient(t)
+	ctx := t.Context()
+	at := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	if err := c.AddReleaseTime(ctx, "h1", at, 8); err != nil {
+		t.Fatal(err)
+	}
+	rows := func() int {
+		t.Helper()
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM release_times WHERE url_hash = 'h1' AND released_at = ?`, at.Unix()).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if err := c.DecryptSecrets(ctx); err != nil {
+		t.Fatalf("DecryptSecrets: %v", err)
+	}
+	if got := userVersion(t, db); got != 1 {
+		t.Errorf("user_version after decrypt = %d, want 1", got)
+	}
+	if n := rows(); n != 1 {
+		t.Errorf("release rows after decrypt = %d, want 1", n)
+	}
+	if err := c.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap after decrypt: %v", err)
+	}
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Errorf("user_version after bootstrap = %d, want %d", got, len(migrations))
+	}
+	if n := rows(); n != 1 {
+		t.Errorf("release rows after bootstrap = %d, want 1", n)
 	}
 }

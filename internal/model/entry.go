@@ -20,4 +20,5 @@ type Entry struct {
 	Poster         string
 	Stopped        bool
 	Unhealthy      bool
+	PassSlot       time.Time
 }

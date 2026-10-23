@@ -15,35 +15,66 @@ const detailsMarkup = `<li class="tp">Характеристика</li>
 <li>Залит<span class="floatright green n">31 мая 2021 в 20:43</span></li>
 <li>Обновлен<span class="floatright green n">1 июня 2023 в 18:38</span></li>`
 
+func fixNow(t *testing.T, at time.Time) {
+	t.Helper()
+	old := now
+	now = func() time.Time { return at }
+	t.Cleanup(func() { now = old })
+}
+
 func TestParseDate_Today(t *testing.T) {
+	fixNow(t, time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC))
 	tr := New(tracker.Tracker{})
 	html := `<div class="bx1 justify"><b>Торрент-файл обновлен сегодня в 10:30</b>`
 	got := tr.ParseDate(bytes.NewBufferString(html), true)
 	if got == nil {
 		t.Fatal("expected parsed date")
 	}
-	now := time.Now()
-	if got.Year() != now.Year() || got.Month() != now.Month() || got.Day() != now.Day() {
-		t.Errorf("expected today's date, got %v (now %v)", got, now)
-	}
-	if got.Hour() != 10 || got.Minute() != 30 {
-		t.Errorf("expected 10:30, got %02d:%02d", got.Hour(), got.Minute())
+	want := time.Date(2026, time.March, 14, 10, 30, 0, 0, time.FixedZone("MSK", 3*60*60))
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
 func TestParseDate_YesterdayFallback(t *testing.T) {
+	fixNow(t, time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC))
 	tr := New(tracker.Tracker{})
 	html := `<li>Залит<span class="floatright green n">вчера в 08:15</span>`
 	got := tr.ParseDate(bytes.NewBufferString(html), true)
 	if got == nil {
 		t.Fatal("expected parsed date")
 	}
-	want := time.Now().AddDate(0, 0, -1)
-	if got.Year() != want.Year() || got.Month() != want.Month() || got.Day() != want.Day() {
-		t.Errorf("expected yesterday's date, got %v, want day %v", got, want)
+	want := time.Date(2026, time.March, 13, 8, 15, 0, 0, time.FixedZone("MSK", 3*60*60))
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
-	if got.Hour() != 8 || got.Minute() != 15 {
-		t.Errorf("expected 08:15, got %02d:%02d", got.Hour(), got.Minute())
+}
+
+func TestParseDate_TodayAfterMidnightMSK(t *testing.T) {
+	fixNow(t, time.Date(2026, time.March, 14, 22, 30, 0, 0, time.UTC))
+	tr := New(tracker.Tracker{})
+	html := `<li>Залит<span class="floatright green n">сегодня в 00:45</span>`
+	got := tr.ParseDate(bytes.NewBufferString(html), true)
+	if got == nil {
+		t.Fatal("expected parsed date")
+	}
+	want := time.Date(2026, time.March, 15, 0, 45, 0, 0, time.FixedZone("MSK", 3*60*60))
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestParseDate_YesterdayAfterMidnightMSK(t *testing.T) {
+	fixNow(t, time.Date(2026, time.March, 14, 22, 30, 0, 0, time.UTC))
+	tr := New(tracker.Tracker{})
+	html := `<li>Залит<span class="floatright green n">вчера в 23:10</span>`
+	got := tr.ParseDate(bytes.NewBufferString(html), true)
+	if got == nil {
+		t.Fatal("expected parsed date")
+	}
+	want := time.Date(2026, time.March, 14, 23, 10, 0, 0, time.FixedZone("MSK", 3*60*60))
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
@@ -54,7 +85,7 @@ func TestParseDate_ExplicitDate(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected parsed date")
 	}
-	want := time.Date(2024, time.March, 5, 9, 0, 0, 0, time.UTC)
+	want := time.Date(2024, time.March, 5, 9, 0, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -66,7 +97,7 @@ func TestParseDate_DetailsObnovlen(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected parsed date from Обновлен row")
 	}
-	want := time.Date(2023, time.June, 1, 18, 38, 0, 0, time.UTC)
+	want := time.Date(2023, time.June, 1, 18, 38, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -79,7 +110,7 @@ func TestParseDate_DetailsZalitOnly(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected parsed date from Залит row")
 	}
-	want := time.Date(2021, time.May, 31, 20, 43, 0, 0, time.UTC)
+	want := time.Date(2021, time.May, 31, 20, 43, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -95,7 +126,7 @@ func TestParseDate_CP1251Encoded(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected parsed date from CP1251 body")
 	}
-	want := time.Date(2023, time.June, 1, 18, 38, 0, 0, time.UTC)
+	want := time.Date(2023, time.June, 1, 18, 38, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}

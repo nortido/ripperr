@@ -169,3 +169,33 @@ func TestApplyMigrationSkipsWhenVersionAlreadyReached(t *testing.T) {
 		t.Fatalf("user_version = %d, want 1", got)
 	}
 }
+
+func TestBootstrapCreatesReleaseTimes(t *testing.T) {
+	db := newRawDB(t)
+	c := New(db, testBox(t))
+	if err := c.Bootstrap(t.Context()); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('release_times') ORDER BY cid`)
+	if err != nil {
+		t.Fatalf("table info: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var cols []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		cols = append(cols, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"url_hash", "released_at"}; !slices.Equal(cols, want) {
+		t.Fatalf("release_times columns = %v, want %v", cols, want)
+	}
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Fatalf("user_version = %d, want %d", got, len(migrations))
+	}
+}

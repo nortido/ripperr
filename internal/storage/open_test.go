@@ -195,8 +195,8 @@ func TestOpenCreatesKeyForFreshDB(t *testing.T) {
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("key file mode = %v, want 0600", st.Mode().Perm())
 	}
-	if v := schemaVersion(t, conn); v != sqlite.SecretsVersion {
-		t.Fatalf("version = %d, want %d", v, sqlite.SecretsVersion)
+	if v := schemaVersion(t, conn); v < sqlite.SecretsVersion {
+		t.Fatalf("version = %d, want at least %d", v, sqlite.SecretsVersion)
 	}
 }
 

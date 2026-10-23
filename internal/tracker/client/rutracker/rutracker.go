@@ -18,6 +18,8 @@ var (
 	rxMagnet      = regexp.MustCompile(`href="(magnet:\?[^"]+)"`)
 )
 
+var mskZone = time.FixedZone("MSK", 3*60*60) // даты на странице московские, летнего времени нет
+
 type Tracker struct {
 	tracker.Tracker
 }
@@ -40,7 +42,7 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	if len(matches) <= 1 {
 		return
 	}
-	result = helper.TimeFromRusDate(matches[1], "02-01-06 15:04")
+	result = helper.TimeFromRusDate(matches[1], "02-01-06 15:04", mskZone)
 
 	return
 }

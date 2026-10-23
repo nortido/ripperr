@@ -56,6 +56,13 @@ WHERE id IN (
 		name:  "encrypt secrets",
 		apply: encryptSecrets,
 	},
+	{
+		name: "release times",
+		// IF NOT EXISTS: после decrypt-secrets версия снова 1, и миграция выполнится повторно
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS release_times (url_hash TEXT NOT NULL, released_at INTEGER NOT NULL, PRIMARY KEY (url_hash, released_at))`,
+		},
+	},
 }
 
 func (c *Client) Bootstrap(ctx context.Context) error {

@@ -28,29 +28,40 @@ func TestSubstr(t *testing.T) {
 }
 
 func TestTimeFromRusDate(t *testing.T) {
-	got := TimeFromRusDate("15 марта 2024 10:30", "02 01 2006 15:04")
+	got := TimeFromRusDate("15 марта 2024 10:30", "02 01 2006 15:04", time.FixedZone("MSK", 3*60*60))
 	if got == nil {
 		t.Fatal("expected non-nil result")
 	}
-	want := time.Date(2024, time.March, 15, 10, 30, 0, 0, time.UTC)
+	want := time.Date(2024, time.March, 15, 10, 30, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
 func TestTimeFromRusDate_ShortMonth(t *testing.T) {
-	got := TimeFromRusDate("05 Мар 2024 12:00:00", "02 01 2006 15:04:05")
+	got := TimeFromRusDate("05 Мар 2024 12:00:00", "02 01 2006 15:04:05", time.FixedZone("MSK", 3*60*60))
 	if got == nil {
 		t.Fatal("expected non-nil result")
 	}
-	want := time.Date(2024, time.March, 5, 12, 0, 0, 0, time.UTC)
+	want := time.Date(2024, time.March, 5, 12, 0, 0, 0, time.FixedZone("MSK", 3*60*60))
 	if !got.Equal(want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
 func TestTimeFromRusDate_Invalid(t *testing.T) {
-	if got := TimeFromRusDate("not a date", "02 01 2006 15:04"); got != nil {
+	if got := TimeFromRusDate("not a date", "02 01 2006 15:04", time.UTC); got != nil {
 		t.Errorf("expected nil for invalid date, got %v", got)
+	}
+}
+
+func TestTimeFromRusDate_UTC(t *testing.T) {
+	got := TimeFromRusDate("15 марта 2024 10:30", "02 01 2006 15:04", time.UTC)
+	if got == nil {
+		t.Fatal("expected non-nil result")
+	}
+	want := time.Date(2024, time.March, 15, 10, 30, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

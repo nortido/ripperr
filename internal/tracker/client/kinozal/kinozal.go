@@ -12,6 +12,10 @@ import (
 	"ripperr/internal/model/tracker"
 )
 
+var mskZone = time.FixedZone("MSK", 3*60*60) // даты на странице московские, летнего времени нет
+
+var now = time.Now
+
 type Tracker struct {
 	tracker.Tracker
 }
@@ -45,10 +49,10 @@ func (t *Tracker) ParseDate(b *bytes.Buffer, encoded bool) (result *time.Time) {
 	}
 	for i, v := range []string{"сегодня", "вчера"} {
 		if matches[1] == v {
-			matches[1] = time.Now().AddDate(0, 0, -i).Format("2 01 2006")
+			matches[1] = now().In(mskZone).AddDate(0, 0, -i).Format("2 01 2006")
 		}
 	}
-	return helper.TimeFromRusDate(matches[1]+" "+matches[2], "2 01 2006 15:04")
+	return helper.TimeFromRusDate(matches[1]+" "+matches[2], "2 01 2006 15:04", mskZone)
 }
 
 func (t *Tracker) PostLoginURL() string {

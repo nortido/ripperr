@@ -40,3 +40,27 @@ func TestNextRunsWithinAlwaysAtLeastOne(t *testing.T) {
 		}
 	}
 }
+
+func TestSlotFloor(t *testing.T) {
+	msk := time.FixedZone("MSK", 3*60*60)
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 3, day, hour, minute, 0, 0, msk) }
+	cases := []struct {
+		name          string
+		start, perDay int
+		in, want      time.Time
+	}{
+		{"start 0, 12/day, inside", 0, 12, at(15, 22, 6), at(15, 22, 0)},
+		{"start 0, 12/day, on slot", 0, 12, at(15, 22, 0), at(15, 22, 0)},
+		{"start 7, 12/day, evening", 7, 12, at(15, 22, 6), at(15, 21, 0)},
+		{"start 7, 12/day, before anchor", 7, 12, at(15, 5, 30), at(15, 5, 0)},
+		{"start 7, 1/day, before anchor", 7, 1, at(15, 6, 0), at(14, 7, 0)},
+		{"perDay 0", 7, 0, at(15, 22, 6), at(15, 22, 6)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := slotFloor(c.in, c.start, c.perDay, msk); !got.Equal(c.want) {
+				t.Errorf("slotFloor(%v) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}

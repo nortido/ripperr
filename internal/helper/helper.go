@@ -27,7 +27,7 @@ func Substr(s string, pos, length int) string {
 	return string(runes[pos:l])
 }
 
-func TimeFromRusDate(t string, timeformat string) (result *time.Time) {
+func TimeFromRusDate(t string, timeformat string, loc *time.Location) (result *time.Time) {
 	var (
 		i int
 		v string
@@ -39,7 +39,7 @@ func TimeFromRusDate(t string, timeformat string) (result *time.Time) {
 	for i, v = range []string{"января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"} {
 		t = strings.Replace(t, v, fmt.Sprintf("%02d", i+1), 1)
 	}
-	r, err := time.Parse(timeformat, t)
+	r, err := time.ParseInLocation(timeformat, t, loc)
 	if err != nil {
 		return nil
 	}

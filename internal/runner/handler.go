@@ -66,6 +66,8 @@ type storage interface {
 	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 	ErrorMarks(ctx context.Context) (map[string]storageModel.ErrorMark, error)
+	AddReleaseTime(ctx context.Context, urlHash string, at time.Time, keep int) error
+	RecentReleaseTimes(ctx context.Context, urlHash string, since time.Time, limit int) ([]time.Time, error)
 }
 
 type handler struct {
@@ -281,9 +283,12 @@ type pushPass struct {
 	ignore  map[string]struct{}
 	adopted map[*model.Entry]struct{}
 	marks   map[string]storageModel.ErrorMark
+	slot    time.Time
 }
 
 func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}) (err error) {
+	// прогон из-за hour_limit длится часами, все его записи должны вернуться в тот же слот
+	slot := h.passSlot(time.Now())
 	h.state.Begin(h.gen)
 	defer h.state.End(h.gen)
 
@@ -328,7 +333,7 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 	}
 
 	if err = h.enqueueEntries(ctx, entries, &pushPass{
-		dry: dry, forced: forced, rep: rep, items: items, ignore: ignoreSet, adopted: adopted, marks: marks,
+		dry: dry, forced: forced, rep: rep, items: items, ignore: ignoreSet, adopted: adopted, marks: marks, slot: slot,
 	}); err != nil {
 		return err
 	}
@@ -549,6 +554,7 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 		if p.dry && p.rep.queued.Load() >= dryRunLimit {
 			break
 		}
+		entries[i].PassSlot = p.slot
 		h.state.Begin(h.gen)
 		h.state.Enqueue(h.gen, entries[i].URLHash)
 		p.rep.add()
@@ -697,7 +703,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			// релиз актуален. Иначе force_check останется взведенным со старой датой,
 			// и каждый прогон будет упираться в already added
 			if rep == nil {
-				if saveErr := h.saveHistory(ctx, ttid, e, pc.date); saveErr != nil {
+				if saveErr := h.saveHistory(ctx, ttid, e, pc.date, false); saveErr != nil {
 					h.logCheck(ctx, e, ttid, "error", saveErr.Error(), rep)
 					return saveErr
 				}
@@ -710,7 +716,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			// фиксируем иначе следующий прогон снова увидит новую дату темы и пойдет по кругу
 			logger.Info(fmt.Sprint("hash unchanged, torrent kept: ", e.Name))
 			if rep == nil {
-				if saveErr := h.saveHistory(ctx, ttid, e, pc.date); saveErr != nil {
+				if saveErr := h.saveHistory(ctx, ttid, e, pc.date, false); saveErr != nil {
 					h.logCheck(ctx, e, ttid, "error", saveErr.Error(), rep)
 					return saveErr
 				}
@@ -728,7 +734,12 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		return
 	}
 	if rep == nil {
-		if err = h.saveHistory(ctx, ttid, e, pc.date); err != nil {
+		if pc.pageDated {
+			if relErr := h.storage.AddReleaseTime(ctx, e.URLHash, *pc.date, forecastSamples); relErr != nil {
+				logger.Warn(fmt.Sprintf("release time of %s not saved: %v", e.Name, relErr))
+			}
+		}
+		if err = h.saveHistory(ctx, ttid, e, pc.date, true); err != nil {
 			h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
 			return
 		}
@@ -797,6 +808,7 @@ type pageCheck struct {
 	dateMissing bool
 	date        *time.Time
 	sample      string
+	pageDated   bool
 }
 
 func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (pc pageCheck, err error) {
@@ -806,6 +818,7 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 		downloadID string
 		encoded    = tc.GetProxyType() != proxy.TypeNone
 	)
+	start := time.Now()
 	if b, err = h.getPage(ctx, ttid, e.URL); err != nil {
 		return
 	}
@@ -843,13 +856,16 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 	}
 	pc.changed = e.Timestamp.Before(*cur)
 	pc.date = cur
+	// даты из time.Now() (смена id темы, трекеры без даты на странице) это время проверки,
+	// а не выхода релиза, в прогноз они не идут
+	pc.pageDated = cur.Before(start)
 	if pc.changed {
 		e.Magnet = tc.ParseMagnet(b, encoded)
 		e.Poster = tc.ParsePoster(b, encoded)
 		return
 	}
 	if rep == nil {
-		err = h.saveHistory(ctx, ttid, e, cur)
+		err = h.saveHistory(ctx, ttid, e, cur, false)
 	}
 	return
 }
@@ -957,7 +973,17 @@ func primaryDomain(tc client.IClient) string {
 	return tc.GetDomain()
 }
 
-func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur *time.Time) (err error) {
+func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur *time.Time, released bool) (err error) {
+	now := time.Now()
+	slot := e.PassSlot
+	if slot.IsZero() {
+		slot = h.passSlot(now)
+	}
+	samples, readErr := h.storage.RecentReleaseTimes(ctx, e.URLHash, now.Add(-forecastWindow), forecastSamples)
+	if readErr != nil {
+		logger.Warn(fmt.Sprintf("release times of %s not read: %v", e.Name, readErr))
+		samples = nil
+	}
 	if err = h.storage.SaveItem(ctx, &runnerModel.HistoryItem{
 		TrackerTypeID: ttid,
 		URLHash:       e.URLHash,
@@ -968,7 +994,7 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur
 		Name:          e.Name,
 		Exists:        e.Update,
 		CreatedAt:     cur,
-		RecheckAt:     h.getRecheckAt(cur),
+		RecheckAt:     h.getRecheckAt(cur, slot, now, released, samples),
 	}); err != nil {
 		return
 	}
@@ -980,24 +1006,35 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur
 	return
 }
 
-func (h *handler) getRecheckAt(tm *time.Time) (result *time.Time) {
-	tt := time.Now()
-	if tm == nil {
-		tt = tt.AddDate(0, 0, h.config.ThresholdMonth)
-		return &tt
-	}
-	d := time.Since(*tm)
-	switch {
-	case tm.Year() == 1, d < durationMonth:
-		tt = tt.AddDate(0, 0, h.config.ThresholdMonth)
-	case d < durationYear/2:
-		tt = tt.AddDate(0, 0, h.config.ThresholdHalfYear)
-	case d < durationYear:
-		tt = tt.AddDate(0, 0, h.config.ThresholdYear)
-	case d >= durationYear:
-		tt = tt.AddDate(0, 0, h.config.ThresholdOld)
+func (h *handler) passSlot(now time.Time) time.Time {
+	return slotFloor(now, h.config.StartHour, h.config.ListRefreshPerDay, h.config.Location)
+}
+
+func (h *handler) getRecheckAt(tm *time.Time, slot, now time.Time, released bool, samples []time.Time) (result *time.Time) {
+	days := h.recheckDays(tm, now)
+	tt := slot.AddDate(0, 0, days)
+	if h.config.ListRefreshPerDay > 0 {
+		if mean, late, ok := forecast(samples, scheduleLocation(h.config.Location)); ok {
+			tt = h.placeForecast(slot, days, mean, late, released)
+		}
 	}
 	return &tt
+}
+
+func (h *handler) recheckDays(tm *time.Time, now time.Time) int {
+	if tm == nil {
+		return h.config.ThresholdMonth
+	}
+	d := now.Sub(*tm)
+	switch {
+	case tm.Year() == 1, d < durationMonth:
+		return h.config.ThresholdMonth
+	case d < durationYear/2:
+		return h.config.ThresholdHalfYear
+	case d < durationYear:
+		return h.config.ThresholdYear
+	}
+	return h.config.ThresholdOld
 }
 
 func NewRunner(tracker trackerService, manager manager, storage storage, config model.HandlerConfig, state *State, notifier *notify.Notifier) *handler {
