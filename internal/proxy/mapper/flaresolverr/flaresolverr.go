@@ -2,6 +2,7 @@ package flaresolverr
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,8 +57,16 @@ func SolutionCookies(resp *Response) []*http.Cookie {
 }
 
 func BuildResponse(resp *Response, req *http.Request) (result *http.Response, err error) {
+	if resp == nil {
+		err = errors.New("flaresolverr error: empty response")
+		return
+	}
 	if resp.Status != responseOK {
 		err = fmt.Errorf("flaresolverr error: %s", resp.Message)
+		return
+	}
+	if resp.Solution == nil {
+		err = errors.New("flaresolverr error: response without solution")
 		return
 	}
 	result = &http.Response{

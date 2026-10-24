@@ -26,7 +26,7 @@ export function bindLogout() {
   if (!btn) return;
   btn.addEventListener('click', async function () {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Ripperr': '1' } });
     } catch (_) { /* не дошло, ну и ладно */ }
     location.reload();
   });

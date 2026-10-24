@@ -31,3 +31,29 @@ func TestCircuitBreaker_AlertsOnOpenAndClose(t *testing.T) {
 		t.Fatal("expected alert cleared after recovery")
 	}
 }
+
+func TestCircuitBreaker_SuccessClosesInheritedIncident(t *testing.T) {
+	reg := breakeralerts.New()
+	type ev struct {
+		open    bool
+		tracker string
+	}
+	var events []ev
+	reg.SetHook(func(open bool, tracker, _ string) { events = append(events, ev{open, tracker}) })
+	reg.Open("kinozal", "boom")
+	events = nil
+
+	cb := NewCircuitBreaker(&CircuitBreakerConfig{MaxFailures: 1, Timeout: time.Minute})
+	cb.TrackerName = "kinozal"
+	cb.Alerts = reg
+
+	if err := cb.Call(func() error { return nil }); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(reg.List()) != 0 {
+		t.Fatalf("incident stays: %+v", reg.List())
+	}
+	if len(events) != 1 || events[0].open || events[0].tracker != "kinozal" {
+		t.Fatalf("events = %+v", events)
+	}
+}

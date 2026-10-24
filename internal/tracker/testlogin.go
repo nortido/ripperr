@@ -2,6 +2,8 @@ package tracker
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,7 +107,24 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	})
-	tc := client.New(hc, downloadHC, tr, px, cb)
+	var opts []client.Option
+	if p, ok := tr.(client.FlareSessionProvider); ok && p.FlareSession() != "" {
+		suffix := make([]byte, 4)
+		if _, err = rand.Read(suffix); err != nil {
+			return err
+		}
+		id := p.FlareSession() + "-test-" + hex.EncodeToString(suffix)
+		opts = append(opts, client.WithFlareSession(id))
+		if tr.GetProxyType() == proxyModel.TypeFlare {
+			// ctx вызывающего мог истечь, а тестовый браузер во FlareSolverr должен закрыться
+			defer func() {
+				dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+				defer cancel()
+				_ = px.DestroyFlareSession(dctx, id)
+			}()
+		}
+	}
+	tc := client.New(hc, downloadHC, tr, px, cb, opts...)
 
 	attrs, err := db.GetTracker(ctx, tid)
 	if err != nil {

@@ -374,7 +374,7 @@ func TestDelete_ListedCategoryPostsDeleteFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating client: %v", err)
 	}
-	if err = c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x"}); err != nil {
+	if err = c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x", DeleteFiles: true}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	mu.Lock()
@@ -704,5 +704,47 @@ func TestEmptyUserBasicKeptOnSameHostRedirect(t *testing.T) {
 	_, _ = c.GetCategories(context.Background())
 	if got, _ := finalAuth.Load().(string); got != "Basic "+base64.StdEncoding.EncodeToString([]byte(":SEC-pw")) {
 		t.Errorf("same-host redirect Authorization = %q, want basic", got)
+	}
+}
+
+func TestDelete_CallerKeepFilesWins(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]string{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/app/webapiVersion", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("4.6.0"))
+	})
+	mux.HandleFunc("/api/v2/torrents/delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		got["hashes"] = r.FormValue("hashes")
+		got["deleteFiles"] = r.FormValue("deleteFiles")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	c, err := New(model.ManagerConfig{Host: server.URL, DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}})
+	if err != nil {
+		t.Fatalf("unexpected error creating client: %v", err)
+	}
+	if err = c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x", DeleteFiles: false}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got["hashes"] != "h1" || got["deleteFiles"] != "false" {
+		t.Fatalf("expected hashes=h1 deleteFiles=false, got %+v", got)
+	}
+}
+
+func TestDeletesFilesIgnoresEmptyCategory(t *testing.T) {
+	c := &Client{config: model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"tv", ""}}}
+	if c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: ""}) {
+		t.Fatalf("DeletesFiles true for uncategorized torrent")
+	}
+	if !c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "tv"}) {
+		t.Fatalf("DeletesFiles false for listed category")
 	}
 }

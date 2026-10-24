@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ripperr/internal/helper"
+	"ripperr/internal/helper/breakeralerts"
 	proxyModel "ripperr/internal/model/proxy"
 	trackerModel "ripperr/internal/model/tracker"
 	"ripperr/internal/tracker/client"
@@ -78,5 +79,28 @@ func TestBuildCacheAllFail(t *testing.T) {
 	})
 	if err := s.BuildCache(context.Background()); err == nil {
 		t.Fatal("expected error when all trackers fail")
+	}
+}
+
+func TestBuildCacheKeepsIncidentsWithoutSuccess(t *testing.T) {
+	reg := breakeralerts.New()
+	reg.Open("kinozal", "boom")
+	reg.Open("rutor", "boom")
+	hookCalls := 0
+	reg.SetHook(func(bool, string, string) { hookCalls++ })
+
+	s := newBuildCacheService(map[int]client.ITracker{
+		RutorID:   publicRutor(),
+		KinozalID: failingKinozal(),
+	})
+	s.alerts = reg
+	if err := s.BuildCache(context.Background()); err != nil {
+		t.Fatalf("BuildCache: %v", err)
+	}
+	if got := len(reg.List()); got != 2 {
+		t.Fatalf("incidents = %+v", reg.List())
+	}
+	if hookCalls != 0 {
+		t.Fatalf("hook called %d times", hookCalls)
 	}
 }

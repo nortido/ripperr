@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +38,12 @@ type redownloadStubServer struct {
 	// до проверки в ForceRedownload. Так выглядит асинхронное удаление в qbit, влезшее между ними
 	unsettleAfterAdd bool
 	vanishNext       bool
+	files            []qbt.TorrentFile
+	filesFail        bool
+	addCalls         int
+	addPaused        string
+	prioCalls        []string
+	startCalls       int
 	server           *httptest.Server
 }
 
@@ -51,8 +58,31 @@ func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string)
 			Hash: hash, Name: "movie", Category: "movies", Tags: "watch",
 			AutoManaged: true, MaxRatio: 2, MaxSeedingTime: 100,
 		},
+		files: []qbt.TorrentFile{{Name: "test.txt", Priority: 1}},
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/torrents/files", func(w http.ResponseWriter, _ *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.filesFail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(s.files)
+	})
+	mux.HandleFunc("/api/v2/torrents/filePrio", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		s.mu.Lock()
+		s.prioCalls = append(s.prioCalls, r.FormValue("id")+"="+r.FormValue("priority"))
+		s.mu.Unlock()
+	})
+	for _, p := range []string{"/api/v2/torrents/start", "/api/v2/torrents/resume"} {
+		mux.HandleFunc(p, func(w http.ResponseWriter, _ *http.Request) {
+			s.mu.Lock()
+			s.startCalls++
+			s.mu.Unlock()
+		})
+	}
 	mux.HandleFunc("/api/v2/app/webapiVersion", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("2.8.3"))
 	})
@@ -101,6 +131,8 @@ func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string)
 			}
 		}
 		s.mu.Lock()
+		s.addCalls++
+		s.addPaused = r.FormValue("paused") + "/" + r.FormValue("stopped")
 		fail := s.addFail
 		s.mu.Unlock()
 		if fail {
@@ -336,5 +368,116 @@ func assertTorrentComment(t *testing.T, what string, data []byte, hash, want str
 	}
 	if comment != want {
 		t.Errorf("%s: comment = %q, want %q", what, comment, want)
+	}
+}
+
+func TestForceRedownloadKeepsSelectionAndStopped(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data, hash := buildTestTorrent(t)
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+	stub.torrent.State = qbt.TorrentStatePausedDl
+	stub.files = []qbt.TorrentFile{{Name: "a.mkv", Priority: 1}, {Name: "b.mkv", Priority: 0}}
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err = c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v", err)
+	}
+
+	stub.mu.Lock()
+	addPaused, prio, starts, pairJSON := stub.addPaused, stub.prioCalls, stub.startCalls, stub.jsonAtDelete
+	stub.mu.Unlock()
+	if !strings.Contains(addPaused, "true") {
+		t.Errorf("re-add paused/stopped = %q, want the torrent added stopped", addPaused)
+	}
+	if len(prio) != 1 || prio[0] != "1=0" {
+		t.Errorf("file priority calls = %v, want [1=0]", prio)
+	}
+	if starts != 0 {
+		t.Errorf("start calls = %d, want 0 for a stopped torrent", starts)
+	}
+	var meta model.ManagerAddFileOptions
+	if err = json.Unmarshal(pairJSON, &meta); err != nil {
+		t.Fatalf("blackhole json: %v (%q)", err, pairJSON)
+	}
+	if !meta.Stopped {
+		t.Error("blackhole pair lost the stopped state")
+	}
+	if len(meta.FileSelection) != 2 || !meta.FileSelection[0].Wanted || meta.FileSelection[1].Wanted {
+		t.Errorf("blackhole pair selection = %+v, want a wanted, b unwanted", meta.FileSelection)
+	}
+}
+
+func TestForceRedownloadFilesErrorChangesNothing(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data, hash := buildTestTorrent(t)
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+	stub.filesFail = true
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	err = c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{})
+	if err == nil || !strings.Contains(err.Error(), "read file selection") {
+		t.Fatalf("err = %v, want a file selection read error", err)
+	}
+	if stub.wasDeleted() {
+		t.Error("torrent deleted although its file selection could not be read")
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestForceRedownloadRefusesV2Torrent(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data, hash := buildHybridTestTorrent(t)
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	err = c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{})
+	if err == nil || !strings.Contains(err.Error(), "v2 metadata") {
+		t.Fatalf("err = %v, want a v2 metadata refusal", err)
+	}
+	// удаление с файлами без повторного добавления потеряло бы раздачу
+	if stub.wasDeleted() {
+		t.Error("v2 torrent deleted although it can never be re-added")
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestForceRedownloadKeepsV1TorrentWithOddInfo(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data := oddInfoTorrent()
+	hash, err := torrentmeta.InfoHash(data)
+	if err != nil {
+		t.Fatalf("InfoHash: %v", err)
+	}
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err = c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v", err)
+	}
+	stub.mu.Lock()
+	adds := stub.addCalls
+	stub.mu.Unlock()
+	if adds != 1 {
+		t.Errorf("add requests = %d, want 1", adds)
 	}
 }

@@ -77,3 +77,20 @@ func (r *Registry) List() []Incident {
 	sort.Slice(out, func(i, j int) bool { return out[i].Tracker < out[j].Tracker })
 	return out
 }
+
+func (r *Registry) Retain(trackers []string) {
+	if r == nil {
+		return
+	}
+	keep := make(map[string]struct{}, len(trackers))
+	for _, name := range trackers {
+		keep[name] = struct{}{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name := range r.incidents {
+		if _, ok := keep[name]; !ok {
+			delete(r.incidents, name)
+		}
+	}
+}

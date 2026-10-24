@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -90,5 +91,59 @@ func TestPageRequestURLRewritesTrackerHost(t *testing.T) {
 	}
 	if got := c.pageRequestURL("https://kinozal.guru/details.php?id=1"); got != "https://kinozal.guru/details.php?id=1" {
 		t.Fatalf("already active: %q", got)
+	}
+}
+
+type emptyFlareTracker struct {
+	tracker.Tracker
+}
+
+func (emptyFlareTracker) FlareSession() string { return "" }
+func (emptyFlareTracker) PostLoginURL() string { return "" }
+
+type countingProxy struct {
+	sends int
+}
+
+func (p *countingProxy) Send(r *http.Request, _ *proxyModel.Options, _ proxyModel.ProxyType) (*http.Response, error) {
+	p.sends++
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody, Request: r}, nil
+}
+
+func (p *countingProxy) DestroyFlareSession(context.Context, string) error { return nil }
+
+func TestEmptyFlareHelpersMeanAbsent(t *testing.T) {
+	px := &countingProxy{}
+	c := &client{
+		ITracker: &emptyFlareTracker{Tracker: tracker.Tracker{Name: "nnm", Domain: "nnm.example", ProxyType: proxyModel.TypeFlare}},
+		px:       px,
+		header:   &http.Header{},
+	}
+	base := []*http.Cookie{{Name: "a", Value: "1"}}
+	if got := c.syncFlarePageCookies(t.Context(), base); len(got) != 1 || px.sends != 0 {
+		t.Fatalf("sync fetched a page: sends=%d cookies=%+v", px.sends, got)
+	}
+	if err := c.preflightFlareLogin(t.Context()); err != nil || px.sends != 1 {
+		t.Fatalf("preflight skipped: sends=%d err=%v", px.sends, err)
+	}
+}
+
+type httpOnlyHost struct {
+	tracker.Tracker
+}
+
+func (httpOnlyHost) GetHost() string { return "http://lan.example" }
+
+func TestPageRequestURLUsesTrackerScheme(t *testing.T) {
+	c := &client{ITracker: &tracker.Tracker{Domain: "tracker.example", Mirrors: []string{"mirror.example"}}}
+	if got := c.pageRequestURL("http://tracker.example/viewtopic.php?t=1"); got != "https://tracker.example/viewtopic.php?t=1" {
+		t.Fatalf("got %q", got)
+	}
+	if got := c.pageRequestURL("http://mirror.example/viewtopic.php?t=1"); got != "https://tracker.example/viewtopic.php?t=1" {
+		t.Fatalf("mirror link: got %q", got)
+	}
+	plain := &client{ITracker: &httpOnlyHost{Tracker: tracker.Tracker{Domain: "lan.example"}}}
+	if got := plain.pageRequestURL("http://lan.example/viewtopic.php?t=1"); got != "http://lan.example/viewtopic.php?t=1" {
+		t.Fatalf("http tracker downgraded or changed: %q", got)
 	}
 }

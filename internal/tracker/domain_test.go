@@ -13,6 +13,7 @@ import (
 	trackerModel "ripperr/internal/model/tracker"
 	"ripperr/internal/tracker/client"
 	"ripperr/internal/tracker/client/kinozal"
+	"ripperr/internal/tracker/client/rutracker"
 )
 
 type stubTracker struct {
@@ -296,5 +297,53 @@ func TestBlankPage(t *testing.T) {
 		if got := blankPage([]byte(c.in)); got != c.want {
 			t.Errorf("blankPage(%q) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestDomainOverrideForwardsFlareHelpers(t *testing.T) {
+	rt := withActiveDomain(rutracker.New(trackerModel.Tracker{Name: "rutracker", Domain: "rutracker.org"}), "rutracker.net")
+	sess, ok := rt.(interface{ FlareSession() string })
+	if !ok || sess.FlareSession() != "rutracker" {
+		t.Fatalf("flare session through wrapper: ok=%v", ok)
+	}
+	pl, ok := rt.(interface{ PostLoginURL() string })
+	if !ok || pl.PostLoginURL() != "https://rutracker.net/forum/index.php" {
+		t.Fatalf("post login url through wrapper: ok=%v", ok)
+	}
+	cc, ok := rt.(interface{ CookiesIncomplete([]*http.Cookie) bool })
+	if !ok || !cc.CookiesIncomplete(nil) {
+		t.Fatalf("cookies incomplete through wrapper: ok=%v", ok)
+	}
+	en, ok := rt.(interface{ EnhanceCookies([]*http.Cookie) })
+	if !ok {
+		t.Fatal("enhance cookies not forwarded")
+	}
+	cookies := []*http.Cookie{{Name: "bb_session", Value: "x"}}
+	en.EnhanceCookies(cookies)
+	if cookies[0].Path != "/forum/" || !cookies[0].Secure {
+		t.Fatalf("bb_session not enhanced: %+v", cookies[0])
+	}
+
+	kz := withActiveDomain(kinozal.New(trackerModel.Tracker{Name: "kinozal", Domain: "kinozal.tv"}), "kinozal.guru")
+	if got := kz.(interface{ PostLoginURL() string }).PostLoginURL(); got != "https://kinozal.guru/browse.php" {
+		t.Fatalf("kinozal post login url = %q", got)
+	}
+}
+
+func TestDomainOverrideFlareHelpersEmptyForPlainTracker(t *testing.T) {
+	w := withActiveDomain(&stubTracker{Tracker: trackerModel.Tracker{Name: "nnm", Domain: "nnm-club.me"}}, "mirror.example")
+	if got := w.(interface{ FlareSession() string }).FlareSession(); got != "" {
+		t.Fatalf("flare session = %q", got)
+	}
+	if got := w.(interface{ PostLoginURL() string }).PostLoginURL(); got != "" {
+		t.Fatalf("post login url = %q", got)
+	}
+	if w.(interface{ CookiesIncomplete([]*http.Cookie) bool }).CookiesIncomplete(nil) {
+		t.Fatal("cookies incomplete for tracker without checker")
+	}
+	cookies := []*http.Cookie{{Name: "bb_session", Value: "x", Path: "/a"}}
+	w.(interface{ EnhanceCookies([]*http.Cookie) }).EnhanceCookies(cookies)
+	if cookies[0].Path != "/a" {
+		t.Fatalf("cookie changed: %+v", cookies[0])
 	}
 }

@@ -188,9 +188,9 @@ export async function triggerRunCheck() {
   updateRunStatusUI(true);
   if (runBtn) runBtn.disabled = true;
   try {
-    const opts = { method: 'POST' };
+    const opts = { method: 'POST', headers: { 'X-Ripperr': '1' } };
     if (isRestart) {
-      opts.headers = { 'Content-Type': 'application/json' };
+      opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify({ restart: true });
     }
     const res = await fetch('/api/run', opts);
@@ -230,7 +230,7 @@ export async function triggerStopCheck() {
   try {
     const res = await fetch('/api/run', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Ripperr': '1' },
       body: JSON.stringify({ stop: true }),
     });
     const text = await res.text();
@@ -303,12 +303,17 @@ export function buildSortControls() {
 
 function fitNextRunValue(valueEl) {
   if (!valueEl) return;
-  const range = document.createRange();
-  range.selectNodeContents(valueEl);
-  const width = range.getBoundingClientRect().width;
-  const size = parseFloat(getComputedStyle(valueEl).fontSize);
+  // полную форму меряем в невидимом span на 28px: видимая форма зависит от раскладки,
+  // и замер по короткой после расширения окна раздувал надпись под иконку
+  const full = valueEl.querySelector('.stat-run-full');
+  const probe = document.createElement('span');
+  probe.textContent = (full || valueEl).textContent;
+  probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:nowrap;font-size:28px';
+  valueEl.appendChild(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
   // +1px: без запаса последняя цифра на дробной ширине обрезается
-  if (width > 0 && size > 0) valueEl.style.setProperty('--nr-w28', (width * 28 / size + 1).toFixed(1));
+  if (width > 0) valueEl.style.setProperty('--nr-w28', (width + 1).toFixed(1));
   if (document.fonts && document.fonts.status !== 'loaded') {
     document.fonts.ready.then(function () { fitNextRunValue(valueEl); });
   }
@@ -541,7 +546,7 @@ export async function triggerDryRun(btn) {
   try {
     const res = await fetch('/api/run', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Ripperr': '1' },
       body: JSON.stringify({ dry: true }),
     });
     const text = await res.text();

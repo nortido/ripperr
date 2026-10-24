@@ -385,7 +385,7 @@ export function bindDashboardReleaseRows(root) {
         showToast(t('dash.redownloadDone'), 'success');
         await loadDashboard();
       } catch (err) {
-        showToast(err.message, 'error');
+        showToast(err.code === 'torrent_busy' ? t('dash.redownloadBusy') : err.message, 'error');
         btn.classList.remove('is-spinning');
         if (row) row.classList.remove('is-redownloading');
         reEnable.forEach(function (b) { b.disabled = false; });

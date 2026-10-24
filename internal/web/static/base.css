@@ -89,7 +89,8 @@
   --form-row-gap: 20px;
   --btn-gap: 8px;
   --row-actions-gap: 4px;
-  --row-actions-w: calc((var(--btn-h-sm) * 3) + (var(--row-actions-gap) * 2));
+  /* 2px: рамка панели .release-actions */
+  --row-actions-w: calc((var(--btn-h-sm) * 3) + (var(--row-actions-gap) * 2) + 2px);
   --nav-h: 48px;
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --sidebar-w: 260px;

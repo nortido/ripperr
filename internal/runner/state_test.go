@@ -1,7 +1,11 @@
 package runner
 
 import (
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"ripperr/internal/system/logger"
 )
@@ -324,5 +328,178 @@ func TestStateLogsPassTransitions(t *testing.T) {
 	s.End(gen)
 	if countLogged("check pass started") != started1 || countLogged("check pass finished") != finished1 {
 		t.Fatal("stale End must not log")
+	}
+}
+
+func hammerState(t *testing.T, begin, end func(s *State, gen uint32), active func(s *State) int32) {
+	t.Helper()
+	// иначе 20000 строк "check pass" вытеснят из кольцевого буфера логов то, что считают соседние тесты
+	logger.SetLevel("warn")
+	defer logger.SetLevel("info")
+	s := NewState()
+	s.Reset()
+	var stop atomic.Bool
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !stop.Load() {
+				g := s.gen.Load()
+				begin(s, g)
+				end(s, g)
+			}
+		}()
+	}
+	var negative atomic.Bool
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for !stop.Load() {
+			if active(s) < 0 {
+				negative.Store(true)
+			}
+		}
+	}()
+	for range 20000 {
+		s.Reset()
+	}
+	stop.Store(true)
+	wg.Wait()
+	if negative.Load() {
+		t.Fatal("pass counter went negative")
+	}
+	if got := active(s); got != 0 {
+		t.Fatalf("counter after balanced Begin/End = %d, want 0", got)
+	}
+	cur := s.gen.Load()
+	begin(s, cur)
+	if active(s) != 1 {
+		t.Fatalf("counter after Begin(cur) = %d, want 1", active(s))
+	}
+	end(s, cur)
+	if active(s) != 0 {
+		t.Fatalf("counter after End(cur) = %d, want 0", active(s))
+	}
+}
+
+func TestStateResetRaceKeepsCountBalanced(t *testing.T) {
+	hammerState(t,
+		func(s *State, g uint32) { s.Begin(g) },
+		func(s *State, g uint32) { s.End(g) },
+		func(s *State) int32 { return s.active.Load() })
+}
+
+func TestStateResetRaceKeepsNormalCountBalanced(t *testing.T) {
+	hammerState(t,
+		func(s *State, g uint32) { s.BeginNormal(g) },
+		func(s *State, g uint32) { s.EndNormal(g) },
+		func(s *State) int32 { return s.normalActive.Load() })
+}
+
+func TestRunRequestStateWaitingFlag(t *testing.T) {
+	s := NewState()
+	if s.WaitingSettings() {
+		t.Fatal("waiting at start")
+	}
+	s.SetWaitingSettings(true)
+	if !s.WaitingSettings() {
+		t.Fatal("flag not set")
+	}
+	s.SetWaitingSettings(false)
+	if s.WaitingSettings() {
+		t.Fatal("flag not cleared")
+	}
+	var nilState *State
+	nilState.SetWaitingSettings(true)
+	if nilState.WaitingSettings() {
+		t.Fatal("nil state must never wait")
+	}
+}
+
+func TestStateNormalCounter(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	if s.NormalRunning() {
+		t.Fatal("normal at start")
+	}
+	s.BeginNormal(gen)
+	if !s.NormalRunning() {
+		t.Fatal("expected normal running")
+	}
+	s.EndNormal(gen)
+	if s.NormalRunning() {
+		t.Fatal("expected idle after EndNormal")
+	}
+	s.BeginNormal(gen)
+	s.Reset()
+	if s.NormalRunning() {
+		t.Fatal("Reset must zero the normal counter")
+	}
+	s.EndNormal(gen)
+	if s.NormalRunning() {
+		t.Fatal("stale EndNormal must be ignored")
+	}
+}
+
+func TestStateTorrentLock(t *testing.T) {
+	s := NewState()
+	unlock, ok := s.TryLockTorrent("ABCD")
+	if !ok {
+		t.Fatal("first TryLockTorrent must succeed")
+	}
+	if _, ok := s.TryLockTorrent("abcd"); ok {
+		t.Fatal("same hash in another case must be busy")
+	}
+	unlock()
+	unlock2, ok := s.TryLockTorrent("abcd")
+	if !ok {
+		t.Fatal("TryLockTorrent after unlock must succeed")
+	}
+	got := make(chan struct{})
+	go func() {
+		s.LockTorrent("ABCD")()
+		close(got)
+	}()
+	select {
+	case <-got:
+		t.Fatal("LockTorrent must wait while the hash is held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	unlock2()
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("LockTorrent did not proceed after unlock")
+	}
+
+	var nilState *State
+	nu, ok := nilState.TryLockTorrent("x")
+	if !ok || nu == nil {
+		t.Fatal("nil state: TryLockTorrent must be ok with a callable unlock")
+	}
+	nu()
+	nilState.LockTorrent("x")()
+}
+
+func TestStateTorrentLockLeavesNoEntries(t *testing.T) {
+	s := NewState()
+	for i := range 50 {
+		hash := fmt.Sprintf("H%02d", i)
+		unlock := s.LockTorrent(hash)
+		if _, ok := s.TryLockTorrent(hash); ok {
+			t.Fatalf("%s: second lock must fail while held", hash)
+		}
+		unlock()
+		again, ok := s.TryLockTorrent(hash)
+		if !ok {
+			t.Fatalf("%s: lock must succeed after unlock", hash)
+		}
+		again()
+	}
+	s.torrents.mu.Lock()
+	defer s.torrents.mu.Unlock()
+	if n := len(s.torrents.m); n != 0 {
+		t.Fatalf("%d lock entries left after all unlocks", n)
 	}
 }

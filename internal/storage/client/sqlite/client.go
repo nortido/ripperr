@@ -341,14 +341,13 @@ func (c *Client) PurgeDuplicateNames(ctx context.Context, winners map[string]str
 	defer func() { _ = tx.Rollback() }()
 
 	for name, hash := range winners {
-		norm := strings.ToLower(strings.TrimSpace(name))
-		if _, err := tx.ExecContext(ctx, `DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?`, norm, hash); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`, name, hash); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM release_times WHERE url_hash IN (SELECT url_hash FROM history WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?)`, norm, hash); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM release_times WHERE url_hash IN (SELECT url_hash FROM history WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?)`, name, hash); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history WHERE LOWER(TRIM(item_name)) = ? AND url_hash <> ?`, norm, hash); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`, name, hash); err != nil {
 			return err
 		}
 	}

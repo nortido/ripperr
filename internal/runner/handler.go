@@ -34,7 +34,8 @@ const (
 )
 
 var (
-	errSkipped = errors.New("skipped")
+	errSkipped     = errors.New("skipped")
+	errTorrentBusy = errors.New("torrent is checking, moving or has an error, update postponed")
 )
 
 type trackerService interface {
@@ -91,6 +92,11 @@ type handler struct {
 	siblings atomic.Pointer[map[string][]string]
 	// хеш торрента -> retryState: его обновление не удалось, а строку истории он делит с соседями
 	retry sync.Map
+	// задачи одного релиза в очередях: после старта новее не перезапускаем устаревшую
+	taskSeq   atomic.Uint64
+	startedMu sync.Mutex
+	// urlHash -> номер, под которым последний раз стартовала задача этого релиза
+	started map[string]uint64
 }
 
 type retryState struct {
@@ -102,6 +108,9 @@ type task struct {
 	entry *model.Entry
 	// не nil: холостой прогон, ничего не пишем
 	report *dryReport
+	seq    uint64
+	// задача планового прохода или "запустить сейчас": ее учитывает счетчик normalActive
+	normal bool
 }
 
 func (h *handler) Run(ctx context.Context) {
@@ -184,16 +193,7 @@ func (h *handler) pushForced(ctx context.Context, hashes []string, cherr chan er
 }
 
 func (h *handler) nextRun(now time.Time) time.Time {
-	loc := scheduleLocation(h.config.Location)
-	now = now.In(loc)
-	interval := time.Duration(24/h.config.ListRefreshPerDay) * time.Hour
-	anchor := time.Date(now.Year(), now.Month(), now.Day(), h.config.StartHour, 0, 0, 0, loc)
-	t := anchor
-	if !t.After(now) {
-		k := int64(now.Sub(anchor))/int64(interval) + 1
-		t = anchor.Add(time.Duration(k) * interval)
-	}
-	return t
+	return nextSlot(now, h.config.StartHour, h.config.ListRefreshPerDay, h.config.Location)
 }
 
 func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error) {
@@ -203,11 +203,16 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 		if tk == nil {
 			return
 		}
+		if h.staleTask(tk) {
+			h.endTask(tk.normal)
+			tk.report.done()
+			continue
+		}
 		e := tk.entry
 		h.state.StartItem(h.gen, ttid, e.URLHash)
 		var err error
 		func() {
-			defer h.state.End(h.gen)
+			defer h.endTask(tk.normal)
 			defer tk.report.done()
 			defer func() {
 				if r := recover(); r != nil {
@@ -239,6 +244,32 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 		case <-timer.C:
 		}
 	}
+}
+
+func (h *handler) endTask(normal bool) {
+	if normal {
+		h.state.EndNormal(h.gen)
+	}
+	h.state.End(h.gen)
+}
+
+func (h *handler) staleTask(tk *task) bool {
+	// холостой прогон ничего не пишет: его не пропускаем и в учет старта не берем
+	if tk.report != nil {
+		return false
+	}
+	h.startedMu.Lock()
+	defer h.startedMu.Unlock()
+	// соседи одной темы (тот же URL, другой торрент) это разные задачи
+	key := tk.entry.URLHash + "\x00" + tk.entry.Hash
+	if h.started[key] > tk.seq {
+		return true
+	}
+	if h.started == nil {
+		h.started = make(map[string]uint64)
+	}
+	h.started[key] = h.taskSeq.Add(1)
+	return false
 }
 
 func (h *handler) nextTask(ctx context.Context, ttid int) *task {
@@ -291,6 +322,10 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 	slot := h.passSlot(time.Now())
 	h.state.Begin(h.gen)
 	defer h.state.End(h.gen)
+	if forced == nil && !dry {
+		h.state.BeginNormal(h.gen)
+		defer h.state.EndNormal(h.gen)
+	}
 
 	var rep *dryReport
 	if dry {
@@ -438,6 +473,19 @@ func (h *handler) markRetry(ctx context.Context, e *model.Entry, cause error) {
 	h.forceRow(ctx, e.URLHash)
 }
 
+func (h *handler) deferRetry(ctx context.Context, e *model.Entry) {
+	if len(h.siblingHashes(e)) == 0 {
+		return
+	}
+	// счетчик попыток не растет: занятый торрент ждет сколько нужно, а сосед иначе спрячет его обновление
+	st := retryState{urlHash: e.URLHash}
+	if v, ok := h.retry.Load(e.Hash); ok {
+		st = v.(retryState)
+	}
+	h.retry.Store(e.Hash, st)
+	h.forceRow(ctx, e.URLHash)
+}
+
 func (h *handler) forceRow(ctx context.Context, urlHash string) {
 	if _, err := h.storage.SetForceCheck(ctx, urlHash, true); err != nil {
 		logger.Error(fmt.Sprintf("force_check set failed: %v", err))
@@ -466,6 +514,12 @@ func (h *handler) siblingHashes(e *model.Entry) (out []string) {
 }
 
 func (h *handler) attachComment(ctx context.Context, e *model.Entry) {
+	// занято заменой этого торрента: не помечаем, следующий проход повторит, горутина push не ждет
+	unlock, ok := h.state.TryLockTorrent(e.Hash)
+	if !ok {
+		return
+	}
+	defer unlock()
 	if _, done := h.attached.LoadOrStore(e.Hash, struct{}{}); done {
 		return
 	}
@@ -555,16 +609,20 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 			break
 		}
 		entries[i].PassSlot = p.slot
+		normal := p.forced == nil && !p.dry
 		h.state.Begin(h.gen)
+		if normal {
+			h.state.BeginNormal(h.gen)
+		}
 		h.state.Enqueue(h.gen, entries[i].URLHash)
 		p.rep.add()
 		select {
 		case <-ctx.Done():
 			h.state.Unqueue(h.gen, entries[i].URLHash)
-			h.state.End(h.gen)
+			h.endTask(normal)
 			p.rep.done()
 			return nil
-		case queue[t] <- &task{entry: entries[i], report: p.rep}:
+		case queue[t] <- &task{entry: entries[i], report: p.rep, seq: h.taskSeq.Add(1), normal: normal}:
 		}
 	}
 	return nil
@@ -676,6 +734,12 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		return
 	}
 	if pc.dateMissing {
+		if rep == nil {
+			// гостевая страница без ссылки или даты: возможно, сессия мертва, пусть следующий запрос войдет заново
+			if f, ok := h.trackerService.(interface{ ForceLoginNext(ttid int) }); ok {
+				f.ForceLoginNext(ttid)
+			}
+		}
 		// флаг держит повтор неудачного обновления торрента этой строки, его не снимаем
 		if rep == nil && !h.retryPending(e.URLHash) {
 			if _, clearErr := h.storage.SetForceCheck(ctx, e.URLHash, false); clearErr != nil {
@@ -692,7 +756,14 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 		return
 	}
-	if err = h.submit(ctx, ttid, tc, e, rep); err != nil {
+	if rep == nil && e.Unhealthy {
+		// клиент проверяет, переносит или ругается на старый торрент: замену не трогаем, следующий проход повторит
+		logger.Info(fmt.Sprintf("%s: %s", errTorrentBusy, e.Name))
+		h.deferRetry(ctx, e)
+		h.logCheckStreak(ctx, e, ttid, "error", errTorrentBusy.Error(), isTrackerWide(errTorrentBusy), rep)
+		return nil
+	}
+	if err = h.submitLocked(ctx, ttid, tc, e, rep); err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("processing interrupted")
 			return nil
@@ -759,7 +830,12 @@ func (h *handler) logCheck(ctx context.Context, e *model.Entry, ttid int, status
 
 func isTrackerWide(err error) bool {
 	// отказ всего трекера не вина записи: статус error пишем, серию не двигаем
-	return errors.Is(err, client.ErrTrackerUnavailable) || errors.Is(err, helper.ErrCircuitOpen) || errors.Is(err, model.ErrReplacePending)
+	return errors.Is(err, client.ErrTrackerUnavailable) || errors.Is(err, helper.ErrCircuitOpen) || errors.Is(err, model.ErrReplacePending) || errors.Is(err, errTorrentBusy) || serverError(err)
+}
+
+func serverError(err error) bool {
+	var se *client.StatusError
+	return errors.As(err, &se) && se.Code >= 500
 }
 
 func (h *handler) logCheckStreak(ctx context.Context, e *model.Entry, ttid int, status, errMsg string, keepStreak bool, rep *dryReport) {
@@ -879,6 +955,14 @@ func (h *handler) getPage(ctx context.Context, ttid int, link string) (b *bytes.
 		err = fmt.Errorf("no page data")
 	}
 	return
+}
+
+func (h *handler) submitLocked(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) error {
+	// замена и дописывание комментария одного торрента не пересекаются, это же держит web-перекачка
+	if rep == nil {
+		defer h.state.LockTorrent(e.Hash)()
+	}
+	return h.submit(ctx, ttid, tc, e, rep)
 }
 
 func (h *handler) submit(ctx context.Context, ttid int, tc client.IClient, e *model.Entry, rep *dryReport) (err error) {

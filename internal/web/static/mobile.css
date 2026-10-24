@@ -20,7 +20,7 @@ html.mobile-layout .table-dash-releases tbody tr {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-subtle);
   height: auto;
-  grid-template-columns: auto minmax(0, 1fr) var(--row-actions-w);
+  grid-template-columns: auto minmax(0, 1fr) max-content;
   grid-template-areas:
     "name name name"
     "meta meta actions"
@@ -117,14 +117,10 @@ html.mobile-layout .table-dash-releases .col-actions {
 }
 
 html.mobile-layout .table-dash-releases .release-actions {
-  --btn-h-sm: 32px;
-  --btn-icon-sm: 17px;
+  --btn-h-sm: 35px;
+  --btn-icon-sm: 19px;
   justify-content: center;
   gap: 14px;
-  padding: 1px 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-muted) 20%, transparent);
 }
 
 html.mobile-layout .table-dash-releases td {
@@ -183,6 +179,22 @@ html.mobile-layout .page-size-select {
     font-weight: 700;
     letter-spacing: -0.02em;
     color: var(--brand-head);
+  }
+
+  /* кнопки страницы, ушедшие под полосу при прокрутке; копии ставит layout.js */
+  .mobile-header-actions:not([hidden]) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .mobile-header-actions .btn {
+    white-space: nowrap;
+  }
+
+  .mobile-header.has-actions .mobile-header-brand-text {
+    display: none;
   }
 
   .sidebar-collapse-btn {
@@ -723,6 +735,7 @@ html.mobile-layout .stat-card-next-run .stat-value {
   line-height: 1.2;
   white-space: nowrap;
   overflow: visible;
+  padding-right: 0;
 }
 
 /* места впритык: трехзначное число полным шрифтом выталкивало плитки во второй ряд */
@@ -779,4 +792,40 @@ html.mobile-layout .modal-head {
 
 html.mobile-layout .modal-foot {
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+/* полноэкранный диалог начинается под верхней полосой. Логотип и копии кнопок
+   страницы при открытом диалоге не нажимаются, бургер сначала закрывает диалог */
+html.mobile-layout .modal-overlay:not(.confirm-overlay) {
+  top: calc(56px * var(--page-scale, 1));
+}
+
+html.mobile-layout .modal-overlay:not(.confirm-overlay) > .modal {
+  height: auto;
+}
+
+html.mobile-layout .modal-overlay:not(.confirm-overlay) .modal-head {
+  padding-top: 12px;
+}
+
+html.mobile-layout body:has(.modal-overlay:not(.confirm-overlay)) .mobile-header-brand,
+html.mobile-layout body:has(.modal-overlay:not(.confirm-overlay)) .mobile-header-actions {
+  pointer-events: none;
+}
+
+/* на телефоне поля интеграций по одному в строке: в два столбца длинные
+   подписи переносились и сдвигали поле ниже соседнего */
+html.mobile-layout #view-integrations .form-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* адрес входа длинный: на телефоне он на всю ширину под типом доступа */
+html.mobile-layout .tracker-form .form-row-pair:has(.tr-login-url) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* на телефоне у вкладок каналов узкие поля, чтобы имена влезли целиком */
+html.mobile-layout .notify-tabs .notify-tab {
+  padding-left: 2px;
+  padding-right: 2px;
 }

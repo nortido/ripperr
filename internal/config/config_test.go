@@ -58,6 +58,8 @@ func TestApplyTrackerEnvIgnoresForeignPrefix(t *testing.T) {
 
 func TestRunnerValidateMagnetTimeoutBounds(t *testing.T) {
 	base := DefaultApp().Runner
+	base.ListRefreshPerDay = 2
+	base.StartHour = 7
 	// 0 значит "не задано": пустая переменная окружения дает found=true, val="".
 	// Runner сам поднимет его до минуты
 	for _, v := range []int64{0, 5, 60, 600} {
@@ -72,6 +74,30 @@ func TestRunnerValidateMagnetTimeoutBounds(t *testing.T) {
 		r.MagnetTimeout = v
 		if err := r.Validate(); err == nil {
 			t.Errorf("MagnetTimeout=%d: expected error", v)
+		}
+	}
+}
+
+func TestRunnerValidateSchedule(t *testing.T) {
+	base := DefaultApp().Runner
+	base.ListRefreshPerDay = 2
+	base.StartHour = 7
+	base.MagnetTimeout = 0
+	if err := base.ValidateSchedule(); err != nil {
+		t.Fatalf("base: unexpected error: %v", err)
+	}
+	for _, v := range []int{0, 5, 25} {
+		r := base
+		r.ListRefreshPerDay = v
+		if err := r.ValidateSchedule(); err == nil {
+			t.Errorf("ListRefreshPerDay=%d: expected error", v)
+		}
+	}
+	for _, v := range []int{-1, 24} {
+		r := base
+		r.StartHour = v
+		if err := r.ValidateSchedule(); err == nil {
+			t.Errorf("StartHour=%d: expected error", v)
 		}
 	}
 }
@@ -196,5 +222,12 @@ func TestWebAppURLEnv(t *testing.T) {
 	}
 	if cfg.Web.AppURL != "https://r.example.com" {
 		t.Fatalf("env AppURL = %q", cfg.Web.AppURL)
+	}
+}
+
+func TestRunnerValidateIgnoresSchedule(t *testing.T) {
+	r := Runner{ListRefreshPerDay: 0, StartHour: 30, MagnetTimeout: 60}
+	if err := r.Validate(); err != nil {
+		t.Fatalf("Validate must not check the schedule (the DB may override it): %v", err)
 	}
 }

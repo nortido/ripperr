@@ -6,7 +6,9 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"ripperr/internal/config"
 	"ripperr/internal/notify"
@@ -1172,6 +1174,7 @@ func countWarns(sub string) int {
 func TestInvalidAppURLWarnsOncePerValue(t *testing.T) {
 	resetWarned()
 	const marker = "ftp://warn-once-test.invalid"
+	base, base2 := countWarns(marker), countWarns(marker+"2")
 	for range 3 {
 		cfg := config.App{Web: config.Web{Listen: ":6410", AppURL: marker}}
 		if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{}); err != nil {
@@ -1181,20 +1184,21 @@ func TestInvalidAppURLWarnsOncePerValue(t *testing.T) {
 			t.Fatalf("AppURL = %q, want cleared", cfg.Web.AppURL)
 		}
 	}
-	if got := countWarns(marker); got != 1 {
+	if got := countWarns(marker) - base; got != 1 {
 		t.Errorf("warnings = %d, want 1", got)
 	}
 	cfg := config.App{Web: config.Web{Listen: ":6410", AppURL: marker + "2"}}
 	if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countWarns(marker + "2"); got != 1 {
+	if got := countWarns(marker+"2") - base2; got != 1 {
 		t.Errorf("warnings for new value = %d, want 1", got)
 	}
 }
 
 func TestLockedStoredPortWarnsOnce(t *testing.T) {
 	resetWarned()
+	base := countWarns("stored web port 7123 ignored")
 	data := map[string]json.RawMessage{"web": json.RawMessage(`{"port":7123}`)}
 	for range 3 {
 		cfg := config.App{Web: config.Web{Listen: ":6410", PortLocked: true}}
@@ -1202,15 +1206,16 @@ func TestLockedStoredPortWarnsOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := countWarns("stored web port 7123 ignored"); got != 1 {
+	if got := countWarns("stored web port 7123 ignored") - base; got != 1 {
 		t.Errorf("warnings = %d, want 1", got)
 	}
 	same := map[string]json.RawMessage{"web": json.RawMessage(`{"port":6410}`)}
+	baseSame := countWarns("stored web port 6410 ignored")
 	cfg := config.App{Web: config.Web{Listen: ":6410", PortLocked: true}}
 	if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{data: same}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countWarns("stored web port 6410 ignored"); got != 0 {
+	if got := countWarns("stored web port 6410 ignored") - baseSame; got != 0 {
 		t.Errorf("warned for matching port: %d", got)
 	}
 }
@@ -1219,4 +1224,185 @@ func resetWarned() {
 	warnedMu.Lock()
 	warned = nil
 	warnedMu.Unlock()
+}
+
+func notifyLanguageJSON(t *testing.T, cfg *config.App) string {
+	t.Helper()
+	var s struct {
+		Notifications struct {
+			Language string `json:"language"`
+		} `json:"notifications"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &s); err != nil {
+		t.Fatal(err)
+	}
+	return s.Notifications.Language
+}
+
+func TestIntegrationsNotifyLanguageRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeSettingsDB{}
+	cfg := config.App{}
+	if err := ApplyOverrides(ctx, &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if got := notifyLanguageJSON(t, &cfg); got != "en" {
+		t.Fatalf("empty db language = %q, want en", got)
+	}
+	for _, step := range []struct{ patch, want string }{
+		{`{"notifications":{"language":"ru"}}`, "ru"},
+		{`{"notifications":{"enabled":true}}`, "ru"},
+		{`{"notifications":{"language":"en"}}`, "en"},
+	} {
+		if err := MergeIntegrations(ctx, db, json.RawMessage(step.patch)); err != nil {
+			t.Fatal(err)
+		}
+		cfg = config.App{}
+		if err := ApplyOverrides(ctx, &cfg, db); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Notify.Language != step.want {
+			t.Fatalf("%s: cfg.Notify.Language = %q, want %q", step.patch, cfg.Notify.Language, step.want)
+		}
+		if got := notifyLanguageJSON(t, &cfg); got != step.want {
+			t.Fatalf("%s: JSON language = %q, want %q", step.patch, got, step.want)
+		}
+	}
+	cfg = config.App{}
+	cfg.Notify.Language = "xx"
+	if got := notifyLanguageJSON(t, &cfg); got != "en" {
+		t.Fatalf("garbage language in JSON = %q, want en", got)
+	}
+}
+
+func TestIntegrationsBrowserChannelRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeSettingsDB{}
+	cfg := config.App{}
+	if err := ApplyOverrides(ctx, &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	browser := func(cfg *config.App) (bool, []string) {
+		t.Helper()
+		var s struct {
+			Notifications struct {
+				Browser *struct {
+					Enabled bool     `json:"enabled"`
+					Events  []string `json:"events"`
+				} `json:"browser"`
+			} `json:"notifications"`
+		}
+		if err := json.Unmarshal(IntegrationsJSON(cfg), &s); err != nil {
+			t.Fatal(err)
+		}
+		if s.Notifications.Browser == nil {
+			t.Fatal("notifications.browser is absent in IntegrationsJSON")
+		}
+		return s.Notifications.Browser.Enabled, s.Notifications.Browser.Events
+	}
+	enabled, events := browser(&cfg)
+	if !enabled || !slices.Equal(events, notify.DefaultEvents()) {
+		t.Fatalf("empty db browser = %v %v, want true %v", enabled, events, notify.DefaultEvents())
+	}
+	for _, step := range []struct {
+		patch   string
+		enabled bool
+	}{
+		{`{"notifications":{"browser":{"enabled":false,"events":["broken","updated","broken"]}}}`, false},
+		{`{"notifications":{"browser":{"enabled":true}}}`, true},
+	} {
+		if err := MergeIntegrations(ctx, db, json.RawMessage(step.patch)); err != nil {
+			t.Fatal(err)
+		}
+		cfg = config.App{}
+		if err := ApplyOverrides(ctx, &cfg, db); err != nil {
+			t.Fatal(err)
+		}
+		enabled, events := browser(&cfg)
+		if enabled != step.enabled || !slices.Equal(events, []string{"broken", "updated"}) {
+			t.Fatalf("%s: JSON browser = %v %v", step.patch, enabled, events)
+		}
+		if cfg.Notify.BrowserDisabled == step.enabled || !slices.Equal(cfg.Notify.BrowserEvents, []string{"broken", "updated"}) {
+			t.Fatalf("%s: cfg.Notify = %v %v", step.patch, cfg.Notify.BrowserDisabled, cfg.Notify.BrowserEvents)
+		}
+	}
+}
+
+type racingSettingsDB struct {
+	mu      sync.Mutex
+	data    map[string]json.RawMessage
+	readers int
+	second  chan struct{}
+}
+
+func (r *racingSettingsDB) GetSetting(_ context.Context, key string) (json.RawMessage, bool, error) {
+	r.mu.Lock()
+	v, ok := r.data[key]
+	r.readers++
+	if r.readers == 2 {
+		close(r.second)
+	}
+	r.mu.Unlock()
+	select {
+	case <-r.second:
+	case <-time.After(200 * time.Millisecond):
+	}
+	return v, ok, nil
+}
+
+func (r *racingSettingsDB) SaveSetting(_ context.Context, key string, value json.RawMessage) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.data[key] = value
+	return nil
+}
+
+func TestMergeConcurrentKeepsBoth(t *testing.T) {
+	type mergeFn func(context.Context, *racingSettingsDB, json.RawMessage) error
+	cases := []struct {
+		name  string
+		key   string
+		merge mergeFn
+		a, b  string
+		want  []string
+	}{
+		{"schedule", "schedule", func(ctx context.Context, db *racingSettingsDB, p json.RawMessage) error {
+			return MergeSchedule(ctx, db, p)
+		},
+			`{"start_hour":5,"list_refresh_per_day":2,"threshold_month":1,"threshold_half_year":7,"threshold_year":30,"timezone":"UTC"}`,
+			`{"start_hour":5,"list_refresh_per_day":2,"threshold_month":1,"threshold_half_year":7,"threshold_year":30,"monitored_categories":["tv"]}`,
+			[]string{`"timezone":"UTC"`, `"monitored_categories":["tv"]`}},
+		{"integrations", "integrations", func(ctx context.Context, db *racingSettingsDB, p json.RawMessage) error {
+			return MergeIntegrations(ctx, db, p)
+		},
+			`{"qbit":{"host":"q.lan"}}`, `{"metrics":{"token":"tok"}}`, []string{`"host":"http://q.lan"`, `"token":"tok"`}},
+		{"web", "web", func(ctx context.Context, db *racingSettingsDB, p json.RawMessage) error { return MergeWeb(ctx, db, p) },
+			`{"app_url":"https://a.example"}`, `{"allowed_hosts":["x.lan"]}`, []string{`"app_url":"https://a.example"`, `"allowed_hosts":["x.lan"]`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := &racingSettingsDB{data: map[string]json.RawMessage{}, second: make(chan struct{})}
+			var wg sync.WaitGroup
+			errs := make([]error, 2)
+			for i, p := range []string{tc.a, tc.b} {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					errs[i] = tc.merge(context.Background(), db, json.RawMessage(p))
+				}()
+			}
+			wg.Wait()
+			for _, err := range errs {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := string(db.data[tc.key])
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("lost %s in %s", w, got)
+				}
+			}
+		})
+	}
 }

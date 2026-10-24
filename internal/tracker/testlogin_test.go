@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,7 +34,7 @@ func (stubFlareProxy) Send(r *http.Request, _ *proxyModel.Options, pt proxyModel
 	}, nil
 }
 
-func (stubFlareProxy) DestroyFlareSession(string) error { return nil }
+func (stubFlareProxy) DestroyFlareSession(context.Context, string) error { return nil }
 
 func TestInitClientKinozalRejectsMissingAuthCookies(t *testing.T) {
 	conf := trackerModel.Tracker{
@@ -152,5 +154,76 @@ func TestTrackerIDsResolved(t *testing.T) {
 			t.Fatalf("%s и %s делят id %d", prev, key, id)
 		}
 		seen[id] = key
+	}
+}
+
+type flarePayload struct {
+	Cmd     string `json:"cmd"`
+	Session string `json:"session"`
+}
+
+func TestTestLoginUsesOwnFlareSession(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		payloads []flarePayload
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p flarePayload
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		mu.Lock()
+		payloads = append(payloads, p)
+		mu.Unlock()
+		if p.Cmd == "sessions.destroy" {
+			_, _ = io.WriteString(w, `{"status":"ok"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"status":"ok","solution":{"status":200,"response":"<html>ok</html>","userAgent":"ua"}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.App{
+		Runner:       config.Runner{TLSProfile: "chrome_131"},
+		Flaresolverr: config.Flaresolverr{Host: srv.URL, MaxTimeout: 1000},
+		Tracker: config.Tracker{
+			"rutracker": &config.TrackerItem{
+				Name: "rutracker", Domain: "rutracker.org", ActiveDomain: "rutracker.org",
+				Publicity: "private", ProxyType: int(proxyModel.TypeFlare),
+				LoginURL: "https://rutracker.org/forum/login.php", Credentials: "login_username=a&login_password=b",
+				Enabled: true,
+			},
+		},
+	}
+	if err := TestLogin(context.Background(), cfg, nopLoginDB{}, "rutracker", nil); err != nil {
+		t.Fatalf("TestLogin: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(payloads) < 2 {
+		t.Fatalf("payloads = %+v", payloads)
+	}
+	var requestSession string
+	for _, p := range payloads {
+		if p.Session == "rutracker" {
+			t.Fatalf("live session touched: %+v", p)
+		}
+		if !strings.HasPrefix(p.Session, "rutracker-test-") {
+			t.Fatalf("session = %q, want rutracker-test- prefix: %+v", p.Session, p)
+		}
+		if strings.HasPrefix(p.Cmd, "request.") {
+			if requestSession != "" && requestSession != p.Session {
+				t.Fatalf("request sessions differ: %q and %q", requestSession, p.Session)
+			}
+			requestSession = p.Session
+		}
+	}
+	if requestSession == "" {
+		t.Fatalf("no request.* payload: %+v", payloads)
+	}
+	last := payloads[len(payloads)-1]
+	if last.Cmd != "sessions.destroy" || last.Session != requestSession {
+		t.Fatalf("last payload = %+v, want destroy of %q", last, requestSession)
 	}
 }

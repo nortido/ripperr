@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="en" data-theme="dark">
 <head>
   <script>
     (function () {
-      var lang = 'ru';
+      var lang = 'en';
       try {
         var l = localStorage.getItem('ripperr-lang');
         if (l === 'ru' || l === 'en') lang = l;
@@ -61,8 +61,8 @@
     function authErrorText(data, status) {
       const key = data && AUTH_ERRORS[data.error];
       if (!key) return (data && data.error) || 'HTTP ' + status;
-      let msg = t(key, {s: data.retry_after || 60});
-      if (data.retry_after && key === 'auth.errInvalid') msg += '. ' + t('auth.errLocked', {s: data.retry_after});
+      let msg = t(key, {s: formatWait(data.retry_after || 60)});
+      if (data.retry_after && key === 'auth.errInvalid') msg += '. ' + t('auth.errLocked', {s: formatWait(data.retry_after)});
       else if (typeof data.attempts_left === 'number') msg += '. ' + t('auth.errAttemptsLeft', {n: data.attempts_left});
       return msg;
     }
@@ -125,7 +125,7 @@
         try {
           const res = await fetch(isSetup ? '/api/auth/setup' : '/api/auth/login', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-Ripperr': '1'},
             body: JSON.stringify({username: username, password: password}),
           });
           if (!res.ok) {

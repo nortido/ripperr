@@ -43,6 +43,7 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 
 	body := []byte(`{"username":"testuser","password":"testpass123"}`)
 	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
 	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -62,6 +63,7 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 	}
 
 	req = httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
 	req.Host = "192.168.1.5:6410"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -71,6 +73,7 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 
 	loginBody := []byte(`{"username":"testuser","password":"testpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -85,6 +88,7 @@ func TestAuthSetupThenLoginFlow(t *testing.T) {
 
 	wrongBody := []byte(`{"username":"testuser","password":"wrongpass"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(wrongBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -104,6 +108,7 @@ func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 
 	setupBody := []byte(`{"username":"admin","password":"adminpass123"}`)
 	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -121,6 +126,7 @@ func TestAuthBlocksApiWhenConfigured(t *testing.T) {
 
 	loginBody := []byte(`{"username":"admin","password":"adminpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -185,6 +191,7 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 
 	setupBody := []byte(`{"username":"admin","password":"newpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.Host = "192.168.1.5:6410"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -208,6 +215,7 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 
 	wrongBody := []byte(`{"username":"admin","password":"wrongpass"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(wrongBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -217,6 +225,7 @@ func TestLoadAuthCacheUpdatedOnSetup(t *testing.T) {
 
 	loginBody := []byte(`{"username":"admin","password":"newpass123"}`)
 	req = httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -279,6 +288,7 @@ func newConfiguredAuthServer(t *testing.T, web config.Web) *Server {
 	}
 	setupBody := []byte(`{"username":"admin","password":"adminpass123"}`)
 	req := httptest.NewRequest("POST", "/api/auth/setup", bytes.NewReader(setupBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -316,6 +326,7 @@ func TestCrossOriginStateChangeBlocked(t *testing.T) {
 				cookie = loginCookie(t, srv)
 			}
 			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.Header.Set("X-Ripperr", "1")
 			if cookie != nil {
 				req.AddCookie(cookie)
 			}
@@ -351,6 +362,7 @@ func TestCrossOriginAllowedHostOrigin(t *testing.T) {
 				return cfg
 			}
 			req := httptest.NewRequest("POST", "/api/auth/logout", nil)
+			req.Header.Set("X-Ripperr", "1")
 			req.RemoteAddr = "192.168.1.10:1234"
 			req.Host = "192.168.1.200:6410"
 			req.Header.Set("Origin", "https://my.keenetic.pro")
@@ -361,6 +373,113 @@ func TestCrossOriginAllowedHostOrigin(t *testing.T) {
 			}
 		})
 	}
+}
+
+func csrfRequest(srv *Server, method, path, host, origin, proof, fetchSite, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = host
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	if proof != "" {
+		req.Header.Set("X-Ripperr", proof)
+	}
+	if fetchSite != "" {
+		req.Header.Set("Sec-Fetch-Site", fetchSite)
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func TestCSRFProofRequired(t *testing.T) {
+	const lanHost, lanOrigin, proxyHost = "192.168.1.5:6410", "http://192.168.1.5:6410", "192.168.1.105"
+	cases := []struct {
+		name      string
+		host      string
+		origin    string
+		proof     string
+		fetchSite string
+		want      int
+	}{
+		{"no header", lanHost, lanOrigin, "", "", http.StatusForbidden},
+		{"header 1", lanHost, lanOrigin, "1", "", http.StatusNoContent},
+		{"header 0", lanHost, lanOrigin, "0", "", http.StatusForbidden},
+		{"same-site", lanHost, lanOrigin, "1", "same-site", http.StatusForbidden},
+		{"cross-site", lanHost, lanOrigin, "1", "cross-site", http.StatusForbidden},
+		{"same-origin", lanHost, lanOrigin, "1", "same-origin", http.StatusNoContent},
+		{"none", lanHost, lanOrigin, "1", "none", http.StatusNoContent},
+		{"proxy no header", proxyHost, "", "", "", http.StatusForbidden},
+		{"proxy header 1", proxyHost, "", "1", "", http.StatusNoContent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+			cookie := loginCookie(t, srv)
+			w := csrfRequest(srv, "DELETE", "/api/ignore/abc", tc.host, tc.origin, tc.proof, tc.fetchSite, "", cookie)
+			if w.Code != tc.want {
+				t.Fatalf("code %d, want %d", w.Code, tc.want)
+			}
+			if tc.want == http.StatusForbidden {
+				if got := errorText(t, w); got != "cross-origin request" {
+					t.Errorf("error %q, want cross-origin request", got)
+				}
+			}
+		})
+	}
+
+	t.Run("login", func(t *testing.T) {
+		srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+		w := csrfRequest(srv, "POST", "/api/auth/login", lanHost, lanOrigin, "", "", rightLogin, nil)
+		if w.Code != http.StatusForbidden || sessionCookie(w) != nil {
+			t.Fatalf("login without header: code %d, cookie %v, want 403 and no cookie", w.Code, sessionCookie(w))
+		}
+		if w := csrfRequest(srv, "POST", "/api/auth/login", lanHost, lanOrigin, "1", "", rightLogin, nil); w.Code != http.StatusOK {
+			t.Fatalf("login with header: code %d, want 200", w.Code)
+		}
+	})
+
+	t.Run("logout", func(t *testing.T) {
+		srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+		cookie := loginCookie(t, srv)
+		if w := csrfRequest(srv, "POST", "/api/auth/logout", lanHost, lanOrigin, "", "", "", cookie); w.Code != http.StatusForbidden {
+			t.Fatalf("logout without header: code %d, want 403", w.Code)
+		}
+		if w := historyWith(srv, cookie, lanHost, ""); w.Code != http.StatusOK {
+			t.Fatalf("history after refused logout: code %d, want 200", w.Code)
+		}
+	})
+
+	t.Run("setup", func(t *testing.T) {
+		bare := newBareServer(&fakeStore{})
+		if w := csrfRequest(bare, "POST", "/api/auth/setup", lanHost, "", "", "", rightLogin, nil); w.Code != http.StatusForbidden {
+			t.Fatalf("setup without header: code %d, want 403", w.Code)
+		}
+	})
+
+	t.Run("safe and non-api", func(t *testing.T) {
+		srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+		cookie := loginCookie(t, srv)
+		if w := csrfRequest(srv, "GET", "/api/history", lanHost, "", "", "", "", cookie); w.Code != http.StatusOK {
+			t.Errorf("GET /api/history without header: code %d, want 200", w.Code)
+		}
+		if w := csrfRequest(srv, "GET", "/metrics", lanHost, "", "", "", "", nil); w.Code == http.StatusForbidden {
+			t.Errorf("GET /metrics without header: code 403")
+		}
+		w := csrfRequest(srv, "OPTIONS", "/api/run", lanHost, "http://evil.example", "", "", "", cookie)
+		if w.Code == http.StatusForbidden {
+			t.Errorf("OPTIONS /api/run: code 403")
+		}
+		for name := range w.Header() {
+			if strings.HasPrefix(name, "Access-Control-Allow-") {
+				t.Errorf("OPTIONS /api/run: unexpected header %s", name)
+			}
+		}
+	})
 }
 
 type lockedSettingStore struct {
@@ -401,8 +520,12 @@ func authState(t *testing.T, srv *Server, cookie *http.Cookie) map[string]any {
 }
 
 func sessionCookie(w *httptest.ResponseRecorder) *http.Cookie {
+	if all := sessionCookiesAll(w); len(all) > 0 {
+		return all[0]
+	}
+	// живой нет: отдаем удаление, его проверяют тесты выхода
 	for _, c := range w.Result().Cookies() {
-		if c.Name == authCookieName {
+		if c.Name == authCookieName || c.Name == hostCookiePrefix+authCookieName {
 			return c
 		}
 	}
@@ -452,6 +575,7 @@ func TestApiClosedUntilAccount(t *testing.T) {
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("X-Ripperr", "1")
 		req.RemoteAddr = "192.168.1.10:1234"
 		req.Host = "192.168.1.5:6410"
 		w := httptest.NewRecorder()
@@ -485,6 +609,7 @@ func TestSetupHostCheck(t *testing.T) {
 		{"evil.example.com:6410", nil, http.StatusForbidden},
 		{"evil.example.com:6410", keenetic, http.StatusForbidden},
 		{"my.keenetic.pro", nil, http.StatusForbidden},
+		{"192.168.1.105", nil, http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
@@ -495,6 +620,7 @@ func TestSetupHostCheck(t *testing.T) {
 				return cfg
 			}
 			req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+			req.Header.Set("X-Ripperr", "1")
 			req.RemoteAddr = "192.168.1.10:1234"
 			req.Host = tc.host
 			w := httptest.NewRecorder()
@@ -522,6 +648,7 @@ func TestSetupCreatesOneAccount(t *testing.T) {
 			defer wg.Done()
 			body := fmt.Sprintf(`{"username":"admin","password":"adminpass%d"}`, i)
 			req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(body))
+			req.Header.Set("X-Ripperr", "1")
 			req.RemoteAddr = "192.168.1.10:1234"
 			req.Host = "192.168.1.5:6410"
 			recs[i] = httptest.NewRecorder()
@@ -555,6 +682,7 @@ func TestSetupCreatesOneAccount(t *testing.T) {
 	}
 
 	req = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(fmt.Sprintf(`{"username":"admin","password":"adminpass%d"}`, winner)))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "203.0.113.5:1234"
 	w = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -574,6 +702,7 @@ func TestAuthStateHidesUsername(t *testing.T) {
 	}
 
 	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "203.0.113.5:1234"
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -589,6 +718,7 @@ func TestAuthStateHidesUsername(t *testing.T) {
 func loginCookie(t *testing.T, srv *Server) *http.Cookie {
 	t.Helper()
 	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "192.168.1.10:1234"
 	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
@@ -608,6 +738,7 @@ func TestSetupRechecksStoredAccount(t *testing.T) {
 	srv.authCache.set(nil)
 
 	req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "192.168.1.10:1234"
 	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
@@ -639,6 +770,7 @@ const (
 
 func loginFrom(srv *Server, remote, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = remote
 	w := httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(w, req)
@@ -746,6 +878,7 @@ func TestHashSlotsLimit(t *testing.T) {
 	bare := newBareServer(&fakeStore{})
 	fillHashSlots(bare)
 	req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(rightLogin))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "192.168.1.10:1234"
 	req.Host = "192.168.1.5:6410"
 	w := httptest.NewRecorder()
@@ -776,7 +909,7 @@ func TestLoginLockExpiresAndSuccessResets(t *testing.T) {
 	if w := loginFrom(srv, "198.51.100.8:1000", wrongLogin); w.Code != http.StatusUnauthorized {
 		t.Fatalf("other address during lock: code %d, want 401", w.Code)
 	}
-	clock = clock.Add(61 * time.Second)
+	clock = clock.Add(loginLockWindow + time.Second)
 	if w := loginFrom(srv, remote, rightLogin); w.Code != http.StatusOK {
 		t.Fatalf("right login after lock: code %d, want 200", w.Code)
 	}
@@ -787,11 +920,68 @@ func TestLoginLockExpiresAndSuccessResets(t *testing.T) {
 		}
 	}
 
-	clock = clock.Add(61 * time.Second)
+	clock = clock.Add(loginLockWindow + time.Second)
 	for i := range 4 {
 		if w := loginFrom(srv, remote, wrongLogin); w.Code != http.StatusUnauthorized {
 			t.Fatalf("wrong login %d in a new window: code %d, want 401", i+1, w.Code)
 		}
+	}
+}
+
+func TestLoginLockLastsADay(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	t0 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	clock := t0
+	srv.loginFails.now = func() time.Time { return clock }
+	const remote = "198.51.100.20:1000"
+	retryAfter := func(w *httptest.ResponseRecorder) int {
+		t.Helper()
+		var resp struct {
+			RetryAfter int `json:"retry_after"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode body %q: %v", w.Body.String(), err)
+		}
+		return resp.RetryAfter
+	}
+
+	for i := range maxLoginFails {
+		w := loginFrom(srv, remote, wrongLogin)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong login %d: code %d, want 401", i+1, w.Code)
+		}
+		if i == maxLoginFails-1 {
+			if got := retryAfter(w); got != 86400 {
+				t.Fatalf("5th wrong login: retry_after %d, want 86400", got)
+			}
+		}
+	}
+	w := loginFrom(srv, remote, wrongLogin)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("6th wrong login: code %d, want 429", w.Code)
+	}
+	if got := retryAfter(w); got != 86400 {
+		t.Fatalf("6th wrong login: retry_after %d, want 86400", got)
+	}
+	if h := w.Header().Get("Retry-After"); h != "86400" {
+		t.Fatalf("Retry-After header %q, want 86400", h)
+	}
+	if w := loginFrom(srv, "198.51.100.21:1000", wrongLogin); w.Code != http.StatusUnauthorized {
+		t.Fatalf("other address during lock: code %d, want 401", w.Code)
+	}
+
+	clock = t0.Add(23*time.Hour + 59*time.Minute)
+	w = loginFrom(srv, remote, rightLogin)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("right login a minute before unlock: code %d, want 429", w.Code)
+	}
+	if got := retryAfter(w); got != 60 {
+		t.Fatalf("right login a minute before unlock: retry_after %d, want 60", got)
+	}
+
+	clock = t0.Add(24 * time.Hour)
+	if w := loginFrom(srv, remote, rightLogin); w.Code != http.StatusOK {
+		t.Fatalf("right login after a day: code %d, want 200", w.Code)
 	}
 }
 
@@ -864,6 +1054,7 @@ func TestLoginThrottleKeyBehindTrustedProxy(t *testing.T) {
 	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true, TrustedProxy: true})
 	for i := range 6 {
 		req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(wrongLogin))
+		req.Header.Set("X-Ripperr", "1")
 		req.RemoteAddr = "192.168.65.1:1000"
 		req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.0.0.%d, 203.0.113.9", i))
 		w := httptest.NewRecorder()
@@ -880,26 +1071,61 @@ func TestLoginThrottleKeyBehindTrustedProxy(t *testing.T) {
 
 func TestLoginThrottlePrunesExpiredKeys(t *testing.T) {
 	th := newLoginThrottle()
-	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	t0 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	clock := t0
 	th.now = func() time.Time { return clock }
 	for range maxLoginFails {
 		th.reserve("locked")
 	}
-	for i := range maxThrottleKeys {
+	for i := range maxThrottleKeys - 2 {
 		th.reserve(fmt.Sprintf("k%d", i))
 	}
-	clock = clock.Add(30 * time.Second)
-	th.reserve("fresh")
-	if got := len(th.fails); got != maxThrottleKeys+2 {
-		t.Fatalf("keys inside the window = %d, want %d", got, maxThrottleKeys+2)
+	if got := len(th.fails); got != maxThrottleKeys-1 {
+		t.Fatalf("keys after fill = %d, want %d", got, maxThrottleKeys-1)
 	}
-	clock = clock.Add(31 * time.Second)
-	th.reserve("next")
-	// fresh еще в своем окне, остальные истекли
-	if got := len(th.fails); got != 2 {
-		t.Fatalf("keys after expiry = %d, want 2", got)
+	clock = t0.Add(12 * time.Hour)
+	for range maxLoginFails {
+		th.reserve("late")
 	}
-	if !th.reserve("locked") {
+	if got := len(th.fails); got != maxThrottleKeys {
+		t.Fatalf("keys after late = %d, want %d", got, maxThrottleKeys)
+	}
+	if th.reserve("fresh") {
+		t.Fatal("new key accepted on a full table")
+	}
+	if got := len(th.fails); got != maxThrottleKeys {
+		t.Fatalf("keys after refused fresh = %d, want %d", got, maxThrottleKeys)
+	}
+	if left, wait := th.status("fresh"); left != 0 || wait != loginLockWindow {
+		t.Fatalf("status(fresh) = (%d, %v), want (0, %v)", left, wait, loginLockWindow)
+	}
+	if !th.reserve("k0") {
+		t.Fatal("existing key refused on a full table")
+	}
+
+	clock = t0.Add(24*time.Hour + time.Second)
+	if !th.reserve("k1") {
+		t.Fatal("existing key with an expired window refused on a full table")
+	}
+	if got := len(th.fails); got != maxThrottleKeys {
+		t.Fatalf("keys after k1 reset = %d, want %d", got, maxThrottleKeys)
+	}
+	if !th.reserve("next") {
+		t.Fatal("new key refused after expiry")
+	}
+	// late еще заблокирован, k1 сброшен в новом окне, остальные истекли
+	if got := len(th.fails); got != 3 {
+		t.Fatalf("keys after expiry = %d, want 3", got)
+	}
+	if th.reserve("late") {
+		t.Fatal("late lock expired too early")
+	}
+	if _, wait := th.status("late"); wait != 12*time.Hour-time.Second {
+		t.Fatalf("status(late) wait = %v, want %v", wait, 12*time.Hour-time.Second)
+	}
+
+	clock = t0.Add(36 * time.Hour)
+	if !th.reserve("late") {
 		t.Error("expired lock still blocks")
 	}
 }
@@ -921,6 +1147,7 @@ func historyWith(srv *Server, cookie *http.Cookie, host, referer string) *httpte
 
 func logoutWith(srv *Server, cookie *http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", "/api/auth/logout", nil)
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "192.168.1.10:1234"
 	req.Host = "192.168.1.5:6410"
 	req.Header.Set("Origin", "http://192.168.1.5:6410")
@@ -934,6 +1161,7 @@ func logoutWith(srv *Server, cookie *http.Cookie) *httptest.ResponseRecorder {
 
 func authPost(srv *Server, path, host, origin, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "192.168.1.10:1234"
 	req.Host = host
 	req.Header.Set("Origin", origin)
@@ -1093,6 +1321,7 @@ func TestSessionCookieSecureFromScheme(t *testing.T) {
 	}
 
 	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(rightLogin))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "192.168.1.10:1234"
 	req.Host = "192.168.1.5:6410"
 	req.Header.Set("Origin", "http://192.168.1.5:6410")
@@ -1121,6 +1350,29 @@ func TestSessionCookieSecureFromScheme(t *testing.T) {
 	}
 }
 
+func TestSessionCookieSecureBehindStrippingProxy(t *testing.T) {
+	web := config.Web{Listen: ":0", Enabled: true, AllowedHosts: []string{"track.example.net"}}
+	srv := newConfiguredAuthServer(t, web)
+
+	// так приходит запрос через https-прокси keenetic: Host это адрес бэкенда без порта, Origin и Referer срезаны
+	w := authPost(srv, "/api/auth/login", "192.168.1.105", "", rightLogin)
+	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || !c.Secure {
+		t.Errorf("login behind stripping proxy: code %d, cookie set %t, Secure %t, want Secure", w.Code, c != nil, c != nil && c.Secure)
+	}
+
+	old := &http.Cookie{Name: authCookieName, Value: signSession(testSecret(t, srv), "admin", time.Now().Add(10*24*time.Hour))}
+	w = historyWith(srv, old, "192.168.1.105", "")
+	if c := sessionCookie(w); w.Code != http.StatusOK || c == nil || !c.Secure {
+		t.Errorf("renewal behind stripping proxy: code %d, cookie set %t, Secure %t, want Secure", w.Code, c != nil, c != nil && c.Secure)
+	}
+
+	for _, host := range []string{"192.168.1.105:6410", "ripperr.local", "[::1]:6410"} {
+		if w := historyWith(srv, old, host, ""); w.Code != http.StatusOK || sessionCookie(w) != nil {
+			t.Errorf("host %s without Origin and Referer: code %d, Set-Cookie %t, want 200 and none", host, w.Code, sessionCookie(w) != nil)
+		}
+	}
+}
+
 const (
 	changeBody  = `{"current":"adminpass123","new":"newpass4567"}`
 	wrongChange = `{"current":"wrongpass1","new":"newpass4567"}`
@@ -1129,6 +1381,7 @@ const (
 
 func passwordWith(srv *Server, cookie *http.Cookie, remote, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", "/api/auth/password", strings.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = remote
 	req.Host = "192.168.1.5:6410"
 	req.Header.Set("Origin", "http://192.168.1.5:6410")
@@ -1143,7 +1396,7 @@ func passwordWith(srv *Server, cookie *http.Cookie, remote, body string) *httpte
 func sessionCookiesAll(w *httptest.ResponseRecorder) []*http.Cookie {
 	var out []*http.Cookie
 	for _, c := range w.Result().Cookies() {
-		if c.Name == authCookieName {
+		if (c.Name == authCookieName || c.Name == hostCookiePrefix+authCookieName) && c.MaxAge >= 0 {
 			out = append(out, c)
 		}
 	}
@@ -1357,6 +1610,7 @@ func TestPasswordChangeCookieSecure(t *testing.T) {
 	a := loginCookie(t, srv)
 
 	req := httptest.NewRequest("POST", "/api/auth/password", strings.NewReader(changeBody))
+	req.Header.Set("X-Ripperr", "1")
 	req.RemoteAddr = "192.168.1.10:1234"
 	req.Host = "192.168.1.200:6410"
 	req.Header.Set("Origin", "https://my.keenetic.pro")
@@ -1412,5 +1666,768 @@ func TestPasswordChangeConcurrentOneWins(t *testing.T) {
 	}
 	if w := loginFrom(srv, "192.168.1.12:1234", loginBody(passwords[winner])); w.Code != http.StatusOK {
 		t.Errorf("login with winner password: code %d, want 200", w.Code)
+	}
+}
+
+const (
+	testDeviceCookie = "ripperr_device"
+	nat              = "192.168.65.1:1000"
+)
+
+func deviceCookiesAll(w *httptest.ResponseRecorder) []*http.Cookie {
+	var out []*http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if (c.Name == testDeviceCookie || c.Name == hostCookiePrefix+testDeviceCookie) && c.MaxAge >= 0 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func deviceCookieOf(w *httptest.ResponseRecorder) *http.Cookie {
+	if all := deviceCookiesAll(w); len(all) > 0 {
+		return all[0]
+	}
+	return nil
+}
+
+func deviceIDPart(value string) string {
+	parts := strings.Split(value, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+func addCookies(req *http.Request, cookies []*http.Cookie) {
+	for _, c := range cookies {
+		if c != nil {
+			req.AddCookie(c)
+		}
+	}
+}
+
+func loginWith(srv *Server, remote, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
+	req.RemoteAddr = remote
+	req.Host = "192.168.1.5:6410"
+	req.Header.Set("Origin", "http://192.168.1.5:6410")
+	addCookies(req, cookies)
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func apiWith(srv *Server, referer string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("GET", "/api/history", nil)
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = "192.168.1.5:6410"
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	addCookies(req, cookies)
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func passwordWithCookies(srv *Server, remote, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/auth/password", strings.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
+	req.RemoteAddr = remote
+	req.Host = "192.168.1.5:6410"
+	req.Header.Set("Origin", "http://192.168.1.5:6410")
+	addCookies(req, cookies)
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+func storedAuthMap(t *testing.T, srv *Server) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(storedAuth(t, srv)), &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func storedDeviceKey(t *testing.T, srv *Server) []byte {
+	t.Helper()
+	v, ok := storedAuthMap(t, srv)["device_key"].(string)
+	if !ok || v == "" {
+		t.Fatalf("stored auth has no device_key")
+	}
+	key, err := base64.RawURLEncoding.DecodeString(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+func lockAddress(t *testing.T, srv *Server, remote string) {
+	t.Helper()
+	for i := range maxLoginFails {
+		if w := loginWith(srv, remote, wrongLogin); w.Code != http.StatusUnauthorized {
+			t.Fatalf("lock %s: wrong login %d code %d, want 401", remote, i+1, w.Code)
+		}
+	}
+	if w := loginWith(srv, remote, wrongLogin); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("lock %s: 6th wrong login code %d, want 429", remote, w.Code)
+	}
+}
+
+func loginRespOf(t *testing.T, w *httptest.ResponseRecorder) loginErrorResp {
+	t.Helper()
+	var resp loginErrorResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode login body %q: %v", w.Body.String(), err)
+	}
+	return resp
+}
+
+func wantAttemptsLeft(t *testing.T, w *httptest.ResponseRecorder, step string, want int) loginErrorResp {
+	t.Helper()
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("%s: code %d body %s, want 401", step, w.Code, w.Body.String())
+	}
+	resp := loginRespOf(t, w)
+	if resp.AttemptsLeft == nil || *resp.AttemptsLeft != want {
+		t.Fatalf("%s: attempts_left %v, want %d", step, resp.AttemptsLeft, want)
+	}
+	return resp
+}
+
+func TestLoginIssuesDeviceCookie(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true, AllowedHosts: []string{"my.keenetic.pro"}})
+
+	w := loginWith(srv, nat, rightLogin)
+	all := deviceCookiesAll(w)
+	if w.Code != http.StatusOK || len(all) != 1 {
+		t.Fatalf("login: code %d, %d device cookies, want 200 and 1", w.Code, len(all))
+	}
+	d := all[0]
+	if n := len(strings.Split(d.Value, ".")); n != 3 {
+		t.Errorf("device cookie has %d parts, want 3", n)
+	}
+	if !d.HttpOnly || d.SameSite != http.SameSiteLaxMode || d.Path != "/" || d.MaxAge != 34560000 || d.Secure {
+		t.Errorf("device cookie attrs HttpOnly %t SameSite %v Path %q MaxAge %d Secure %t", d.HttpOnly, d.SameSite, d.Path, d.MaxAge, d.Secure)
+	}
+	if diff := time.Until(d.Expires) - 400*24*time.Hour; diff > time.Minute || diff < -time.Minute {
+		t.Errorf("device cookie expires %v, want about now+400d", d.Expires)
+	}
+
+	w = authPost(srv, "/api/auth/login", "192.168.1.200:6410", "https://my.keenetic.pro", rightLogin)
+	if d := deviceCookieOf(w); w.Code != http.StatusOK || d == nil || !d.Secure {
+		t.Errorf("https login: code %d, device cookie %v, want 200 with a Secure one", w.Code, d)
+	}
+
+	w = loginWith(srv, nat, wrongLogin)
+	if w.Code != http.StatusUnauthorized || deviceCookieOf(w) != nil {
+		t.Errorf("wrong login: code %d, device cookie %t, want 401 without one", w.Code, deviceCookieOf(w) != nil)
+	}
+
+	d1 := deviceCookieOf(loginWith(srv, nat, rightLogin))
+	d2 := deviceCookieOf(loginWith(srv, nat, rightLogin))
+	if d1 == nil || d2 == nil || deviceIDPart(d1.Value) == deviceIDPart(d2.Value) {
+		t.Errorf("two logins: device cookies %v, %v, want two different ids", d1, d2)
+	}
+
+	bare := newBareServer(&fakeStore{})
+	w = authPost(bare, "/api/auth/setup", "192.168.1.5:6410", "http://192.168.1.5:6410", rightLogin)
+	if w.Code != http.StatusOK || len(deviceCookiesAll(w)) != 1 {
+		t.Fatalf("setup: code %d, %d device cookies, want 200 and 1", w.Code, len(deviceCookiesAll(w)))
+	}
+	if key := storedDeviceKey(t, bare); len(key) != 32 {
+		t.Errorf("device_key %d bytes, want 32", len(key))
+	}
+}
+
+func TestDeviceKeyCreatedForOldAccount(t *testing.T) {
+	strip := func(srv *Server) map[string]any {
+		t.Helper()
+		m := storedAuthMap(t, srv)
+		delete(m, "device_key")
+		raw, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.db.SaveSetting(context.Background(), sqlite.SettingAuth, raw); err != nil {
+			t.Fatal(err)
+		}
+		var doc authDoc
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		srv.authCache.set(&doc)
+		return m
+	}
+
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	a := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if a == nil {
+		t.Fatal("login: no session cookie")
+	}
+	old := strip(srv)
+
+	w := loginWith(srv, nat, rightLogin)
+	if w.Code != http.StatusOK || len(deviceCookiesAll(w)) != 1 {
+		t.Fatalf("login of old account: code %d, %d device cookies, want 200 and 1", w.Code, len(deviceCookiesAll(w)))
+	}
+	now := storedAuthMap(t, srv)
+	for _, k := range []string{"username", "salt", "hash", "secret", "created_at"} {
+		if now[k] != old[k] {
+			t.Errorf("stored %s changed: %v -> %v", k, old[k], now[k])
+		}
+	}
+	storedDeviceKey(t, srv)
+	if w := historyWith(srv, a, "192.168.1.5:6410", ""); w.Code != http.StatusOK {
+		t.Errorf("history with session A after key creation: code %d, want 200", w.Code)
+	}
+
+	strip(srv)
+	devs := make([]*http.Cookie, 2)
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	for i, remote := range []string{"192.168.1.20:1", "192.168.1.21:1"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := loginWith(srv, remote, rightLogin)
+			codes[i], devs[i] = w.Code, deviceCookieOf(w)
+		}()
+	}
+	wg.Wait()
+	for i := range devs {
+		if codes[i] != http.StatusOK || devs[i] == nil {
+			t.Fatalf("concurrent login %d: code %d, device cookie %t, want 200 with one", i, codes[i], devs[i] != nil)
+		}
+	}
+	lockAddress(t, srv, nat)
+	for i, d := range devs {
+		if w := loginWith(srv, nat, rightLogin, d); w.Code != http.StatusOK {
+			t.Errorf("trusted login %d after concurrent key creation: code %d, want 200", i, w.Code)
+		}
+	}
+
+	store := &failingSaveStore{}
+	srv = New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+	if w := authPost(srv, "/api/auth/setup", "192.168.1.5:6410", "http://192.168.1.5:6410", rightLogin); w.Code != http.StatusOK {
+		t.Fatalf("setup: code %d", w.Code)
+	}
+	strip(srv)
+	store.fail = true
+	w = loginWith(srv, nat, rightLogin)
+	s := sessionCookie(w)
+	if w.Code != http.StatusOK || s == nil || deviceCookieOf(w) != nil {
+		t.Fatalf("login with failing save: code %d, session %t, device %t, want 200 with session only", w.Code, s != nil, deviceCookieOf(w) != nil)
+	}
+	if w := apiWith(srv, "http://192.168.1.5:6410/", s); w.Code != http.StatusOK || deviceCookieOf(w) != nil {
+		t.Errorf("api with failing save: code %d, device %t, want 200 without one", w.Code, deviceCookieOf(w) != nil)
+	}
+}
+
+func TestTrustedDeviceSurvivesAddressLock(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	w := loginWith(srv, nat, rightLogin)
+	d, s := deviceCookieOf(w), sessionCookie(w)
+	if d == nil || s == nil {
+		t.Fatalf("login: device %t, session %t, want both", d != nil, s != nil)
+	}
+	if w := logoutWith(srv, s); w.Code != http.StatusOK || deviceCookieOf(w) != nil {
+		t.Fatalf("logout: code %d, device cookie set %t, want 200 without one", w.Code, deviceCookieOf(w) != nil)
+	}
+	lockAddress(t, srv, nat)
+
+	w = loginWith(srv, nat, rightLogin, d)
+	d2 := deviceCookieOf(w)
+	if w.Code != http.StatusOK || d2 == nil {
+		t.Fatalf("trusted login on locked address: code %d, device %t, want 200 with a new one", w.Code, d2 != nil)
+	}
+	wantAttemptsLeft(t, loginWith(srv, nat, wrongLogin, d2), "trusted wrong login", maxLoginFails-1)
+	if w := loginWith(srv, nat, rightLogin); w.Code != http.StatusTooManyRequests {
+		t.Errorf("untrusted login after trusted success: code %d, want 429 (address lock kept)", w.Code)
+	}
+	if w := loginWith(srv, nat, rightLogin, d); w.Code != http.StatusOK {
+		t.Errorf("first device cookie after relogin: code %d, want 200", w.Code)
+	}
+}
+
+func TestDeviceLockIsPerDevice(t *testing.T) {
+	const (
+		devLine  = "auth: sign-in locked after failed attempts (device), client 192.168.65.4"
+		addrLine = "auth: sign-in locked after failed attempts (address), client 198.51.100.30"
+	)
+	// журнал общий на весь процесс: при -count=2 в нем уже лежат строки прошлого прогона
+	countLocks := func() (dev, addr int) {
+		for _, e := range logger.Snapshot(0) {
+			switch e.Message {
+			case devLine:
+				dev++
+			case addrLine:
+				addr++
+			}
+		}
+		return dev, addr
+	}
+	devBase, addrBase := countLocks()
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const n4 = "192.168.65.4:1000"
+	a := deviceCookieOf(loginWith(srv, n4, rightLogin))
+	b := deviceCookieOf(loginWith(srv, n4, rightLogin))
+	if a == nil || b == nil {
+		t.Fatalf("login: device A %t, B %t", a != nil, b != nil)
+	}
+	for i := range maxLoginFails {
+		resp := wantAttemptsLeft(t, loginWith(srv, n4, wrongLogin, a), fmt.Sprintf("device A wrong login %d", i+1), maxLoginFails-i-1)
+		if i == maxLoginFails-1 && (resp.RetryAfter < 86399 || resp.RetryAfter > 86400) {
+			t.Fatalf("5th wrong login: retry_after %d, want 86399..86400", resp.RetryAfter)
+		}
+	}
+	w := loginWith(srv, n4, wrongLogin, a)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("6th wrong login with A: code %d, want 429", w.Code)
+	}
+	resp := loginRespOf(t, w)
+	if resp.RetryAfter < 86398 || resp.RetryAfter > 86400 || w.Header().Get("Retry-After") != strconv.Itoa(resp.RetryAfter) {
+		t.Fatalf("6th wrong login: retry_after %d header %q, want 86398..86400 and equal", resp.RetryAfter, w.Header().Get("Retry-After"))
+	}
+	if w := loginWith(srv, n4, rightLogin, a); w.Code != http.StatusTooManyRequests {
+		t.Errorf("right login with locked A: code %d, want 429", w.Code)
+	}
+	if w := loginWith(srv, n4, rightLogin, b); w.Code != http.StatusOK {
+		t.Errorf("right login with B: code %d, want 200", w.Code)
+	}
+	if w := loginWith(srv, n4, rightLogin); w.Code != http.StatusOK {
+		t.Errorf("right login without device: code %d, want 200", w.Code)
+	}
+	lockAddress(t, srv, "198.51.100.30:1000")
+
+	devN, addrN := countLocks()
+	devN, addrN = devN-devBase, addrN-addrBase
+	for _, e := range logger.Snapshot(0) {
+		for _, secret := range []string{"wrongpass1", "adminpass123", a.Value} {
+			if strings.Contains(e.Message, secret) {
+				t.Errorf("log line %q leaks %q", e.Message, secret)
+			}
+		}
+	}
+	if devN != 1 || addrN != 1 {
+		t.Errorf("lock log lines: device %d, address %d, want 1 and 1", devN, addrN)
+	}
+}
+
+func TestForgedDeviceCookieUntrusted(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	key := storedDeviceKey(t, srv)
+	s := sessionCookie(loginFrom(srv, "192.168.1.10:1234", rightLogin))
+	if s == nil {
+		t.Fatal("login: no session cookie")
+	}
+	const remote = "198.51.100.31:1000"
+	now := time.Now()
+	forged := []string{
+		signSession([]byte("not the device key"), "fakeid", now.Add(time.Hour)),
+		signSession(key, "expired", now.Add(-time.Second)),
+		s.Value,
+		signSession(testSecret(t, srv), "fakeid", now.Add(time.Hour)),
+		"garbage",
+	}
+	for i, v := range forged {
+		w := loginWith(srv, remote, wrongLogin, &http.Cookie{Name: testDeviceCookie, Value: v})
+		wantAttemptsLeft(t, w, fmt.Sprintf("forged cookie %d", i), maxLoginFails-i-1)
+	}
+	if w := loginWith(srv, remote, wrongLogin, &http.Cookie{Name: testDeviceCookie, Value: "a.b"}); w.Code != http.StatusTooManyRequests {
+		t.Errorf("6th forged attempt: code %d, want 429", w.Code)
+	}
+	if w := loginWith(srv, remote, rightLogin, &http.Cookie{Name: testDeviceCookie, Value: forged[0]}); w.Code != http.StatusTooManyRequests {
+		t.Errorf("right login with forged cookie on locked address: code %d, want 429", w.Code)
+	}
+	d := deviceCookieOf(loginWith(srv, nat, rightLogin))
+	if d == nil {
+		t.Fatal("login: no device cookie")
+	}
+	if w := loginWith(srv, remote, rightLogin, d); w.Code != http.StatusOK {
+		t.Errorf("right login with real device cookie: code %d, want 200", w.Code)
+	}
+}
+
+func TestSignedInBrowserGetsDeviceCookie(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const n6, ref = "192.168.65.6:1000", "http://192.168.1.5:6410/"
+	s := sessionCookie(loginFrom(srv, n6, rightLogin))
+	if s == nil {
+		t.Fatal("login: no session cookie")
+	}
+	secret := testSecret(t, srv)
+	s2 := &http.Cookie{Name: authCookieName, Value: signSession(secret, "admin", time.Now().Add(authSessionTTL-5*time.Second))}
+	sOld := &http.Cookie{Name: authCookieName, Value: signSession(secret, "admin", time.Now().Add(10*24*time.Hour))}
+
+	var devs []*http.Cookie
+	for i, c := range []*http.Cookie{s, s2, sOld} {
+		w := apiWith(srv, ref, c)
+		d := deviceCookieOf(w)
+		if w.Code != http.StatusOK || d == nil {
+			t.Fatalf("api with session %d: code %d, device cookie %t, want 200 with one", i, w.Code, d != nil)
+		}
+		if i == 2 && sessionCookie(w) == nil {
+			t.Errorf("old session was not renewed")
+		}
+		devs = append(devs, d)
+	}
+	d1 := devs[0]
+	for i, d := range devs[1:] {
+		if deviceIDPart(d.Value) != deviceIDPart(d1.Value) {
+			t.Errorf("session %d minted another id", i+1)
+		}
+	}
+	if !d1.HttpOnly || d1.SameSite != http.SameSiteLaxMode || d1.MaxAge != 34560000 || d1.Secure {
+		t.Errorf("minted cookie attrs HttpOnly %t SameSite %v MaxAge %d Secure %t", d1.HttpOnly, d1.SameSite, d1.MaxAge, d1.Secure)
+	}
+	if w := apiWith(srv, ref, s, d1); w.Code != http.StatusOK || deviceCookieOf(w) != nil {
+		t.Errorf("api with valid device cookie: code %d, device cookie %t, want 200 without one", w.Code, deviceCookieOf(w) != nil)
+	}
+	if w := apiWith(srv, "", s); w.Code != http.StatusOK || deviceCookieOf(w) != nil {
+		t.Errorf("api without scheme: code %d, device cookie %t, want 200 without one", w.Code, deviceCookieOf(w) != nil)
+	}
+	if d := deviceCookieOf(apiWith(srv, "https://my.keenetic.pro/x", s)); d == nil || !d.Secure {
+		t.Errorf("api over https: device cookie %v, want a Secure one", d)
+	}
+	if w := apiWith(srv, ref); w.Code != http.StatusUnauthorized || deviceCookieOf(w) != nil {
+		t.Errorf("api without session: code %d, device cookie %t, want 401 without one", w.Code, deviceCookieOf(w) != nil)
+	}
+
+	lockAddress(t, srv, n6)
+	w := loginWith(srv, n6, rightLogin, d1)
+	own := deviceCookieOf(w)
+	if w.Code != http.StatusOK || own == nil || deviceIDPart(own.Value) == deviceIDPart(d1.Value) {
+		t.Fatalf("login with minted cookie: code %d, device cookie %v, want 200 with an own id", w.Code, own)
+	}
+	if w := logoutWith(srv, sessionCookie(w)); w.Code != http.StatusOK {
+		t.Fatalf("logout: code %d", w.Code)
+	}
+	s4 := sessionCookie(loginFrom(srv, "192.168.1.46:1000", rightLogin))
+	if s4 == nil {
+		t.Fatal("login after logout: no session cookie")
+	}
+	if d := deviceCookieOf(apiWith(srv, ref, s4)); d == nil || deviceIDPart(d.Value) == deviceIDPart(d1.Value) {
+		t.Errorf("api in a new epoch: device cookie %v, want one with another id", d)
+	}
+}
+
+func TestPasswordChangeKeysByDeviceAndRevokesTrust(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	wa := loginWith(srv, nat, rightLogin)
+	sa, da := sessionCookie(wa), deviceCookieOf(wa)
+	wb := loginWith(srv, nat, rightLogin)
+	sb, db := sessionCookie(wb), deviceCookieOf(wb)
+	if sa == nil || da == nil || sb == nil || db == nil {
+		t.Fatalf("logins: SA %t DA %t SB %t DB %t", sa != nil, da != nil, sb != nil, db != nil)
+	}
+	oldKey := storedDeviceKey(t, srv)
+
+	for i := range maxLoginFails {
+		if w := passwordWithCookies(srv, nat, wrongChange, sa, da); w.Code != http.StatusForbidden {
+			t.Fatalf("wrong change %d with DA: code %d, want 403", i+1, w.Code)
+		}
+	}
+	if w := passwordWithCookies(srv, nat, wrongChange, sa, da); w.Code != http.StatusTooManyRequests || errorText(t, w) != "too many attempts, try later" {
+		t.Fatalf("6th wrong change with DA: code %d body %s, want 429", w.Code, w.Body.String())
+	}
+	if w := loginWith(srv, nat, rightLogin, db); w.Code != http.StatusOK {
+		t.Errorf("login with DB after DA lock: code %d, want 200", w.Code)
+	}
+	if w := loginWith(srv, nat, rightLogin); w.Code != http.StatusOK {
+		t.Errorf("untrusted login after DA lock: code %d, want 200", w.Code)
+	}
+
+	w := passwordWithCookies(srv, nat, changeBody, sb, db)
+	devs := deviceCookiesAll(w)
+	if w.Code != http.StatusOK || len(sessionCookiesAll(w)) != 1 || len(devs) != 1 {
+		t.Fatalf("change with DB: code %d, %d session and %d device cookies, want 200, 1 and 1", w.Code, len(sessionCookiesAll(w)), len(devs))
+	}
+	dn := devs[0]
+	if bytes.Equal(storedDeviceKey(t, srv), oldKey) {
+		t.Error("password change kept device_key")
+	}
+	lockAddress(t, srv, nat)
+	if w := loginWith(srv, nat, newLogin, db); w.Code != http.StatusTooManyRequests {
+		t.Errorf("login with pre-change device cookie on locked address: code %d, want 429", w.Code)
+	}
+	if w := loginWith(srv, nat, newLogin, dn); w.Code != http.StatusOK {
+		t.Errorf("login with new device cookie: code %d, want 200", w.Code)
+	}
+}
+
+func TestFullDeviceTableFallsBackToAddress(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const n8 = "192.168.65.8:1000"
+	d := deviceCookieOf(loginWith(srv, n8, rightLogin))
+	e := deviceCookieOf(loginWith(srv, n8, rightLogin))
+	if d == nil || e == nil {
+		t.Fatalf("login: device D %t, E %t", d != nil, e != nil)
+	}
+	wantAttemptsLeft(t, loginWith(srv, n8, wrongLogin, e), "wrong login with E", maxLoginFails-1)
+	for i := 0; len(srv.deviceFails.fails) < maxThrottleKeys; i++ {
+		srv.deviceFails.reserve(fmt.Sprintf("filler%d", i))
+	}
+
+	if w := loginWith(srv, n8, rightLogin, d); w.Code != http.StatusOK {
+		t.Fatalf("right login with D on a full device table: code %d, want 200", w.Code)
+	}
+	wantAttemptsLeft(t, loginWith(srv, n8, wrongLogin, d), "wrong login with D", maxLoginFails-1)
+	wantAttemptsLeft(t, loginWith(srv, n8, wrongLogin), "wrong login without device", maxLoginFails-2)
+	wantAttemptsLeft(t, loginWith(srv, n8, wrongLogin, e), "second wrong login with E", maxLoginFails-2)
+	if n := len(srv.deviceFails.fails); n != maxThrottleKeys {
+		t.Errorf("device table has %d keys, want %d", n, maxThrottleKeys)
+	}
+}
+
+func cookieNamed(w *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, c := range w.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func historyCookies(srv *Server, host, referer string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("GET", "/api/history", nil)
+	req.RemoteAddr = "192.168.1.10:1234"
+	req.Host = host
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	addCookies(req, cookies)
+	w := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(w, req)
+	return w
+}
+
+const (
+	proxyHost     = "192.168.1.105"
+	hostSession   = "__Host-ripperr_session"
+	hostDevice    = "__Host-ripperr_device"
+	legacySession = "ripperr_session"
+	legacyDevice  = "ripperr_device"
+)
+
+func TestSecureCookiesUseHostPrefix(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+
+	w := authPost(srv, "/api/auth/login", proxyHost, "", rightLogin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proxy login: code %d", w.Code)
+	}
+	s := cookieNamed(w, hostSession)
+	if s == nil || !s.Secure || s.Path != "/" || s.Domain != "" || !s.HttpOnly || s.SameSite != http.SameSiteLaxMode || s.MaxAge != int(authSessionTTL.Seconds()) {
+		t.Errorf("proxy login session cookie = %+v, want %s Secure, Path /, no Domain, HttpOnly, Lax, MaxAge %d", s, hostSession, int(authSessionTTL.Seconds()))
+	}
+	if d := cookieNamed(w, hostDevice); d == nil || !d.Secure || d.Path != "/" || d.Domain != "" {
+		t.Errorf("proxy login device cookie = %+v, want %s Secure, Path /, no Domain", d, hostDevice)
+	}
+	for _, name := range []string{legacySession, legacyDevice} {
+		if c := cookieNamed(w, name); c == nil || c.MaxAge >= 0 {
+			t.Errorf("proxy login %s = %+v, want a deletion", name, c)
+		}
+	}
+
+	w = authPost(srv, "/api/auth/login", "192.168.1.5:6410", "http://192.168.1.5:6410", rightLogin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("LAN login: code %d", w.Code)
+	}
+	for _, c := range w.Result().Cookies() {
+		if strings.HasPrefix(c.Name, "__Host-") {
+			t.Errorf("LAN login set %s, want only legacy names", c.Name)
+		}
+	}
+	for _, name := range []string{legacySession, legacyDevice} {
+		if c := cookieNamed(w, name); c == nil || c.MaxAge <= 0 {
+			t.Errorf("LAN login %s = %+v, want a live cookie", name, c)
+		}
+	}
+}
+
+func TestLegacyCookiesMigrateOverHTTPS(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	d := cookieNamed(loginWith(srv, nat, rightLogin), legacyDevice)
+	if d == nil {
+		t.Fatal("LAN login: no device cookie")
+	}
+	// свежая сессия: продление по возрасту не сработает, куку меняет только переезд на новое имя
+	s := &http.Cookie{Name: legacySession, Value: signSession(testSecret(t, srv), "admin", time.Now().Add(authSessionTTL-time.Hour))}
+
+	w := historyCookies(srv, proxyHost, "", s, d)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proxy request with legacy cookies: code %d", w.Code)
+	}
+	ns := cookieNamed(w, hostSession)
+	if ns == nil || !ns.Secure {
+		t.Fatalf("proxy request: %s = %+v, want a Secure one", hostSession, ns)
+	}
+	if c := cookieNamed(w, legacySession); c == nil || c.MaxAge >= 0 {
+		t.Errorf("proxy request: %s = %+v, want a deletion", legacySession, c)
+	}
+	nd := cookieNamed(w, hostDevice)
+	if nd == nil || deviceIDPart(nd.Value) != deviceIDPart(d.Value) {
+		t.Errorf("proxy request: %s = %+v, want the same device id %s", hostDevice, nd, deviceIDPart(d.Value))
+	}
+	if c := cookieNamed(w, legacyDevice); c == nil || c.MaxAge >= 0 {
+		t.Errorf("proxy request: %s = %+v, want a deletion", legacyDevice, c)
+	}
+	if w := historyCookies(srv, proxyHost, "", ns); w.Code != http.StatusOK {
+		t.Errorf("proxy request with only %s: code %d, want 200", hostSession, w.Code)
+	}
+
+	w = historyCookies(srv, "192.168.1.5:6410", "http://192.168.1.5:6410/", s, d)
+	if w.Code != http.StatusOK {
+		t.Fatalf("LAN request with legacy cookies: code %d", w.Code)
+	}
+	for _, c := range w.Result().Cookies() {
+		if strings.HasPrefix(c.Name, "__Host-") || c.MaxAge < 0 {
+			t.Errorf("LAN request set %s Max-Age %d, want no prefixed cookie and no deletion", c.Name, c.MaxAge)
+		}
+	}
+}
+
+func TestDuplicateCookiesFirstValidWins(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const lan = "192.168.1.5:6410"
+	valid := &http.Cookie{Name: legacySession, Value: signSession(testSecret(t, srv), "admin", time.Now().Add(authSessionTTL-time.Hour))}
+
+	if w := historyCookies(srv, lan, "", &http.Cookie{Name: legacySession, Value: "garbage"}, valid); w.Code != http.StatusOK {
+		t.Errorf("garbage then valid %s: code %d, want 200", legacySession, w.Code)
+	}
+	foreign := &http.Cookie{Name: hostSession, Value: signSession([]byte("not the secret"), "admin", time.Now().Add(time.Hour))}
+	if w := historyCookies(srv, lan, "", foreign, valid); w.Code != http.StatusOK {
+		t.Errorf("foreign %s plus valid %s: code %d, want 200", hostSession, legacySession, w.Code)
+	}
+
+	d := cookieNamed(loginWith(srv, nat, rightLogin), legacyDevice)
+	if d == nil {
+		t.Fatal("login: no device cookie")
+	}
+	const remote = "198.51.100.32:1000"
+	lockAddress(t, srv, remote)
+	forged := &http.Cookie{Name: legacyDevice, Value: signSession([]byte("not the device key"), "fakeid", time.Now().Add(time.Hour))}
+	if w := loginWith(srv, remote, rightLogin, forged, d); w.Code != http.StatusOK {
+		t.Errorf("forged then valid %s on a locked address: code %d, want 200", legacyDevice, w.Code)
+	}
+}
+
+func TestLogoutClearsHostCookies(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	s := &http.Cookie{Name: hostSession, Value: signSession(testSecret(t, srv), "admin", time.Now().Add(authSessionTTL-time.Hour))}
+
+	w := csrfRequest(srv, "POST", "/api/auth/logout", proxyHost, "", "1", "", "", s)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proxy logout: code %d", w.Code)
+	}
+	if c := cookieNamed(w, hostSession); c == nil || c.MaxAge >= 0 || !c.Secure || c.Path != "/" {
+		t.Errorf("proxy logout %s = %+v, want a Secure deletion with Path /", hostSession, c)
+	}
+	if c := cookieNamed(w, legacySession); c == nil || c.MaxAge >= 0 {
+		t.Errorf("proxy logout %s = %+v, want a deletion", legacySession, c)
+	}
+	for _, name := range []string{hostDevice, legacyDevice} {
+		if c := cookieNamed(w, name); c != nil {
+			t.Errorf("proxy logout set %s, want device cookies kept", name)
+		}
+	}
+	if w := historyCookies(srv, proxyHost, "", s); w.Code != http.StatusUnauthorized {
+		t.Errorf("old %s after logout: code %d, want 401", hostSession, w.Code)
+	}
+}
+
+func wantLoginLocked(t *testing.T, w *httptest.ResponseRecorder, step string) {
+	t.Helper()
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("%s: code %d body %s, want 429", step, w.Code, w.Body.String())
+	}
+	if got := loginRespOf(t, w).Error; got != "too many attempts, try later" {
+		t.Errorf("%s: error %q, want the lock text", step, got)
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Errorf("%s: no Retry-After header", step)
+	}
+}
+
+func TestLockedLoginTakesNoHashSlot(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const remote = "198.51.100.40:1000"
+	lockAddress(t, srv, remote)
+	fillHashSlots(srv)
+	wantLoginLocked(t, loginWith(srv, remote, wrongLogin), "locked address with busy slots")
+	drainHashSlots(srv)
+
+	const n9 = "192.168.65.9:1000"
+	d := deviceCookieOf(loginWith(srv, n9, rightLogin))
+	if d == nil {
+		t.Fatal("login: no device cookie")
+	}
+	for i := range maxLoginFails {
+		wantAttemptsLeft(t, loginWith(srv, n9, wrongLogin, d), fmt.Sprintf("device wrong login %d", i+1), maxLoginFails-i-1)
+	}
+	fillHashSlots(srv)
+	wantLoginLocked(t, loginWith(srv, n9, wrongLogin, d), "locked device with busy slots")
+	drainHashSlots(srv)
+}
+
+func TestSetupConfiguredSkipsSlotAndDB(t *testing.T) {
+	store := &countingSettingStore{}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+	srv.effective = func() config.App {
+		cfg := testEffective()
+		cfg.Web = config.Web{Listen: ":0", Enabled: true}
+		return cfg
+	}
+	setup := func(host string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/auth/setup", strings.NewReader(rightLogin))
+		req.Header.Set("X-Ripperr", "1")
+		req.RemoteAddr = "192.168.1.10:1234"
+		req.Host = host
+		w := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(w, req)
+		return w
+	}
+	if w := setup("192.168.1.5:6410"); w.Code != http.StatusOK {
+		t.Fatalf("first setup: code %d", w.Code)
+	}
+	store.getSettingCalls = 0
+
+	if w := setup("192.168.1.5:6410"); w.Code != http.StatusConflict {
+		t.Errorf("setup on configured server: code %d, want 409", w.Code)
+	}
+	if store.getSettingCalls != 0 {
+		t.Errorf("GetSetting calls = %d, want 0 (configured state comes from the cache)", store.getSettingCalls)
+	}
+	fillHashSlots(srv)
+	if w := setup("192.168.1.5:6410"); w.Code != http.StatusConflict {
+		t.Errorf("setup on configured server with busy slots: code %d, want 409", w.Code)
+	}
+	if w := setup(proxyHost); w.Code != http.StatusForbidden {
+		t.Errorf("setup through the proxy with busy slots: code %d, want 403", w.Code)
+	}
+	drainHashSlots(srv)
+}
+
+func TestCookieCandidatesCapped(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const lan = "192.168.1.5:6410"
+	valid := &http.Cookie{Name: legacySession, Value: signSession(testSecret(t, srv), "admin", time.Now().Add(authSessionTTL-time.Hour))}
+	garbage := func(n int) []*http.Cookie {
+		out := make([]*http.Cookie, 0, n+1)
+		for i := range n {
+			out = append(out, &http.Cookie{Name: legacySession, Value: fmt.Sprintf("garbage%d", i)})
+		}
+		return append(out, valid)
+	}
+	if w := historyCookies(srv, lan, "", garbage(16)...); w.Code != http.StatusUnauthorized {
+		t.Errorf("valid %s after 16 garbage ones: code %d, want 401", legacySession, w.Code)
+	}
+	if w := historyCookies(srv, lan, "", garbage(15)...); w.Code != http.StatusOK {
+		t.Errorf("valid %s as the 16th: code %d, want 200", legacySession, w.Code)
 	}
 }

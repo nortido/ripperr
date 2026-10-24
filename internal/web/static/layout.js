@@ -249,8 +249,89 @@ export function openMobileMenu() {
   if (btn) btn.setAttribute('aria-expanded', 'true');
 }
 
+const HEADER_SHRINK_SCROLL = 48;
+
+function syncCompactHeader() {
+  const p = Math.min(1, Math.max(0, window.scrollY / HEADER_SHRINK_SCROLL));
+  const root = document.documentElement;
+  root.style.setProperty('--hdr-p', p.toFixed(3));
+  root.classList.toggle('header-compact', p >= 1);
+}
+
+// Копии кнопок, а не перенос самих узлов: виды перерисовывают шапку через
+// innerHTML, и перенесенная кнопка осталась бы оторванной от страницы
+function initMobileHeaderActions() {
+  const bar = document.getElementById('mobile-header-actions');
+  const header = document.querySelector('.mobile-header');
+  const content = document.querySelector('.content');
+  if (!bar || !header || !content) return;
+  let originals = new Map();
+  let frame = 0;
+
+  function currentActions() {
+    return document.querySelector('.view:not(.hidden) .page-header-actions');
+  }
+
+  function rebuild() {
+    const actions = currentActions();
+    const next = new Map();
+    const nodes = [];
+    if (actions) {
+      actions.querySelectorAll('button:not(.hint-toggle)').forEach(function (b) {
+        const c = b.cloneNode(true);
+        c.removeAttribute('id');
+        c.classList.add('btn-sm');
+        next.set(c, b);
+        nodes.push(c);
+      });
+    }
+    bar.replaceChildren(...nodes);
+    originals = next;
+    syncVisibility();
+  }
+
+  // по самим кнопкам: у трекеров блок действий display: contents и без размеров
+  function syncVisibility() {
+    let bottom = -Infinity;
+    originals.forEach(function (b) {
+      if (b.offsetParent) bottom = Math.max(bottom, b.getBoundingClientRect().bottom);
+    });
+    const show = document.documentElement.classList.contains('mobile-layout') &&
+      bottom > -Infinity && bottom <= header.getBoundingClientRect().bottom;
+    bar.hidden = !show;
+    header.classList.toggle('has-actions', show);
+  }
+
+  function schedule() {
+    if (frame) return;
+    frame = requestAnimationFrame(function () {
+      frame = 0;
+      rebuild();
+    });
+  }
+
+  bar.addEventListener('click', function (e) {
+    const c = e.target.closest('button');
+    const b = c && originals.get(c);
+    if (b && b.isConnected && !b.disabled) b.click();
+  });
+  new MutationObserver(schedule).observe(content, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'disabled', 'aria-busy', 'aria-pressed', 'title'],
+  });
+  window.addEventListener('scroll', syncVisibility, { passive: true });
+  window.addEventListener('resize', syncVisibility);
+  rebuild();
+}
+
 export function initLayout() {
   initSidebarCollapse();
+  syncCompactHeader();
+  window.addEventListener('scroll', syncCompactHeader, { passive: true });
+  initMobileHeaderActions();
   layoutWasMobile = layoutWidth() > 0 && layoutWidth() < MOBILE_LAYOUT_MAX;
   applyMobileLayout();
   window.addEventListener('resize', function () {
@@ -266,6 +347,12 @@ export function initLayout() {
   const mobileMenuBtn = document.getElementById('mobile-menu-btn');
   if (mobileMenuBtn) {
     mobileMenuBtn.addEventListener('click', function () {
+      const close = document.querySelector('.modal-overlay:not(.confirm-overlay):not(.is-closing) .modal-close');
+      if (close) {
+        close.click();
+        // несохраненные правки: диалог остался и спросил подтверждение, меню не открываем
+        if (document.querySelector('.modal-overlay:not(.confirm-overlay):not(.is-closing)')) return;
+      }
       const sidebar = document.getElementById('sidebar');
       if (sidebar && sidebar.classList.contains('open')) closeMobileMenu();
       else openMobileMenu();

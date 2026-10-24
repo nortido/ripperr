@@ -21,6 +21,7 @@ import (
 	"ripperr/internal/runner"
 	"ripperr/internal/settings"
 	"ripperr/internal/system/logger"
+	"ripperr/internal/webpush"
 )
 
 const listenWait = 2 * time.Second
@@ -130,6 +131,7 @@ func doListen(t *testing.T, method string, port int, path, body string) (int, st
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Set("X-Ripperr", "1")
 	resp, err := listenClient.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s via %d: %v", method, path, port, err)
@@ -524,7 +526,7 @@ func TestPostIntegrationsTestNotifyCarriesAppLink(t *testing.T) {
 	origSend := sendNotification
 	defer func() { sendNotification = origSend }()
 	var sent notify.Event
-	sendNotification = func(_ context.Context, _ notify.Config, _ string, ev notify.Event) error {
+	sendNotification = func(_ context.Context, _ notify.Config, _ string, _ *webpush.Store, ev notify.Event) error {
 		sent = ev
 		return nil
 	}

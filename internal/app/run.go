@@ -24,6 +24,7 @@ import (
 	"ripperr/internal/system/logger"
 	"ripperr/internal/tracker"
 	"ripperr/internal/tracker/registry"
+	"ripperr/internal/webpush"
 )
 
 func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg model.HandlerConfig, runnerState *runner.State, alerts *breakeralerts.Registry, reload func()) error {
@@ -129,7 +130,14 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	}, tracker.ConfigFromApp(cfg), alerts)
-	nt := notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy).WithAppURL(cfg.Web.AppURL)
+	if alerts != nil {
+		names := make([]string, 0, len(tr.CachedList()))
+		for _, trk := range tr.CachedList() {
+			names = append(names, trk.GetName())
+		}
+		alerts.Retain(names)
+	}
+	nt := notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy).WithAppURL(cfg.Web.AppURL).WithPush(webpush.NewStore(db))
 	tr.SetMirrorSwitchHook(func(name, from, to string) {
 		nt.Notify(notify.MirrorSwitchedEvent(name, from, to))
 	})
@@ -169,12 +177,10 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		nt.Notify(notify.MirrorPausedEvent(name, host))
 	})
 	defer func() {
-		tr.DestroyFlareSessions()
-		if alerts != nil {
-			for _, trk := range tr.CachedList() {
-				alerts.Close(trk.GetName())
-			}
-		}
+		// ctx к выходу уже отменен, а FlareSolverr не должен держать остановку дольше 3 с
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		tr.DestroyFlareSessions(cctx)
 	}()
 	mgr := manager.NewManager(mc)
 	msDeps := mirrorsync.Deps{

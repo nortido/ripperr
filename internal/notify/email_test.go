@@ -234,7 +234,7 @@ func TestEmailSubjectLine(t *testing.T) {
 		want string
 	}{
 		{Event{Text: "Раздача обновлена:", Subject: "Релиз"}, "Ripperr: Релиз"},
-		{TrackerUpEvent("rutracker"), "Ripperr: Трекер rutracker снова доступен, проверки возобновлены."},
+		{TrackerUpEvent("rutracker"), "Ripperr: Tracker rutracker is available again, checks resumed."},
 		{Event{Text: "Ошибка:\nвторая строка"}, "Ripperr: Ошибка"},
 		{Event{Text: "x", Subject: long}, "Ripperr: " + strings.Repeat("я", 141)},
 	}

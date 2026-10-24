@@ -27,7 +27,7 @@ export function setOffline(next) {
 }
 
 export async function fetchJSON(url, options = {}) {
-  const headers = { ...options.headers };
+  const headers = { ...options.headers, 'X-Ripperr': '1' };
   if (options.body && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
@@ -57,7 +57,10 @@ export async function fetchJSON(url, options = {}) {
   }
   if (!res.ok) {
     const msg = data && data.error ? data.error : 'HTTP ' + res.status;
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    err.code = data && data.code;
+    throw err;
   }
   return data;
 }

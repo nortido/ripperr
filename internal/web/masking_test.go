@@ -15,6 +15,7 @@ import (
 	"ripperr/internal/runner"
 	"ripperr/internal/settings"
 	"ripperr/internal/tracker/registry"
+	"ripperr/internal/webpush"
 )
 
 const maskingIntegrationsSeed = `{"client":"qbit",
@@ -291,7 +292,7 @@ func TestIntegrationTestUsesStoredSecretsWhenMasked(t *testing.T) {
 	origSend := sendNotification
 	t.Cleanup(func() { sendNotification = origSend })
 	var sent notify.Config
-	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ *webpush.Store, _ notify.Event) error {
 		sent = cfg
 		return nil
 	}

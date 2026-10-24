@@ -64,3 +64,45 @@ func TestSlotFloor(t *testing.T) {
 		})
 	}
 }
+
+func TestSlotFloorPerDayAboveRange(t *testing.T) {
+	msk := time.FixedZone("MSK", 3*60*60)
+	in := time.Date(2026, 3, 15, 10, 0, 0, 0, msk)
+	for _, tc := range []struct {
+		name   string
+		perDay int
+		want   time.Time
+	}{
+		{"perDay 25 floors like 1/day", 25, time.Date(2026, 3, 15, 7, 0, 0, 0, msk)},
+		{"perDay 0 unchanged", 0, in},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("slotFloor panicked: %v", r)
+				}
+			}()
+			if got := slotFloor(in, 7, tc.perDay, msk); !got.Equal(tc.want) {
+				t.Errorf("slotFloor(%v, 7, %d) = %v, want %v", in, tc.perDay, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNextRunsWithinBeforeStartHour(t *testing.T) {
+	loc := time.FixedZone("test", 0)
+	now := time.Date(2026, 3, 15, 2, 0, 0, 0, loc)
+	got := NextRunsWithin(now, 8, 8, 24*time.Hour, loc)
+	hours := []int{5, 8, 11, 14, 17, 20, 23, 2}
+	if len(got) != len(hours) {
+		t.Fatalf("got %d slots, want %d: %v", len(got), len(hours), got)
+	}
+	for i, h := range hours {
+		if got[i].Hour() != h {
+			t.Errorf("slot %d = %v, want hour %d", i, got[i], h)
+		}
+	}
+	if got[7].Day() != 16 {
+		t.Errorf("last slot = %v, want next day", got[7])
+	}
+}

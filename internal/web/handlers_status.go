@@ -111,6 +111,11 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.runnerState.WaitingSettings() {
+		writeError(w, http.StatusServiceUnavailable, "stored settings are unreadable, check not started")
+		return
+	}
+
 	if req.Restart && s.runnerState != nil && s.runnerState.Running() {
 		s.runnerState.MarkRestart()
 		s.reload()

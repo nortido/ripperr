@@ -306,3 +306,47 @@ func TestNotFoundAnswerDoesNotTripBreaker(t *testing.T) {
 		t.Fatalf("5xx err = %v, want circuit open", err)
 	}
 }
+
+func TestCheckResponseClosesBodyOnError(t *testing.T) {
+	otherURL, err := url.Parse("http://example.com/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		status   int
+		download bool
+		resURL   *url.URL
+		want     string
+	}{
+		{"unexpected url", http.StatusOK, false, otherURL, "unexpected response url"},
+		{"download redirect", http.StatusFound, true, nil, "download redirect not followed"},
+		{"status 404", http.StatusNotFound, false, nil, "404"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &client{ITracker: &tracker.Tracker{Name: "test"}}
+			req, err := http.NewRequest(http.MethodGet, "http://example.com/a", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			closed := false
+			res := &http.Response{
+				StatusCode: tc.status,
+				Header:     http.Header{},
+				Body:       closeTrackingBody{Reader: strings.NewReader("body"), closed: &closed},
+				Request:    req,
+			}
+			if tc.resURL != nil {
+				res.Request = &http.Request{URL: tc.resURL}
+			}
+			err = c.checkResponse(req, res, tc.download)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			if !closed {
+				t.Fatal("response body was not closed")
+			}
+		})
+	}
+}

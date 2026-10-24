@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,10 +33,21 @@ const (
 	authSecretLen   = 32
 	minPasswordLen  = 8
 	maxLoginFails   = 5
-	loginLockWindow = time.Minute
+	loginLockWindow = 24 * time.Hour
 	pbkdf2Slots     = 2
 	maxThrottleKeys = 1024
 )
+
+const (
+	deviceCookieName = "ripperr_device"
+	deviceTTL        = 400 * 24 * time.Hour
+	deviceKeyLen     = 32
+	deviceIDLen      = 16
+)
+
+const hostCookiePrefix = "__Host-"
+
+const maxCookieCandidates = 16
 
 type authDoc struct {
 	Username  string `json:"username"`
@@ -43,6 +55,7 @@ type authDoc struct {
 	Hash      string `json:"hash"`
 	Secret    string `json:"secret"`
 	CreatedAt string `json:"created_at"`
+	DeviceKey string `json:"device_key,omitempty"`
 }
 
 type authCache struct {
@@ -180,6 +193,35 @@ func sessionExpiry(secret []byte, username, value string) (time.Time, bool) {
 	return time.Unix(expUnix, 0), true
 }
 
+func verifyDevice(key []byte, value string) (string, bool) {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 {
+		return "", false
+	}
+	id, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", false
+	}
+	if _, ok := sessionExpiry(key, string(id), value); !ok {
+		return "", false
+	}
+	return string(id), true
+}
+
+func newDeviceID() (string, error) {
+	b, err := randomBytes(deviceIDLen)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func epochDeviceID(key []byte, secret string) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("secret:" + secret))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:deviceIDLen])
+}
+
 func requestScheme(r *http.Request) (secure, known bool) {
 	if r.TLS != nil {
 		return true, true
@@ -189,11 +231,20 @@ func requestScheme(r *http.Request) (secure, known bool) {
 	if src == "" {
 		src = r.Header.Get("Referer")
 	}
+	if src == "" && behindStrippingProxy(r.Host) {
+		return true, true
+	}
 	u, err := url.Parse(src)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return false, false
 	}
 	return u.Scheme == "https", true
+}
+
+// https-прокси keenetic срезает Origin и Referer, а Host ставит адресом бэкенда без порта.
+// Напрямую по IP сервер открывают с портом, так что голый IP в Host бывает только за прокси
+func behindStrippingProxy(host string) bool {
+	return net.ParseIP(host) != nil
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, doc *authDoc) error {
@@ -206,7 +257,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, doc *a
 
 	secure, _ := requestScheme(r)
 	http.SetCookie(w, &http.Cookie{
-		Name:     authCookieName,
+		Name:     cookieName(authCookieName, secure),
 		Value:    value,
 		Path:     "/",
 		Expires:  exp,
@@ -215,16 +266,75 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, doc *a
 		SameSite: http.SameSiteLaxMode,
 		Secure:   secure,
 	})
+	if secure {
+		expireCookie(w, authCookieName, true)
+	}
 	return nil
 }
 
-func clearSessionCookie(w http.ResponseWriter) {
+func (s *Server) setDeviceCookie(w http.ResponseWriter, r *http.Request, key []byte, id string) {
+	exp := time.Now().Add(deviceTTL)
+	secure, _ := requestScheme(r)
 	http.SetCookie(w, &http.Cookie{
-		Name:     authCookieName,
+		Name:     cookieName(deviceCookieName, secure),
+		Value:    signSession(key, id, exp),
+		Path:     "/",
+		Expires:  exp,
+		MaxAge:   int(deviceTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+	})
+	if secure {
+		expireCookie(w, deviceCookieName, true)
+	}
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	expireCookie(w, authCookieName, false)
+	// без Secure браузер не даст стереть куку __Host-
+	if secure, _ := requestScheme(r); secure {
+		expireCookie(w, hostCookiePrefix+authCookieName, true)
+	}
+}
+
+func cookieName(base string, secure bool) string {
+	if secure {
+		return hostCookiePrefix + base
+	}
+	return base
+}
+
+type cookieCandidate struct {
+	value  string
+	legacy bool
+}
+
+func cookieCandidates(r *http.Request, base string) []cookieCandidate {
+	// __Host- браузер принимает только от этого хоста по https и без Domain, соседний поддомен
+	// ее не подложит. Пробуем ее первой, потом все старые: чужая кука не заслонит верную
+	var prefixed, legacy []cookieCandidate
+	for _, c := range r.Cookies() {
+		switch c.Name {
+		case hostCookiePrefix + base:
+			prefixed = append(prefixed, cookieCandidate{value: c.Value})
+		case base:
+			legacy = append(legacy, cookieCandidate{value: c.Value, legacy: true})
+		}
+	}
+	out := append(prefixed, legacy...)
+	// каждый кандидат стоит HMAC: пачка поддельных кук одного имени не должна множить работу
+	return out[:min(len(out), maxCookieCandidates)]
+}
+
+func expireCookie(w http.ResponseWriter, name string, secure bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
 	})
 }
 
@@ -307,16 +417,26 @@ func newLoginThrottle() *loginThrottle {
 }
 
 func (t *loginThrottle) reserve(key string) bool {
+	ok, room := t.reserveIfRoom(key)
+	return ok && room
+}
+
+func (t *loginThrottle) reserveIfRoom(key string) (ok, room bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
-	rec, ok := t.fails[key]
-	if ok && now.Before(rec.until) {
-		return false
+	rec, found := t.fails[key]
+	if found && now.Before(rec.until) {
+		return false, true
 	}
-	if !ok || !rec.until.IsZero() || !now.Before(rec.first.Add(loginLockWindow)) {
-		if !ok && len(t.fails) >= maxThrottleKeys {
+	if !found || !rec.until.IsZero() || !now.Before(rec.first.Add(loginLockWindow)) {
+		if !found && len(t.fails) >= maxThrottleKeys {
 			t.prune(now)
+			// отказ вместо вытеснения: иначе атакующий со многими адресами
+			// вытеснял бы свои же записи и получал новые попытки
+			if len(t.fails) >= maxThrottleKeys {
+				return false, false
+			}
 		}
 		rec = &loginFailure{first: now}
 		t.fails[key] = rec
@@ -325,7 +445,14 @@ func (t *loginThrottle) reserve(key string) bool {
 	if rec.count >= maxLoginFails {
 		rec.until = now.Add(loginLockWindow)
 	}
-	return true
+	return true, true
+}
+
+func (t *loginThrottle) locked(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rec, ok := t.fails[key]
+	return ok && t.now().Before(rec.until)
 }
 
 func (t *loginThrottle) prune(now time.Time) {
@@ -342,6 +469,8 @@ func (t *loginThrottle) status(key string) (left int, wait time.Duration) {
 	now := t.now()
 	rec, ok := t.fails[key]
 	switch {
+	case !ok && len(t.fails) >= maxThrottleKeys:
+		return 0, loginLockWindow
 	case !ok:
 		return maxLoginFails, 0
 	case now.Before(rec.until):
@@ -385,26 +514,109 @@ func (s *Server) releaseHashSlot() {
 }
 
 func (s *Server) authorized(r *http.Request, doc *authDoc) bool {
-	_, ok := s.session(r, doc)
+	_, _, ok := s.session(r, doc)
 	return ok
 }
 
-func (s *Server) session(r *http.Request, doc *authDoc) (time.Time, bool) {
+func (s *Server) session(r *http.Request, doc *authDoc) (exp time.Time, legacy, ok bool) {
 	if doc == nil {
-		return time.Time{}, false
-	}
-
-	cookie, err := r.Cookie(authCookieName)
-	if err != nil {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
 
 	secret, err := base64.RawURLEncoding.DecodeString(doc.Secret)
 	if err != nil {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
 
-	return sessionExpiry(secret, doc.Username, cookie.Value)
+	for _, c := range cookieCandidates(r, authCookieName) {
+		if exp, ok := sessionExpiry(secret, doc.Username, c.value); ok {
+			return exp, c.legacy, true
+		}
+	}
+	return time.Time{}, false, false
+}
+
+func (s *Server) trustedDevice(r *http.Request, doc *authDoc) (id string, legacy, ok bool) {
+	if doc == nil || doc.DeviceKey == "" {
+		return "", false, false
+	}
+	key, err := base64.RawURLEncoding.DecodeString(doc.DeviceKey)
+	if err != nil {
+		return "", false, false
+	}
+	for _, c := range cookieCandidates(r, deviceCookieName) {
+		if id, ok := verifyDevice(key, c.value); ok {
+			return id, c.legacy, true
+		}
+	}
+	return "", false, false
+}
+
+func (s *Server) deviceKey(ctx context.Context, doc *authDoc) ([]byte, error) {
+	if doc != nil && doc.DeviceKey != "" {
+		return base64.RawURLEncoding.DecodeString(doc.DeviceKey)
+	}
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+
+	cur, err := s.readAuth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cur == nil {
+		return nil, errors.New("auth not configured")
+	}
+	if cur.DeviceKey != "" {
+		return base64.RawURLEncoding.DecodeString(cur.DeviceKey)
+	}
+	// ключ не выводим из Secret: выход меняет Secret, а доверие устройств должно его пережить
+	key, err := randomBytes(deviceKeyLen)
+	if err != nil {
+		return nil, err
+	}
+	nd := *cur
+	nd.DeviceKey = base64.RawURLEncoding.EncodeToString(key)
+	if err := s.saveAuth(ctx, &nd); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func (s *Server) issueDevice(ctx context.Context, w http.ResponseWriter, r *http.Request, doc *authDoc) {
+	key, err := s.deviceKey(ctx, doc)
+	if err != nil {
+		return
+	}
+	id, err := newDeviceID()
+	if err != nil {
+		return
+	}
+	s.setDeviceCookie(w, r, key, id)
+}
+
+func (s *Server) reserveAttempt(r *http.Request, doc *authDoc, ipStr string) (th *loginThrottle, key, kind string, ok bool) {
+	// запрос идет ровно в один счет: блокировка адреса не задевает доверенные устройства,
+	// а их успех не сбрасывает счет адреса
+	if id, _, trusted := s.trustedDevice(r, doc); trusted {
+		// нет места в таблице устройств: считаем по адресу, отказ запер бы доверенный браузер с верным паролем
+		if ok, room := s.deviceFails.reserveIfRoom(id); room {
+			return s.deviceFails, id, "device", ok
+		}
+	}
+	return s.loginFails, ipStr, "address", s.loginFails.reserve(ipStr)
+}
+
+func (s *Server) lockedKey(r *http.Request, doc *authDoc, ipStr string) (th *loginThrottle, key string, locked bool) {
+	if id, _, trusted := s.trustedDevice(r, doc); trusted {
+		// без записи устройства reserveAttempt может уйти в счет адреса, а может и нет:
+		// здесь не угадываем и отказ оставляем ему
+		return s.deviceFails, id, s.deviceFails.locked(id)
+	}
+	return s.loginFails, ipStr, s.loginFails.locked(ipStr)
+}
+
+func logLock(kind, ipStr string) {
+	logger.Warn("auth: sign-in locked after failed attempts (" + kind + "), client " + ipStr)
 }
 
 func safeMethod(method string) bool {
@@ -436,9 +648,19 @@ func sameOrigin(r *http.Request, allowed []string) bool {
 	return false
 }
 
+func csrfProof(r *http.Request) bool {
+	if r.Header.Get("X-Ripperr") != "1" {
+		return false
+	}
+	site := r.Header.Get("Sec-Fetch-Site")
+	return site == "" || site == "same-origin" || site == "none"
+}
+
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") && !safeMethod(r.Method) && !sameOrigin(r, s.webConfig().AllowedHosts) {
+		// прокси срезает Origin, а свой заголовок с чужого сайта требует preflight,
+		// который сервер никогда не одобряет, поэтому без него запрос не отправить
+		if strings.HasPrefix(r.URL.Path, "/api/") && !safeMethod(r.Method) && (!sameOrigin(r, s.webConfig().AllowedHosts) || !csrfProof(r)) {
 			writeError(w, http.StatusForbidden, "cross-origin request")
 			return
 		}
@@ -461,17 +683,36 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		exp, ok := s.session(r, doc)
+		exp, legacy, ok := s.session(r, doc)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		// без схемы продление могло бы заменить Secure куку обычной
-		if _, known := requestScheme(r); known && time.Until(exp) < authSessionTTL-authRenewAfter {
+		// без схемы продление могло бы заменить Secure куку обычной.
+		// Старое имя по https переносим на __Host-, чтобы вход пережил смену имени
+		secure, known := requestScheme(r)
+		if known && (time.Until(exp) < authSessionTTL-authRenewAfter || legacy && secure) {
 			if err := s.setSessionCookie(w, r, doc); err != nil {
 				writeError(w, http.StatusInternalServerError, "auth error")
 				return
+			}
+		}
+
+		// id от секрета эпохи, а не от значения сессии: старые значения действуют до срока,
+		// продление выдает новые, и держатель сессии набрал бы сколько угодно счетов
+		if known {
+			id, devLegacy, trusted := s.trustedDevice(r, doc)
+			switch {
+			case !trusted:
+				if key, err := s.deviceKey(ctx, doc); err == nil {
+					s.setDeviceCookie(w, r, key, epochDeviceID(key, doc.Secret))
+				}
+			case devLegacy && secure:
+				// тот же id: счет попыток и доверие устройства переезжают вместе с кукой
+				if key, err := s.deviceKey(ctx, doc); err == nil {
+					s.setDeviceCookie(w, r, key, id)
+				}
 			}
 		}
 
@@ -517,19 +758,26 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// без аккаунта сюда может постучаться страница с чужого домена через DNS rebinding,
+	// она шлет свой домен в Host. Голый IP в Host ставит только https-прокси keenetic,
+	// клиент из интернета Host не выбирает, так что первый аккаунт создают только из сети
+	if behindStrippingProxy(r.Host) || !isLocalHost(r.Host, s.webConfig().AllowedHosts) {
+		writeError(w, http.StatusForbidden, "account setup is allowed only from a local address")
+		return
+	}
+
+	// аккаунт в кеше уже не пропадет: отвечаем без слота и базы. Кешу с nil не верим, это ниже
+	if doc, loaded := s.authCache.get(); loaded && doc != nil {
+		writeError(w, http.StatusConflict, "auth already configured")
+		return
+	}
+
 	// слот до authMu: так за замком ждут не больше pbkdf2Slots запросов
 	if !s.acquireHashSlot() {
 		writeError(w, http.StatusTooManyRequests, "too many login attempts at once, try later")
 		return
 	}
 	defer s.releaseHashSlot()
-
-	// без аккаунта сюда может постучаться страница с чужого домена через DNS rebinding,
-	// она шлет свой домен в Host
-	if !isLocalHost(r.Host, s.webConfig().AllowedHosts) {
-		writeError(w, http.StatusForbidden, "account setup is allowed only from a local address")
-		return
-	}
 
 	// проверка "аккаунта нет" и запись под одним замком, иначе параллельные setup создадут несколько
 	s.authMu.Lock()
@@ -570,6 +818,18 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// свой ключ, а не s.deviceKey: тот берет authMu, который здесь уже занят
+	devKey, err := randomBytes(deviceKeyLen)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+	devID, err := newDeviceID()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+
 	hash := hashPassword(req.Password, salt)
 
 	doc = &authDoc{
@@ -578,6 +838,7 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		Hash:      base64.RawURLEncoding.EncodeToString(hash),
 		Secret:    base64.RawURLEncoding.EncodeToString(secret),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		DeviceKey: base64.RawURLEncoding.EncodeToString(devKey),
 	}
 
 	if err := s.saveAuth(ctx, doc); err != nil {
@@ -589,6 +850,7 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
 	}
+	s.setDeviceCookie(w, r, devKey, devID)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -621,6 +883,14 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		ipStr = ip.String()
 	}
 
+	// запертый ключ reserveAttempt отклонит и так, а за общим адресом keenetic
+	// такие запросы иначе занимали бы слоты всех остальных
+	if th, key, locked := s.lockedKey(r, doc, ipStr); locked {
+		_, wait := th.status(key)
+		writeLoginLocked(w, wait)
+		return
+	}
+
 	// отказ по слоту не проверял пароль, поэтому слот берем до reserve
 	if !s.acquireHashSlot() {
 		writeError(w, http.StatusTooManyRequests, "too many login attempts at once, try later")
@@ -629,8 +899,9 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	defer s.releaseHashSlot()
 
 	// попытку учитываем до хеширования, иначе параллельные запросы проскочат лимит
-	if !s.loginFails.reserve(ipStr) {
-		_, wait := s.loginFails.status(ipStr)
+	th, key, kind, ok := s.reserveAttempt(r, doc, ipStr)
+	if !ok {
+		_, wait := th.status(key)
 		writeLoginLocked(w, wait)
 		return
 	}
@@ -644,17 +915,21 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	usernameMatch := strings.EqualFold(req.Username, doc.Username)
 
 	if !usernameMatch || !passwordMatch {
-		left, wait := s.loginFails.status(ipStr)
+		left, wait := th.status(key)
+		if wait > 0 {
+			logLock(kind, ipStr)
+		}
 		writeJSON(w, http.StatusUnauthorized, loginErrorResp{Error: "invalid credentials", AttemptsLeft: &left, RetryAfter: waitSeconds(wait)})
 		return
 	}
 
-	s.loginFails.success(ipStr)
+	th.success(key)
 
 	if err := s.setSessionCookie(w, r, doc); err != nil {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
 	}
+	s.issueDevice(ctx, w, r, doc)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -677,7 +952,7 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	clearSessionCookie(w)
+	clearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -756,7 +1031,8 @@ func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// общий счет с входом: иначе украденная кука дала бы лишние попытки подбора
-	if !s.loginFails.reserve(ipStr) {
+	th, key, kind, allowed := s.reserveAttempt(r, cur, ipStr)
+	if !allowed {
 		writeError(w, http.StatusTooManyRequests, "too many attempts, try later")
 		return
 	}
@@ -768,10 +1044,13 @@ func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// 403, а не 401: сессия жива, неверен только пароль, и интерфейс не уводит на вход
 	if !ok {
+		if _, wait := th.status(key); wait > 0 {
+			logLock(kind, ipStr)
+		}
 		writeError(w, http.StatusForbidden, "invalid current password")
 		return
 	}
-	s.loginFails.success(ipStr)
+	th.success(key)
 
 	salt, err := randomBytes(authSaltLen)
 	if err != nil {
@@ -783,12 +1062,25 @@ func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
 	}
+	// новый ключ устройств: знавший пароль мог наделать сколько угодно кук устройств, отозвать их можно только так.
+	// Свой ключ, а не s.deviceKey: authMu здесь уже занят
+	devKey, err := randomBytes(deviceKeyLen)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+	devID, err := newDeviceID()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
 
 	// новый секрет в той же записи, что и хеш: все старые куки перестают сходиться одним сохранением
 	nd := *cur
 	nd.Salt = base64.RawURLEncoding.EncodeToString(salt)
 	nd.Hash = base64.RawURLEncoding.EncodeToString(hashPassword(req.New, salt))
 	nd.Secret = base64.RawURLEncoding.EncodeToString(secret)
+	nd.DeviceKey = base64.RawURLEncoding.EncodeToString(devKey)
 	if err := s.saveAuth(ctx, &nd); err != nil {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
@@ -798,6 +1090,7 @@ func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
 	}
+	s.setDeviceCookie(w, r, devKey, devID)
 
 	logger.Info("auth: password changed, other sessions revoked, client " + ipStr)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

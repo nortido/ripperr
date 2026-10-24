@@ -73,7 +73,7 @@ func buildEmail(from *mail.Address, to []*mail.Address, ev Event) []byte {
 		body += "\n" + ev.URL
 	}
 	if ev.AppLink != "" {
-		body += "\n" + appLinkLabel + ": " + ev.AppLink
+		body += "\n" + ev.label() + ": " + ev.AppLink
 	}
 	qw := quotedprintable.NewWriter(&b)
 	_, _ = qw.Write([]byte(body))

@@ -186,7 +186,11 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
-	cfg := s.effective()
+	cfg, err := s.writableConfig()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, settingsUnreadableMsg)
+		return
+	}
 	if manager.NormalizeClient(cfg.Manager.Client) == manager.ClientTransmission {
 		// это ясно и без клиента: не занимаем семафор перекачек и не тянем список
 		// торрентов ради ошибки, которая от них не зависит. errors.Is ниже
@@ -263,6 +267,16 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	unlockTorrent, free := s.runnerState.TryLockTorrent(entry.Hash)
+	if !free {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "torrent is being updated by a check, try again later",
+			"code":  "torrent_busy",
+		})
+		return
+	}
+	defer unlockTorrent()
 
 	if err = mc.ForceRedownload(ctx, entry.Hash, model.RedownloadOptions{Comment: newComment}); err != nil {
 		if errors.Is(err, transmission.ErrRedownloadUnsupported) {

@@ -33,10 +33,10 @@ func (n *Notifier) sendPushover(ctx context.Context, ev Event) error {
 	if ev.AppLink != "" {
 		if form.Get("url") == "" && len([]rune(ev.AppLink)) <= maxPushoverURL {
 			form.Set("url", ev.AppLink)
-			form.Set("url_title", appLinkLabel)
+			form.Set("url_title", ev.label())
 		} else {
 			// поле url одно и занято ссылкой на раздачу: ссылка приложения идет в текст
-			message = withLinkLine(ev.plain(), appLinkLabel+": "+ev.AppLink, maxPushoverMessage)
+			message = withLinkLine(ev.plain(), ev.label()+": "+ev.AppLink, maxPushoverMessage)
 		}
 	}
 	form.Set("message", message)

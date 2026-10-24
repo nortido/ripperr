@@ -34,8 +34,9 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	// категории берем из примененного конфига, не из патча: список мог прийти
 	// и из env, а правило "проверяем только это" должно чистить план целиком
-	cfg := s.effective()
-	if n, err := s.db.PurgeCategoriesExcept(r.Context(), cfg.Runner.AllowedCategories); err != nil {
+	if cfg, cerr := s.writableConfig(); cerr != nil {
+		logger.Warn("purge disabled categories skipped: settings unreadable: " + cerr.Error())
+	} else if n, err := s.db.PurgeCategoriesExcept(r.Context(), cfg.Runner.AllowedCategories); err != nil {
 		logger.Warn("purge disabled categories: " + err.Error())
 	} else if n > 0 {
 		logger.Info(fmt.Sprintf("purged %d releases of disabled categories", n))
@@ -124,7 +125,11 @@ func (s *Server) handleAddTracker(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "tracker already added")
 		return
 	}
-	cfg := s.effective()
+	cfg, err := s.writableConfig()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, settingsUnreadableMsg)
+		return
+	}
 	if body, err = prepareTrackerPatch(cfg, key, body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -281,7 +286,10 @@ func (s *Server) putTrackerLocked(ctx context.Context, key string, body []byte) 
 	} else if !added {
 		return trackerPatchInfo{}, http.StatusNotFound, errors.New("unknown tracker key")
 	}
-	cfg := s.effective()
+	cfg, err := s.writableConfig()
+	if err != nil {
+		return trackerPatchInfo{}, http.StatusServiceUnavailable, errors.New(settingsUnreadableMsg)
+	}
 	body, info, err := prepareTrackerPatchInfo(cfg, key, body)
 	if err != nil {
 		return info, http.StatusBadRequest, err

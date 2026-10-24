@@ -29,6 +29,7 @@ import (
 	"ripperr/internal/system/logger"
 	"ripperr/internal/tracker/registry"
 	_ "ripperr/internal/tracker/registry/all"
+	"ripperr/internal/webpush"
 )
 
 type fakeStore struct {
@@ -241,6 +242,10 @@ func withTestSession(srv *Server) *Server {
 	srv.srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := r.Cookie(authCookieName); err != nil {
 			r.AddCookie(&http.Cookie{Name: authCookieName, Value: signSession(testSessionSecret, "admin", time.Now().Add(authSessionTTL))})
+		}
+		// и заголовок от CSRF, если тест не задал свой
+		if r.Header.Get("X-Ripperr") == "" {
+			r.Header.Set("X-Ripperr", "1")
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -797,7 +802,7 @@ func TestPostIntegrationsTestNotifyReachesSendAfterResolvingChatID(t *testing.T)
 		return "555", nil
 	}
 	var sentChatID string
-	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ *webpush.Store, _ notify.Event) error {
 		sentChatID = cfg.TelegramChatID
 		return nil
 	}
@@ -2236,7 +2241,7 @@ func TestPostIntegrationsTestNotifyKeepsSavedChatID(t *testing.T) {
 		return "999", nil
 	}
 	var sentChatID string
-	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ *webpush.Store, _ notify.Event) error {
 		sentChatID = cfg.TelegramChatID
 		return nil
 	}
@@ -2427,7 +2432,7 @@ func TestPostIntegrationsTestNotifyChannelOnly(t *testing.T) {
 		return "1", nil
 	}
 	var sent notify.Config
-	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ *webpush.Store, _ notify.Event) error {
 		sent = cfg
 		return nil
 	}
@@ -2468,7 +2473,7 @@ func TestPostIntegrationsTestNotifyEmailChannel(t *testing.T) {
 	origSend := sendNotification
 	defer func() { sendNotification = origSend }()
 	var sent notify.Config
-	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ notify.Event) error {
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ *webpush.Store, _ notify.Event) error {
 		sent = cfg
 		return nil
 	}
@@ -2653,5 +2658,75 @@ func TestSecurityHeaders(t *testing.T) {
 				t.Fatalf("Content-Security-Policy = %q, want frame-ancestors 'none'", got)
 			}
 		})
+	}
+}
+
+func TestPutIntegrationsNotifyLanguage(t *testing.T) {
+	store := &fakeStore{}
+	srv := newTestServer(store)
+	put := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		srv.handlePutIntegrations(w, httptest.NewRequest(http.MethodPut, "/api/integrations", strings.NewReader(body)))
+		return w
+	}
+	if w := put(`{"notifications":{"language":"ru"}}`); w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	var saved struct {
+		Notifications struct {
+			Language string `json:"language"`
+		} `json:"notifications"`
+	}
+	if err := json.Unmarshal(store.settings["integrations"], &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Notifications.Language != "ru" {
+		t.Fatalf("stored language = %q, want ru", saved.Notifications.Language)
+	}
+	before := string(store.settings["integrations"])
+	w := put(`{"notifications":{"language":"xx"}}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "notifications.language must be en or ru") {
+		t.Fatalf("status = %d body %s, want 400 with language error", w.Code, w.Body.String())
+	}
+	if string(store.settings["integrations"]) != before {
+		t.Fatalf("store changed on rejected patch: %s", store.settings["integrations"])
+	}
+}
+
+func TestPostIntegrationsTestNotifyCarriesLanguage(t *testing.T) {
+	origSend := sendNotification
+	defer func() { sendNotification = origSend }()
+	var sentCfg notify.Config
+	var sentEv notify.Event
+	sendNotification = func(_ context.Context, cfg notify.Config, _ string, _ *webpush.Store, ev notify.Event) error {
+		sentCfg, sentEv = cfg, ev
+		return nil
+	}
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Notify.WebhookURL = "http://hook.invalid"
+		cfg.Notify.Language = "ru"
+		cfg.Web.AppURL = "https://rip.example.com"
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+	for _, c := range []struct{ body, want string }{
+		{`{"kind":"notify","config":{"webhook":{"url":"http://hook.invalid"},"channel":"webhook","language":"en"}}`, "en"},
+		{`{"kind":"notify","config":{"webhook":{"url":"http://hook.invalid"},"channel":"webhook"}}`, "ru"},
+	} {
+		w := httptest.NewRecorder()
+		srv.handleTestIntegration(w, httptest.NewRequest(http.MethodPost, "/api/integrations/test", strings.NewReader(c.body)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, body: %s", c.body, w.Code, w.Body.String())
+		}
+		if sentCfg.Language != c.want {
+			t.Errorf("%s: cfg.Language = %q, want %q", c.body, sentCfg.Language, c.want)
+		}
+		if sentEv.Kind != notify.KindTest || sentEv.AppLink != "https://rip.example.com/#dashboard" {
+			t.Errorf("%s: event = %+v, want KindTest with app link", c.body, sentEv)
+		}
+		if want := notify.TestEvent(sentEv.AppLink); sentEv.Text != want.Text {
+			t.Errorf("%s: Text = %q, want %q", c.body, sentEv.Text, want.Text)
+		}
 	}
 }

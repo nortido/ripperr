@@ -51,6 +51,7 @@ func (f *Client) Send(r *http.Request, opts *Payload) (result *Response, err err
 		b    []byte
 		data []byte
 		resp *http.Response
+		fr   *http.Request
 	)
 
 	switch r.Method {
@@ -71,7 +72,11 @@ func (f *Client) Send(r *http.Request, opts *Payload) (result *Response, err err
 	if data, err = json.Marshal(opts); err != nil {
 		return
 	}
-	if resp, err = f.hc.Post(f.conf.Host, "application/json", bytes.NewBuffer(data)); err != nil {
+	if fr, err = http.NewRequestWithContext(r.Context(), http.MethodPost, f.conf.Host, bytes.NewReader(data)); err != nil {
+		return
+	}
+	fr.Header.Set("Content-Type", "application/json")
+	if resp, err = f.hc.Do(fr); err != nil {
 		return
 	}
 	// в go-flaresolverr тело ответа утекало, из-за этого клиент и перенесли к нам

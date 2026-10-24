@@ -143,7 +143,15 @@ export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onCha
 
   function addChip(raw) {
     const val = String(raw || '').trim();
-    if (!val || chips.indexOf(val) !== -1) return;
+    if (!val) return;
+    if (chips.indexOf(val) !== -1) {
+      // повтор не добавляем, но и в поле не оставляем: иначе форма считала бы его несохраненной правкой
+      if (input.value) {
+        input.value = '';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return;
+    }
     chips.push(val);
     renderChips();
     renderHints();
@@ -245,6 +253,15 @@ export function buildSegmentControl(options, activeValue, ariaLabel) {
   return html`<div class="seg-ctrl" role="group" aria-label="${ariaLabel}" data-active-index="${activeIdx}"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${btnsParts}</div>`;
 }
 
+// имя не влезло: шрифт меньше на 1 px, не больше, дальше пусть режется многоточием
+function fitSegmentText(seg) {
+  seg.classList.remove('seg-ctrl-tight');
+  const cut = Array.from(seg.querySelectorAll('.seg-ctrl-btn *')).some(function (el) {
+    return el.clientWidth > 0 && el.scrollWidth > el.clientWidth;
+  });
+  if (cut) seg.classList.add('seg-ctrl-tight');
+}
+
 export function updateSegmentThumb(seg) {
   const active = seg.querySelector('.seg-ctrl-btn.active');
   if (!active) return;
@@ -256,6 +273,20 @@ export function updateSegmentThumb(seg) {
   seg.setAttribute('data-active-index', String(idx));
   seg.style.setProperty('--seg-count', String(btns.length));
   const thumb = seg.querySelector('.seg-ctrl-thumb');
+  if (thumb && seg.classList.contains('seg-ctrl-fit')) {
+    // колонки по ширине текста разные: бегунок меряем по самой кнопке и перемеряем,
+    // когда меняется ширина (шрифт догрузился, экран повернули)
+    if (!seg._fitObserver && window.ResizeObserver) {
+      seg._fitObserver = new ResizeObserver(function () { updateSegmentThumb(seg); });
+      btns.forEach(function (b) { seg._fitObserver.observe(b); });
+    }
+    fitSegmentText(seg);
+    if (active.offsetWidth) {
+      thumb.style.width = active.offsetWidth + 'px';
+      thumb.style.transform = 'translateX(' + (active.offsetLeft - thumb.offsetLeft) + 'px)';
+      return;
+    }
+  }
   if (thumb) thumb.style.transform = 'translateX(' + idx * 100 + '%)';
 }
 
@@ -362,7 +393,9 @@ export function initHintToggles(root) {
       }, 10000);
     });
     // у переключателя и кнопки (i) встает соседом в той же flex-строке, внутри span она уехала бы на вторую строку
-    if (label.matches('.form-switch > span, .form-submit-row > .btn')) label.after(btn);
+    // в шапке страницы кнопка прижата вправо, (i) ставим слева от нее
+    if (label.matches('.page-header-actions > .btn')) label.before(btn);
+    else if (label.matches('.form-switch > span, .form-submit-row > .btn')) label.after(btn);
     else label.appendChild(btn);
     if (label.matches('.form-switch > span')) pinHintToFirstLine(label, btn);
   });

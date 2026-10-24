@@ -29,7 +29,9 @@ func newAddedServer(store *fakeStore, reloads *int) *Server {
 
 func serveAdded(srv *Server, method, url, body string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	srv.srv.Handler.ServeHTTP(w, httptest.NewRequest(method, url, strings.NewReader(body)))
+	req := httptest.NewRequest(method, url, strings.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
+	srv.srv.Handler.ServeHTTP(w, req)
 	return w
 }
 

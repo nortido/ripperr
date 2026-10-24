@@ -366,13 +366,15 @@ func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) er
 
 	_, err := c.rpc.call(ctx, "torrent-remove", map[string]interface{}{
 		"ids":               []string{opts.Hash},
-		"delete-local-data": c.DeletesFiles(ctx, opts),
+		"delete-local-data": opts.DeleteFiles && c.DeletesFiles(ctx, opts),
 	})
 	return err
 }
 
 func (c *Client) DeletesFiles(ctx context.Context, opts model.ManagerDeleteOptions) bool {
+	// "tv," из env дает пустую категорию, она совпала бы с раздачами без категории
 	return c.config.DeleteEnabled && c.config.DeleteFilesEnabled &&
+		opts.Category != "" &&
 		slices.Contains(c.config.DeleteCategories, opts.Category) &&
 		c.categoryInsideBase(ctx, opts.Hash)
 }
@@ -511,6 +513,10 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 }
 
 const selectionCleanupTimeout = 10 * time.Second
+
+func (c *Client) ApplySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
+	return c.applySelection(ctx, hash, opts)
+}
 
 func (c *Client) applySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
 	files, err := c.Files(ctx, hash)

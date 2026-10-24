@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -10,7 +11,7 @@ import (
 
 type IClient interface {
 	Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (resp *http.Response, err error)
-	DestroyFlareSession(sessionID string) error
+	DestroyFlareSession(ctx context.Context, sessionID string) error
 }
 
 type client struct {
@@ -27,9 +28,11 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 	switch proxyType {
 	case proxy.TypeFlare:
 		if opts != nil && opts.Session != "" {
-			mu := sessionLocks.Mutex(opts.Session)
-			mu.Lock()
-			defer mu.Unlock()
+			var unlock func()
+			if unlock, err = sessionLocks.lock(r.Context(), opts.Session); err != nil {
+				return
+			}
+			defer unlock()
 		}
 		params = fmapper.PrepareParams(r, opts)
 		if fres, err = f.fl.Send(r, params); err != nil {

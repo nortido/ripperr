@@ -140,8 +140,9 @@ func TestPlaceForecast(t *testing.T) {
 		{"cap slot 19:00", 24, 0, hm(19, 0), hm(3, 0), msk(15, 19, 0), false, msk(15, 20, 0)},
 		{"cap slot 20:00", 24, 0, hm(19, 0), hm(3, 0), msk(15, 20, 0), false, msk(15, 21, 0)},
 		{"cap slot 21:00", 24, 0, hm(19, 0), hm(3, 0), msk(15, 21, 0), false, msk(16, 19, 0)},
-		{"night hole 22:00", 8, 7, hm(4, 0), 0, msk(15, 22, 0), false, msk(16, 7, 0)},
-		{"night hole released at 07:00", 8, 7, hm(4, 0), 0, msk(15, 7, 0), true, msk(16, 7, 0)},
+		{"night slot 04:00 from 22:00", 8, 7, hm(4, 0), 0, msk(15, 22, 0), false, msk(16, 4, 0)},
+		{"night slot 04:00 released at 07:00", 8, 7, hm(4, 0), 0, msk(15, 7, 0), true, msk(16, 4, 0)},
+		{"05:00 slot before start hour", 8, 8, hm(4, 30), 0, msk(15, 2, 0), false, msk(15, 5, 0)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

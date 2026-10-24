@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/signal"
@@ -30,6 +31,7 @@ import (
 	"ripperr/internal/tracker/registry"
 	_ "ripperr/internal/tracker/registry/all"
 	webpkg "ripperr/internal/web"
+	"ripperr/internal/webpush"
 )
 
 func main() {
@@ -107,12 +109,7 @@ func main() {
 	runnerState := runner.NewState()
 	breakerAlerts := breakeralerts.New()
 
-	reload := func() {
-		select {
-		case reloadCh <- struct{}{}:
-		default:
-		}
-	}
+	reload := newReload(runnerState, reloadCh)
 
 	effective := func() config.App {
 		cfg := baseCfg // копии по значению хватает: overlay срезы в секциях всегда переприсваивает
@@ -126,7 +123,7 @@ func main() {
 	// чтобы видеть настройки, сохраненные после старта
 	breakerAlerts.SetHook(func(open bool, tracker, errMsg string) {
 		ecfg := effective()
-		n := notify.New(notify.Config(ecfg.Notify), ecfg.Runner.DownloadProxy).WithAppURL(ecfg.Web.AppURL)
+		n := notify.New(notify.Config(ecfg.Notify), ecfg.Runner.DownloadProxy).WithAppURL(ecfg.Web.AppURL).WithPush(webpush.NewStore(db))
 		if open {
 			n.Notify(notify.TrackerDownEvent(tracker, errMsg))
 		} else {
@@ -137,6 +134,14 @@ func main() {
 	var webSrv *webpkg.Server
 	if baseCfg.Web.Enabled {
 		webSrv = webpkg.New(db, reload, effective, baseCfg.Web.Listen, runnerState, breakerAlerts)
+		webSrv.SetStrictEffective(func() (config.App, error) {
+			cfg := baseCfg
+			var invalid *settings.InvalidConfigError
+			if err := settings.ApplyOverrides(context.Background(), &cfg, db); err != nil && !errors.As(err, &invalid) {
+				return config.App{}, err
+			}
+			return cfg, nil
+		})
 		go func() {
 			if err := webSrv.Start(); err != nil && ctx.Err() == nil {
 				logger.Error(err.Error())
@@ -151,9 +156,15 @@ func main() {
 
 	first := true
 	for {
-		cfg := baseCfg // см. выше, копии по значению хватает
-		if err := settings.ApplyOverrides(ctx, &cfg, db); err != nil {
+		cfg, ok := overlaidConfig(ctx, baseCfg, db, reloadCh, runnerState)
+		if !ok {
+			logger.Info("goodbye")
+			return
+		}
+		// расписание проверяем после наложения БД: битый env не мешает, если его перекрывает сохраненное
+		if err := cfg.Runner.ValidateSchedule(); err != nil {
 			logger.Error(err.Error())
+			return
 		}
 
 		appCtx, cancel := context.WithCancel(ctx)
@@ -177,7 +188,7 @@ func main() {
 			StartHour:            cfg.Runner.StartHour,
 			Categories:           cfg.Runner.AllowedCategories,
 			Location:             scheduleLoc,
-			Immediate:            first,
+			Immediate:            first && cfg.Runner.RunOnStart,
 			ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
 			MagnetTimeout:        cfg.Runner.MagnetTimeout,
 		}
@@ -300,4 +311,62 @@ func configDirFromEnv() string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+var overrideRetryBase = 5 * time.Second
+
+const overrideRetryMax = 5 * time.Minute
+
+type overrideReader interface {
+	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
+}
+
+func overlaidConfig(ctx context.Context, base config.App, db overrideReader, reloadCh <-chan struct{}, state *runner.State) (config.App, bool) {
+	// без настроек из БД раннер пошел бы с env-дефолтами (удаление файлов включено, убранные
+	// трекеры снова в работе), поэтому ждем чтения, а не берем дефолты
+	defer state.SetWaitingSettings(false)
+	for attempt := 0; ; attempt++ {
+		cfg := base // копии по значению хватает: overlay срезы в секциях всегда переприсваивает
+		err := settings.ApplyOverrides(ctx, &cfg, db)
+		if err == nil {
+			return cfg, true
+		}
+		var invalid *settings.InvalidConfigError
+		if errors.As(err, &invalid) {
+			logger.Error(err.Error())
+			return cfg, true
+		}
+		if ctx.Err() != nil {
+			return cfg, false
+		}
+		wait := overrideRetryMax
+		if attempt < 20 {
+			wait = min(overrideRetryBase<<attempt, overrideRetryMax)
+		}
+		state.SetWaitingSettings(true)
+		logger.Error("settings: cannot read stored settings, runner not started, retry in " + wait.String() + ": " + err.Error())
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return cfg, false
+		case <-reloadCh:
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
+func newReload(state *runner.State, ch chan<- struct{}) func() {
+	return func() {
+		// только обычный проход: форс-проверку и пробный прогон сохранение не прерывает,
+		// а останавливаемый проход перезапускать незачем
+		if state.NormalRunning() && !state.DryRunning() && !state.Stopping() {
+			state.MarkRestart()
+		}
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 }

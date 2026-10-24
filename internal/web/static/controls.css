@@ -1491,9 +1491,9 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
   white-space: nowrap;
 }
 
-/* расширенные настройки прячем через CSS без перерисовки карточки: поля
-   остаются в DOM и несохраненные правки не пропадают. Кнопка в шапке диалога
-   открывает их только в этом диалоге и лишняя, когда включены глобально */
+/* расширенные параметры прячем через CSS без перерисовки карточки: поля
+   остаются в DOM и несохраненные правки не пропадают. Заголовок раздела
+   раскрывает их только в этом диалоге и лишний в расширенном режиме */
 :root:not([data-advanced]) .modal:not(.tr-advanced-open) .tracker-advanced {
   display: none;
 }
@@ -1503,11 +1503,36 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
 }
 
 .tr-advanced-toggle {
-  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: stretch;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
 }
 
-.tr-advanced-toggle[aria-pressed="true"] {
-  background: var(--accent-subtle);
+.tr-advanced-toggle svg {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--transition);
+}
+
+.tr-advanced-open .tr-advanced-toggle svg {
+  transform: rotate(180deg);
+}
+
+@media (hover: hover) {
+  .tr-advanced-toggle:hover {
+    color: var(--text);
+  }
 }
 
 .tr-attn-note {
@@ -1553,10 +1578,23 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+/* текущий пароль по ширине пары новых полей под ним */
+@media (min-width: 901px) {
+  #view-schedule .password-current-row > .form-group {
+    grid-column: span 2;
+  }
+}
+
 @media (max-width: 900px) {
   #view-schedule .form-row:not(.form-row-pair) {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
+}
+
+/* на телефоне поля пароля по одному в строке: в два столбца подсказка (i)
+   у длинной подписи уезжала на отдельную строку */
+html.mobile-layout #password-card .form-row {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* пояснение под полем раскрывается кнопкой у подписи, по умолчанию скрыто */
@@ -1628,6 +1666,11 @@ html.mobile-layout .form-switch > .hint-toggle {
 
 html.mobile-layout .form-submit-row > .hint-toggle {
   margin: 0 0 0 -6px;
+}
+
+.page-header-actions.form-submit-row > .hint-toggle,
+html.mobile-layout .page-header-actions.form-submit-row > .hint-toggle {
+  margin: 0 -6px 0 0;
 }
 
 .hint-toggle[aria-expanded="true"] {
@@ -1777,6 +1820,16 @@ html.mobile-layout .form-submit-row > .hint-toggle {
   align-self: end;
 }
 
+/* переключатель в паре с полем: низ ряда вровень с полем, а не с его подписью */
+.form-group-switch-end {
+  align-self: end;
+}
+
+.form-group-switch-end .form-switch {
+  --switch-row-h: var(--btn-h-md);
+  min-height: var(--btn-h-md);
+}
+
 .tr-use-mirrors-group .form-switch {
   --switch-row-h: var(--btn-h-md);
   min-height: var(--btn-h-md);
@@ -1794,4 +1847,14 @@ html.mobile-layout .tr-address-row {
 /* на мобильном переключатель во всю ширину, заданный для пары колонок перенос не нужен */
 html.mobile-layout .tr-use-mirrors-group .form-switch > span {
   white-space: normal;
+}
+
+/* редкие поля настроек видны только с переключателем «Расширенные настройки» */
+:root:not([data-advanced]) #view-schedule .settings-advanced {
+  display: none;
+}
+
+#view-schedule .card-body > :last-child,
+#view-schedule #delete-dependent > .form-group:last-child {
+  margin-bottom: 0;
 }

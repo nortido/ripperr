@@ -812,9 +812,7 @@ func TestWriteFileAtomic_OverwritesExistingFileNoLeftoverTmp(t *testing.T) {
 	if string(got) != "new" {
 		t.Errorf("target content = %q, want %q", got, "new")
 	}
-	if _, err = os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Errorf("expected no leftover .tmp file, stat err = %v", err)
-	}
+	assertNoTmp(t, dir)
 }
 
 func TestWriteFileAtomic_FailedWriteLeavesTargetAndNoTmp(t *testing.T) {
@@ -842,9 +840,7 @@ func TestWriteFileAtomic_FailedWriteLeavesTargetAndNoTmp(t *testing.T) {
 	if string(got) != "old" {
 		t.Errorf("expected the original target untouched, got %q", got)
 	}
-	if _, err = os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Errorf("expected no leftover .tmp file, stat err = %v", err)
-	}
+	assertNoTmp(t, dir)
 }
 
 func ageJSON(t *testing.T, dir, hash string, age time.Duration) {
@@ -976,6 +972,7 @@ func TestSweepReplace_OldPresentNewAbsentDropsPair(t *testing.T) {
 
 func TestSweepReplace_OldGoneNewPresentResumes(t *testing.T) {
 	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
@@ -983,9 +980,11 @@ func TestSweepReplace_OldGoneNewPresentResumes(t *testing.T) {
 	fc.markPresent(hash)
 
 	s.SweepOnce(context.Background())
+	s.SweepOnce(context.Background())
 
-	if got := fc.callsOf("exists:old"); len(got) != 2 {
-		t.Errorf("old probes = %v, want two", got)
+	// одна проба на первом тике, две (до и после SettleDelay) на подтверждающем
+	if got := fc.callsOf("exists:old"); len(got) != 3 {
+		t.Errorf("old probes = %v, want three", got)
 	}
 	if got := fc.callsOf("resume:"); len(got) != 1 || got[0] != "resume:"+hash {
 		t.Errorf("resume calls = %v, want [resume:%s]", got, hash)
@@ -997,13 +996,15 @@ func TestSweepReplace_OldGoneNewPresentResumes(t *testing.T) {
 func TestSweepReplace_OldBackOnSecondProbeKeepsPair(t *testing.T) {
 	// клиент мог еще не дочитать свой список: одной пробе "нет" не верим
 	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
 	hash := writeReplacePair(t, s, dir, "rp-flap.txt", freshPairGrace+time.Minute)
 	fc.markPresent(hash)
-	fc.existsSeq["old"] = []bool{false, true}
+	fc.existsSeq["old"] = []bool{false, false, true}
 
+	s.SweepOnce(context.Background())
 	s.SweepOnce(context.Background())
 
 	assertNoCalls(t, fc, "add:", "resume:", "discard:")
@@ -1012,6 +1013,7 @@ func TestSweepReplace_OldBackOnSecondProbeKeepsPair(t *testing.T) {
 
 func TestSweepReplace_BothGoneReAddsStarted(t *testing.T) {
 	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
@@ -1021,6 +1023,7 @@ func TestSweepReplace_BothGoneReAddsStarted(t *testing.T) {
 	}
 	ageJSON(t, dir, hash, freshPairGrace+time.Minute)
 
+	s.SweepOnce(context.Background())
 	s.SweepOnce(context.Background())
 
 	if len(fc.addOpts) != 1 || fc.addOpts[0].Stopped {
@@ -1035,6 +1038,7 @@ func TestSweepReplace_BothGoneReAddsStarted(t *testing.T) {
 
 func TestSweepReplace_ReaddCarriesFileSelection(t *testing.T) {
 	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
@@ -1046,6 +1050,7 @@ func TestSweepReplace_ReaddCarriesFileSelection(t *testing.T) {
 	}
 	ageJSON(t, dir, hash, freshPairGrace+time.Minute)
 
+	s.SweepOnce(context.Background())
 	s.SweepOnce(context.Background())
 
 	if len(fc.addOpts) != 1 {
@@ -1076,6 +1081,7 @@ func TestSweepReplace_OldProbeErrorKeepsPair(t *testing.T) {
 
 func TestSweepReplace_ResumeErrorKeepsPair(t *testing.T) {
 	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
@@ -1083,6 +1089,7 @@ func TestSweepReplace_ResumeErrorKeepsPair(t *testing.T) {
 	fc.markPresent(hash)
 	fc.resumeErr = fmt.Errorf("no data found")
 
+	s.SweepOnce(context.Background())
 	s.SweepOnce(context.Background())
 
 	if got := fc.callsOf("resume:"); len(got) != 1 {
@@ -1126,20 +1133,28 @@ func TestSweepReplace_PairInsideGraceSkipped(t *testing.T) {
 	assertPairRemains(t, dir, hash)
 }
 
-func TestSweepBlackholeOnce_ClassicReAddForcesStarted(t *testing.T) {
+func TestSweepBlackholeOnce_ClassicReAddKeepsStopped(t *testing.T) {
 	withFastSettle(t)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
 	data, hash := buildNamedTestTorrent(t, "classic-stopped.txt")
 	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "classic", Stopped: true})
+	_, magnetHash := buildNamedTestTorrent(t, "classic-stopped-magnet.txt")
+	writeMagnetPair(t, dir, "magnet:?xt=urn:btih:"+magnetHash, model.ManagerAddFileOptions{Hash: magnetHash, Name: "classic-magnet", Stopped: true})
 
 	s.SweepOnce(context.Background())
 
-	if len(fc.addOpts) != 1 || fc.addOpts[0].Stopped {
-		t.Fatalf("add opts = %+v, want one add with Stopped false", fc.addOpts)
+	if len(fc.addOpts) != 2 {
+		t.Fatalf("add opts = %+v, want two adds", fc.addOpts)
+	}
+	for _, o := range fc.addOpts {
+		if !o.Stopped {
+			t.Errorf("%s re-added with Stopped false, want true", o.Name)
+		}
 	}
 	assertPairGone(t, dir, hash)
+	assertJSONGone(t, dir, magnetHash)
 }
 
 func TestPendingReplace(t *testing.T) {
@@ -1189,9 +1204,7 @@ func TestWriteBlackholePair_ReplacesTorrentAtomically(t *testing.T) {
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("torrent = %d bytes (err %v), want the new %d bytes", len(got), err, len(data))
 	}
-	if _, err = os.Stat(torrentPath + ".tmp"); !os.IsNotExist(err) {
-		t.Errorf("expected no leftover .tmp file, stat err = %v", err)
-	}
+	assertNoTmp(t, dir)
 }
 
 func writeBrokenReplacePair(t *testing.T, s *Store, dir, name string) string {
@@ -1206,12 +1219,14 @@ func writeBrokenReplacePair(t *testing.T, s *Store, dir, name string) string {
 
 func TestSweepReplace_BrokenPairOldGoneNewPresentResumes(t *testing.T) {
 	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
 	hash := writeBrokenReplacePair(t, s, dir, "broken-resume.txt")
 	fc.markPresent(hash)
 
+	s.SweepOnce(context.Background())
 	s.SweepOnce(context.Background())
 
 	if got := fc.callsOf("resume:"); len(got) != 1 || got[0] != "resume:"+hash {
@@ -1240,11 +1255,13 @@ func TestSweepReplace_BrokenPairOldPresentDiscardsNew(t *testing.T) {
 
 func TestSweepReplace_BrokenPairBothGoneKept(t *testing.T) {
 	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
 	dir := t.TempDir()
 	fc := newFakeClient()
 	s := New(dir, fc)
 	hash := writeBrokenReplacePair(t, s, dir, "broken-keep.txt")
 
+	s.SweepOnce(context.Background())
 	s.SweepOnce(context.Background())
 
 	assertNoCalls(t, fc, "add:", "resume:", "discard:")
@@ -1263,5 +1280,182 @@ func TestPendingReplace_UnreadableDirIsFalse(t *testing.T) {
 	}
 	if New(file, newFakeClient()).PendingReplace("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
 		t.Error("PendingReplace = true for a dir that cannot hold a pair, want false")
+	}
+}
+
+func withConfirmAbsentAfter(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := confirmAbsentAfter
+	confirmAbsentAfter = d
+	t.Cleanup(func() { confirmAbsentAfter = orig })
+}
+
+func TestWriteCreatesOwnerOnlyFiles(t *testing.T) {
+	// в паре лежит ссылка с passkey, другим пользователям хоста ее видеть незачем
+	dir := t.TempDir()
+	data, hash := buildNamedTestTorrent(t, "perm.txt")
+	if err := New(dir, newFakeClient()).Write(data, "", model.ManagerAddFileOptions{Hash: hash, Name: "perm"}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	torrentPath, jsonPath := blackholePaths(dir, hash)
+	for _, p := range []string{torrentPath, jsonPath} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("%s mode = %o, want 600", filepath.Base(p), got)
+		}
+	}
+}
+
+func TestWriteConcurrentSameHash(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, newFakeClient())
+	data, hash := buildNamedTestTorrent(t, "race.txt")
+	var wg sync.WaitGroup
+	errs := make(chan error, 400)
+	for g := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 200 {
+				opts := model.ManagerAddFileOptions{Hash: hash, Name: fmt.Sprintf("writer-%d-%d", g, i)}
+				if err := s.Write(data, "", opts); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("Write: %v", err)
+	}
+	_, jsonPath := blackholePaths(dir, hash)
+	raw, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("read json: %v", err)
+	}
+	var meta blackholeMeta
+	if err = json.Unmarshal(raw, &meta); err != nil {
+		t.Fatalf("parse json: %v (%q)", err, raw)
+	}
+	if !strings.EqualFold(meta.Hash, hash) {
+		t.Errorf("meta hash = %q, want %q", meta.Hash, hash)
+	}
+}
+
+func TestFinishReplaceNeedsSecondSweep(t *testing.T) {
+	withFastSettle(t)
+	ctx := context.Background()
+
+	t.Run("old absent on two sweeps resumes", func(t *testing.T) {
+		withConfirmAbsentAfter(t, 0)
+		dir := t.TempDir()
+		fc := newFakeClient()
+		s := New(dir, fc)
+		hash := writeReplacePair(t, s, dir, "confirm-resume.txt", freshPairGrace+time.Minute)
+		fc.markPresent(hash)
+
+		s.SweepOnce(ctx)
+		assertNoCalls(t, fc, "add:", "resume:", "discard:")
+		assertPairRemains(t, dir, hash)
+
+		s.SweepOnce(ctx)
+		if got := fc.callsOf("resume:"); len(got) != 1 || got[0] != "resume:"+hash {
+			t.Errorf("resume calls = %v, want [resume:%s]", got, hash)
+		}
+		assertPairGone(t, dir, hash)
+	})
+
+	t.Run("second sweep too early keeps waiting", func(t *testing.T) {
+		withConfirmAbsentAfter(t, time.Hour)
+		dir := t.TempDir()
+		fc := newFakeClient()
+		s := New(dir, fc)
+		hash := writeReplacePair(t, s, dir, "confirm-early.txt", freshPairGrace+time.Minute)
+		fc.markPresent(hash)
+
+		s.SweepOnce(ctx)
+		s.SweepOnce(ctx)
+		assertNoCalls(t, fc, "add:", "resume:", "discard:")
+		assertPairRemains(t, dir, hash)
+	})
+
+	t.Run("old back between sweeps rolls back and clears record", func(t *testing.T) {
+		withConfirmAbsentAfter(t, 0)
+		dir := t.TempDir()
+		fc := newFakeClient()
+		s := New(dir, fc)
+		hash := writeReplacePair(t, s, dir, "confirm-back.txt", freshPairGrace+time.Minute)
+		fc.markPresent(hash)
+
+		s.SweepOnce(ctx)
+		fc.markPresent("old")
+		s.SweepOnce(ctx)
+		if got := fc.callsOf("discard:"); len(got) != 1 || got[0] != "discard:"+hash {
+			t.Errorf("discard calls = %v, want [discard:%s]", got, hash)
+		}
+		assertPairGone(t, dir, hash)
+
+		// та же пара заново: прежняя запись не должна засчитаться первым тиком
+		fc.mu.Lock()
+		delete(fc.present, "old")
+		fc.mu.Unlock()
+		fc.markPresent(hash)
+		writeReplacePair(t, s, dir, "confirm-back.txt", freshPairGrace+time.Minute)
+		s.SweepOnce(ctx)
+		assertNoCalls(t, fc, "add:", "resume:")
+		assertPairRemains(t, dir, hash)
+	})
+
+	t.Run("probe error between sweeps clears record", func(t *testing.T) {
+		withConfirmAbsentAfter(t, 0)
+		dir := t.TempDir()
+		fc := newFakeClient()
+		s := New(dir, fc)
+		hash := writeReplacePair(t, s, dir, "confirm-err.txt", freshPairGrace+time.Minute)
+		fc.markPresent(hash)
+
+		s.SweepOnce(ctx)
+		fc.mu.Lock()
+		fc.existsErr["old"] = fmt.Errorf("connection refused")
+		fc.mu.Unlock()
+		s.SweepOnce(ctx)
+		fc.mu.Lock()
+		delete(fc.existsErr, "old")
+		fc.mu.Unlock()
+		s.SweepOnce(ctx)
+		assertNoCalls(t, fc, "add:", "resume:", "discard:")
+		assertPairRemains(t, dir, hash)
+	})
+
+	t.Run("unreachable sweep clears record", func(t *testing.T) {
+		withConfirmAbsentAfter(t, 0)
+		dir := t.TempDir()
+		fc := newFakeClient()
+		s := New(dir, fc)
+		hash := writeReplacePair(t, s, dir, "confirm-down.txt", freshPairGrace+time.Minute)
+		fc.markPresent(hash)
+
+		s.SweepOnce(ctx)
+		fc.mu.Lock()
+		fc.unreachable = true
+		fc.mu.Unlock()
+		s.SweepOnce(ctx)
+		fc.mu.Lock()
+		fc.unreachable = false
+		fc.mu.Unlock()
+		s.SweepOnce(ctx)
+		assertNoCalls(t, fc, "add:", "resume:", "discard:")
+		assertPairRemains(t, dir, hash)
+	})
+}
+
+func assertNoTmp(t *testing.T, dir string) {
+	t.Helper()
+	if left, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(left) != 0 {
+		t.Errorf("expected no leftover .tmp file, got %v", left)
 	}
 }

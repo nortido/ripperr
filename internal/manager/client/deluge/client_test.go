@@ -323,7 +323,7 @@ func TestDelete(t *testing.T) {
 			c := newClient(t, f, tc.cfg)
 			f.put(h, &fakeTorrent{})
 			f.put(other, &fakeTorrent{})
-			opts := model.ManagerDeleteOptions{Hash: strings.ToUpper(h), Category: tc.cat, Name: "a"}
+			opts := model.ManagerDeleteOptions{Hash: strings.ToUpper(h), Category: tc.cat, Name: "a", DeleteFiles: true}
 			if got := c.DeletesFiles(context.Background(), opts); got != tc.want {
 				t.Fatalf("DeletesFiles = %v, want %v", got, tc.want)
 			}
@@ -1002,4 +1002,30 @@ func TestHashesSentLowerCase(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestDelete_CallerKeepFilesWins(t *testing.T) {
+	h := hashN(1)
+	f := newFake(t)
+	c := newClient(t, f, model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}})
+	f.put(h, &fakeTorrent{})
+	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: h, Category: "movies", Name: "a", DeleteFiles: false}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if rm := removes(t, f); len(rm) != 1 || rm[0] != (removeCall{h, false}) {
+		t.Fatalf("remove calls = %+v, want [{%s false}]", rm, h)
+	}
+}
+
+func TestDeletesFilesIgnoresEmptyCategory(t *testing.T) {
+	h := hashN(1)
+	f := newFake(t)
+	c := newClient(t, f, model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"tv", ""}})
+	f.put(h, &fakeTorrent{})
+	if c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: h, Category: ""}) {
+		t.Fatalf("DeletesFiles true for uncategorized torrent")
+	}
+	if !c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: h, Category: "tv"}) {
+		t.Fatalf("DeletesFiles false for listed category")
+	}
 }

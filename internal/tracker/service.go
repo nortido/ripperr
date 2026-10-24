@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"ripperr/internal/helper"
 	"ripperr/internal/helper/breakeralerts"
+	"ripperr/internal/helper/tlsclient"
 	"ripperr/internal/model/tracker"
 	"ripperr/internal/proxy"
 	"ripperr/internal/system/logger"
@@ -21,6 +23,40 @@ import (
 const TTL = time.Hour
 
 const maxStaleUses = 3
+
+var loginMaxAge = 24 * time.Hour
+
+const missLoginGap = time.Hour
+
+type loginTimes struct {
+	mu sync.Mutex
+	at map[int]time.Time
+}
+
+func (l *loginTimes) get(id int) (t time.Time, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok = l.at[id]
+	return
+}
+
+func (l *loginTimes) set(id int, t time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.at == nil {
+		l.at = make(map[int]time.Time)
+	}
+	l.at[id] = t
+}
+
+func (l *loginTimes) del(id int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.at, id)
+}
+
+// время входа живет дольше сервиса: перезагрузка настроек не должна сбрасывать окно loginMaxAge
+var processLogins = &loginTimes{}
 
 var ErrMirrorUnconfirmed = errors.New("only an unconfirmed mirror answers")
 
@@ -45,12 +81,23 @@ type service struct {
 	hc                 *http.Client
 	downloadHC         helper.HTTPDoer
 	clientIndex        map[int]*CachedTracker
+	logins             *loginTimes
+	loginsOnce         sync.Once
 	handlerRegistry    map[int]client.ITracker
 	cbCfg              *helper.CircuitBreakerConfig
 	alerts             *breakeralerts.Registry
 	domainAlive        domainProbe
 	adopted            map[string]string
 	rot                mirrorRotation
+}
+
+func (s *service) loginClock() *loginTimes {
+	s.loginsOnce.Do(func() {
+		if s.logins == nil {
+			s.logins = &loginTimes{}
+		}
+	})
+	return s.logins
 }
 
 func (s *service) GetID(link string) (id int) {
@@ -86,12 +133,44 @@ func (s *service) Response(ctx context.Context, ttid int, link string, download 
 	if err == nil {
 		return
 	}
+	if !sessionSuspect(err) {
+		return
+	}
 	name := s.handlerRegistry[ttid].GetName()
 	logger.Warn(fmt.Sprintf("%s: download failed, relogin: %s", name, err))
 	if ct, err = s.relogin(ctx, ttid); err != nil {
 		return
 	}
 	return s.readResponseBody(ctx, ttid, ct, link, download)
+}
+
+func (s *service) ForceLoginNext(ttid int) {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+	ct, ok := s.clientIndex[ttid]
+	// не чаще раза в час, как до повторного использования кук: легальный промах не должен плодить входы
+	if last, seen := s.loginClock().get(ttid); !ok || ct.IClient == nil || (seen && time.Since(last) < missLoginGap) {
+		return
+	}
+	s.loginClock().del(ttid)
+	ct.Created = time.Time{}
+}
+
+func sessionSuspect(err error) bool {
+	// сеть, таймаут, 404 и 5xx ничего не говорят о сессии: вход заново их не лечит
+	if errors.Is(err, tlsclient.ErrRedirectRefused) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, helper.ErrCircuitOpen) || errors.Is(err, client.ErrTrackerUnavailable) {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return false
+	}
+	var se *client.StatusError
+	if errors.As(err, &se) && (se.Code == http.StatusNotFound || se.Code >= http.StatusInternalServerError) {
+		return false
+	}
+	return true
 }
 
 func (s *service) readResponseBody(ctx context.Context, ttid int, ct *CachedTracker, link string, download bool) (buf *bytes.Buffer, err error) {
@@ -167,7 +246,7 @@ func (s *service) BuildCache(ctx context.Context) (err error) {
 	for i := range s.handlerRegistry {
 		go func(i int) {
 			defer wg.Done()
-			s.destroyFlareSession(i)
+			s.destroyFlareSession(ctx, i)
 			if e := s.cache(ctx, i, false); e != nil {
 				if errors.Is(e, context.Canceled) {
 					return
@@ -221,11 +300,13 @@ func (s *service) getCached(ctx context.Context, id int) (ct *CachedTracker, err
 		return
 	}
 	prev = ct
-	forceLogin = ok
+	// куки из БД живут до суток: почасовая пересборка входит заново только после паузы или спустя loginMaxAge
+	last, seen := s.loginClock().get(id)
+	forceLogin = ok && (resume || !seen || time.Since(last) >= loginMaxAge)
 	s.mx.RUnlock()
 
 	if forceLogin {
-		s.destroyFlareSession(id)
+		s.destroyFlareSession(ctx, id)
 	}
 
 	return s.refresh(ctx, id, forceLogin, prev)
@@ -272,7 +353,7 @@ func (s *service) resetStaleUseCount(id int) {
 	s.flareMx.Unlock()
 }
 
-func (s *service) destroyFlareSession(id int) {
+func (s *service) destroyFlareSession(ctx context.Context, id int) {
 	tr, ok := s.handlerRegistry[id]
 	if !ok {
 		return
@@ -285,15 +366,15 @@ func (s *service) destroyFlareSession(id int) {
 	if sessionID == "" {
 		return
 	}
-	if err := s.px.DestroyFlareSession(sessionID); err != nil {
+	if err := s.px.DestroyFlareSession(ctx, sessionID); err != nil {
 		logger.Warn(fmt.Sprintf("%s: flare session destroy: %s", tr.GetName(), err))
 	}
 }
 
-func (s *service) DestroyFlareSessions() {
+func (s *service) DestroyFlareSessions(ctx context.Context) {
 	// зовется при остановке, чтобы в FlareSolverr не висели брошенные браузеры
 	for id := range s.handlerRegistry {
-		s.destroyFlareSession(id)
+		s.destroyFlareSession(ctx, id)
 	}
 }
 
@@ -317,7 +398,7 @@ func (s *service) relogin(ctx context.Context, ttid int) (ct *CachedTracker, err
 	var prev *CachedTracker
 
 	s.resetFlareTimeouts(ttid)
-	s.destroyFlareSession(ttid)
+	s.destroyFlareSession(ctx, ttid)
 
 	s.mx.RLock()
 	prev = s.clientIndex[ttid]
@@ -356,9 +437,6 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 		logger.Info(fmt.Sprintf("tracker %s: using mirror %s", tr.GetName(), active))
 		tr = withActiveDomain(tr, active)
 	}
-	if s.alerts != nil {
-		s.alerts.Close(tr.GetName())
-	}
 	tc = client.New(s.hc, s.downloadHC, tr, s.px, s.newBreaker(tr.GetName()))
 	if err = s.store(ctx, tid, tc, forceLogin); err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -373,6 +451,10 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 	}
 	s.mx.Lock()
 	s.clientIndex[tid] = &CachedTracker{IClient: tc, Created: time.Now()}
+	// первая сборка за процесс без принудительного входа тоже открывает окно loginMaxAge
+	if _, seen := s.loginClock().get(tid); forceLogin || !seen {
+		s.loginClock().set(tid, time.Now())
+	}
 	s.mx.Unlock()
 	return
 }
@@ -388,6 +470,7 @@ func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLo
 		return
 	}
 	hadCookies = attrs.Exists && len(attrs.Cookies) > 0
+	stored := attrs.Cookies
 	if attrs.Exists {
 		// логин берем из настроек, в БД только куки и последние рабочие данные.
 		// Пустой логин в настройках рабочий из БД не затирает
@@ -398,11 +481,14 @@ func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLo
 		attrs.Publicity = tc.GetPublicity()
 		forceLogin = forceLogin || credsChanged
 	}
+	if !forceLogin && attrs.Exists {
+		attrs.Cookies = s.liveCookies(tid, tc, attrs.Cookies)
+	}
 	if err = tc.InitClient(ctx, attrs, forceLogin); err != nil {
 		return
 	}
 	if attrs.Exists {
-		cookiesStale := len(tc.Cookies()) > 0 && (forceLogin || !hadCookies || helper.CookiesString(attrs.Cookies) != helper.CookiesString(tc.Cookies()))
+		cookiesStale := len(tc.Cookies()) > 0 && (forceLogin || !hadCookies || helper.CookiesString(stored) != helper.CookiesString(tc.Cookies()))
 		if credsChanged || cookiesStale {
 			if len(tc.Cookies()) > 0 {
 				attrs.Cookies = tc.Cookies()
@@ -430,6 +516,20 @@ func (s *service) store(ctx context.Context, tid int, tc client.IClient, forceLo
 	return
 }
 
+func (s *service) liveCookies(tid int, tc client.IClient, fallback []*http.Cookie) []*http.Cookie {
+	// куки, полученные клиентом за час (Set-Cookie), свежее тех, что лежат в БД
+	s.mx.RLock()
+	prev := s.clientIndex[tid]
+	s.mx.RUnlock()
+	if prev == nil || prev.IClient == nil || prev.GetDomain() != tc.GetDomain() {
+		return fallback
+	}
+	if live := prev.Cookies(); len(live) > 0 {
+		return live
+	}
+	return fallback
+}
+
 func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf tracker.TrackerConfig, alerts *breakeralerts.Registry) *service {
 	return &service{
 		hc:                 hc,
@@ -440,6 +540,7 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, c
 		alerts:             alerts,
 		handlerRegistry:    buildHandlerRegistry(conf),
 		clientIndex:        make(map[int]*CachedTracker),
+		logins:             processLogins,
 		flareTimeoutCounts: make(map[int]int),
 		staleUseCounts:     make(map[int]int),
 		domainAlive:        domainProbeWith(hc),

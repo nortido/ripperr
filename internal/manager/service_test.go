@@ -34,6 +34,9 @@ type stubClient struct {
 	exists             bool
 	existsErr          error
 	deletesFiles       bool
+	deletesFilesSeq    []bool
+	deletesFilesCalls  int
+	deleteOpts         []model.ManagerDeleteOptions
 	deleteErr          error
 	waitAbsent         bool
 	waitAbsentErr      error
@@ -66,6 +69,15 @@ type stubClient struct {
 	exportData         []byte
 	exportErr          error
 	deleteEnabled      bool
+	applyHashes        []string
+	applyOpts          []model.ManagerAddFileOptions
+	applyErr           error
+	addDelay           time.Duration
+	addDeadline        time.Time
+	addHasDeadline     bool
+	waitBlocks         bool
+	filesByHash        map[string][]model.TorrentFile
+	filesErrByHash     map[string]error
 }
 
 type existsAnswer struct {
@@ -96,6 +108,8 @@ func (s *stubClient) GetTorrentDetails(ctx context.Context, hash string) (string
 func (s *stubClient) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) error {
 	s.calls = append(s.calls, "add")
 	s.addData = append([]byte(nil), buf.Bytes()...)
+	s.addDeadline, s.addHasDeadline = ctx.Deadline()
+	time.Sleep(s.addDelay)
 	s.addOpts = opts
 	s.addStopped = append(s.addStopped, opts.Stopped)
 	if s.addCancel != nil {
@@ -116,6 +130,7 @@ func (s *stubClient) AddFromMagnet(ctx context.Context, magnet string, opts mode
 
 func (s *stubClient) Delete(ctx context.Context, opts model.ManagerDeleteOptions) error {
 	s.calls = append(s.calls, "delete")
+	s.deleteOpts = append(s.deleteOpts, opts)
 	if s.deleteCancel != nil {
 		s.deleteCancel()
 		return ctx.Err()
@@ -179,6 +194,12 @@ func (s *stubClient) Resume(ctx context.Context, hash string) error {
 func (s *stubClient) Files(ctx context.Context, hash string) ([]model.TorrentFile, error) {
 	s.filesHashes = append(s.filesHashes, hash)
 	s.filesAt = append(s.filesAt, len(s.calls))
+	if err, ok := s.filesErrByHash[hash]; ok {
+		return nil, err
+	}
+	if files, ok := s.filesByHash[hash]; ok {
+		return files, nil
+	}
 	return s.files, s.filesErr
 }
 
@@ -187,12 +208,22 @@ func (s *stubClient) ReplacePending(hash string) bool {
 }
 
 func (s *stubClient) DeletesFiles(ctx context.Context, opts model.ManagerDeleteOptions) bool {
+	s.deletesFilesCalls++
+	if len(s.deletesFilesSeq) > 0 {
+		v := s.deletesFilesSeq[0]
+		s.deletesFilesSeq = s.deletesFilesSeq[1:]
+		return v
+	}
 	return s.deletesFiles
 }
 
 func (s *stubClient) WaitAbsent(ctx context.Context, hash string) (bool, error) {
 	s.calls = append(s.calls, "wait-absent")
 	s.waitHash = hash
+	if s.waitBlocks {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
 	if s.waitCancel != nil {
 		s.waitCancel()
 	}
@@ -699,19 +730,56 @@ func TestSubmit_SameHashPresentSkipsReplace(t *testing.T) {
 	}
 }
 
-func TestSubmit_SameHashExistsCheckErrorTakesProtectedPath(t *testing.T) {
-	// присутствие не выяснили: считаем, что торрента нет, и идем защищенным путем.
-	// Молча пропускать перезаливку нельзя
-	stub := &stubClient{incomingSame: true, incomingKnown: true, confirmSettled: true, existsErr: fmt.Errorf("connection refused")}
+func TestSubmit_SameHashExistsErrorChangesNothing(t *testing.T) {
+	// присутствие не выяснили: ничего не трогаем, следующий прогон повторит проверку
+	stub := &stubClient{incomingSame: true, incomingKnown: true, confirmSettled: true, deletesFiles: true, existsErr: fmt.Errorf("connection refused")}
 	m := NewManager(stub)
 
 	opts := model.ManagerAddFileOptions{Hash: "samehash"}
+	err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts)
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("err = %v, want the Exists error", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists")
+}
+
+func TestSubmit_SameHashAbsentDeletesWithoutFiles(t *testing.T) {
+	stub := &stubClient{incomingSame: true, incomingKnown: true, confirmSettled: true, exists: false, deletesFiles: true}
+	m := NewManager(stub)
+
+	opts := model.ManagerAddFileOptions{Hash: "samehash", Category: "movies"}
 	if err := m.Submit(context.Background(), bytes.NewBufferString("data"), opts); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	wantOrder := []string{"details", "incoming", "exists", "blackhole-write", "delete", "add", "confirm-settled", "blackhole-remove"}
-	if !equalStrings(stub.calls, wantOrder) {
-		t.Errorf("call order = %v, want %v", stub.calls, wantOrder)
+	assertCalls(t, stub, "details", "incoming", "exists", "blackhole-write", "delete", "add", "confirm-settled", "blackhole-remove")
+	if len(stub.deleteOpts) != 1 || stub.deleteOpts[0].DeleteFiles {
+		t.Errorf("delete opts = %+v, want one delete without files", stub.deleteOpts)
+	}
+}
+
+func TestSubmit_DeleteFirstPassesDecision(t *testing.T) {
+	stub := deleteFirstStub()
+	if _, err := submitDeleteFirst(t, stub); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stub.deleteOpts) != 1 || !stub.deleteOpts[0].DeleteFiles {
+		t.Errorf("delete opts = %+v, want one delete with files", stub.deleteOpts)
+	}
+}
+
+func TestSubmit_FilesKeptUsesTheSingleDecision(t *testing.T) {
+	// второй ответ DeletesFiles отличается: удаление должно взять первый, по нему выбран путь
+	stub := deleteFirstStub()
+	stub.deletesFilesSeq = []bool{false, true}
+	if _, err := submitDeleteFirst(t, stub); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "add", "delete")
+	if stub.deletesFilesCalls != 1 {
+		t.Errorf("DeletesFiles calls = %d, want 1", stub.deletesFilesCalls)
+	}
+	if len(stub.deleteOpts) != 1 || stub.deleteOpts[0].DeleteFiles {
+		t.Errorf("delete opts = %+v, want one delete without files", stub.deleteOpts)
 	}
 }
 
@@ -848,7 +916,7 @@ func TestSubmit_FilesKeptCarriesOldFileSelection(t *testing.T) {
 	if _, err := submitDeleteFirst(t, stub); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCalls(t, stub, "details", "incoming", "add", "delete")
+	assertCalls(t, stub, "details", "incoming", "exists", "add", "delete")
 	if !equalStrings(stub.filesHashes, []string{"oldhash"}) || !slices.Equal(stub.addOpts.FileSelection, stub.files) {
 		t.Errorf("files read %v, add selection %v, want [oldhash] and %v", stub.filesHashes, stub.addOpts.FileSelection, stub.files)
 	}
@@ -917,10 +985,11 @@ func TestSubmit_FilesKeptAddErrorWithSelectionDiscardsNew(t *testing.T) {
 		addErr    error
 		wantCalls []string
 		discard   bool
+		newSeq    []existsAnswer
 	}{
-		{"selection", partialSelection(), fmt.Errorf("add failed"), []string{"details", "incoming", "add", "exists", "discard", "blackhole-remove"}, true},
-		{"no selection", nil, fmt.Errorf("add failed"), []string{"details", "incoming", "add"}, false},
-		{"selection already added", partialSelection(), fmt.Errorf("%w: race", model.ErrAlreadyAdded), []string{"details", "incoming", "add"}, false},
+		{"selection", partialSelection(), fmt.Errorf("add failed"), []string{"details", "incoming", "exists", "add", "exists", "discard", "blackhole-remove"}, true, []existsAnswer{{present: false}, {present: true}}},
+		{"no selection", nil, fmt.Errorf("add failed"), []string{"details", "incoming", "add"}, false, nil},
+		{"selection already added", partialSelection(), model.ErrAlreadyAdded, []string{"details", "incoming", "exists"}, false, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -930,12 +999,309 @@ func TestSubmit_FilesKeptAddErrorWithSelectionDiscardsNew(t *testing.T) {
 			stub.addErr = tc.addErr
 			_, newHash := buildTestTorrent(t)
 			stub.existsByHash[newHash] = true
+			stub.existsSeq[newHash] = tc.newSeq
 			if _, err := submitDeleteFirst(t, stub); !errors.Is(err, tc.addErr) {
 				t.Fatalf("err = %v, want %v", err, tc.addErr)
 			}
 			assertCalls(t, stub, tc.wantCalls...)
 			if tc.discard != equalStrings(stub.discardHashes, []string{newHash}) {
 				t.Errorf("discard %v, want discard of new %v", stub.discardHashes, tc.discard)
+			}
+		})
+	}
+}
+
+func TestSubmit_AddFirstAlreadyAddedDropsOldKeepingFiles(t *testing.T) {
+	// новый уже в клиенте (поздний add или упавшее удаление старого): старый уходит без файлов
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.addErr = fmt.Errorf("%w: race", model.ErrAlreadyAdded)
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "add", "delete")
+	if len(stub.deleteOpts) != 1 || stub.deleteOpts[0].DeleteFiles || stub.deleteOpts[0].Hash != "oldhash" {
+		t.Errorf("delete opts = %+v, want one delete of oldhash without files", stub.deleteOpts)
+	}
+	assertNoDiscardNoResume(t, stub)
+}
+
+func TestSubmit_AddFirstAlreadyAddedDeleteErrorSurfaces(t *testing.T) {
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.addErr = fmt.Errorf("%w: race", model.ErrAlreadyAdded)
+	stub.deleteErr = fmt.Errorf("connection refused")
+	_, err := submitDeleteFirst(t, stub)
+	if errors.Is(err, model.ErrAlreadyAdded) || !errors.Is(err, stub.deleteErr) {
+		t.Fatalf("err = %v, want delete error without ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "add", "delete")
+}
+
+func TestSubmit_AddFirstAlreadyAddedUnknownOrEqualHashUntouched(t *testing.T) {
+	data, dataHash := buildTestTorrent(t)
+	cases := []struct {
+		name string
+		data []byte
+		hash string
+	}{
+		{"hash unknown", []byte("data"), "oldhash"},
+		{"equal hash", data, strings.ToUpper(dataHash)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubClient{incomingKnown: false, addErr: fmt.Errorf("%w: race", model.ErrAlreadyAdded)}
+			err := NewManager(stub).Submit(context.Background(), bytes.NewBuffer(tc.data), model.ManagerAddFileOptions{Hash: tc.hash})
+			if !errors.Is(err, model.ErrAlreadyAdded) {
+				t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+			}
+			assertCalls(t, stub, "details", "incoming", "add")
+		})
+	}
+}
+
+func TestSubmit_SelectionProbeErrorAddsNothing(t *testing.T) {
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.files = partialSelection()
+	_, newHash := buildTestTorrent(t)
+	probeErr := fmt.Errorf("connection refused")
+	stub.existsErrByHash[newHash] = probeErr
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, probeErr) {
+		t.Fatalf("err = %v, want %v", err, probeErr)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists")
+	assertNoDiscardNoResume(t, stub)
+}
+
+func TestSubmit_SelectionNewAlreadyPresentKeepsIt(t *testing.T) {
+	// найденный новый мог остаться остановленным и без выбора файлов (поздний add,
+	// сбой Discard в клиенте): старый должен раздавать дальше
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.files = partialSelection()
+	_, newHash := buildTestTorrent(t)
+	stub.existsByHash[newHash] = true
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists")
+	assertNoDiscardNoResume(t, stub)
+}
+
+func TestSubmit_SelectionAlreadyAddedOnAddKeepsOld(t *testing.T) {
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.files = partialSelection()
+	stub.addErr = fmt.Errorf("%w: race", model.ErrAlreadyAdded)
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists", "add")
+	assertNoDiscardNoResume(t, stub)
+}
+
+func (s *stubClient) ApplySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
+	s.calls = append(s.calls, "apply")
+	s.applyHashes = append(s.applyHashes, hash)
+	s.applyOpts = append(s.applyOpts, opts)
+	return s.applyErr
+}
+
+func withReplaceBudgets(t *testing.T, add, start time.Duration) {
+	t.Helper()
+	origAdd, origStart := replaceAddBudget, replaceStartBudget
+	replaceAddBudget, replaceStartBudget = add, start
+	t.Cleanup(func() { replaceAddBudget, replaceStartBudget = origAdd, origStart })
+}
+
+func TestSubmit_DeleteFirstAddHasBudget(t *testing.T) {
+	withReplaceBudgets(t, 50*time.Millisecond, time.Minute)
+	stub := deleteFirstStub()
+	before := time.Now()
+	if _, err := submitDeleteFirst(t, stub); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !stub.addHasDeadline || stub.addDeadline.After(before.Add(50*time.Millisecond+10*time.Millisecond)) {
+		t.Errorf("add deadline %v (set %v), want at most 50ms after %v", stub.addDeadline, stub.addHasDeadline, before)
+	}
+}
+
+func TestSubmit_DeleteFirstSlowAddKeepsOld(t *testing.T) {
+	withReplaceBudgets(t, 50*time.Millisecond, time.Minute)
+	stub := deleteFirstStub()
+	stub.addDelay = 100 * time.Millisecond
+	_, newHash := buildTestTorrent(t)
+	stub.existsSeq[newHash] = []existsAnswer{{present: false}, {present: true}}
+	_, err := submitDeleteFirst(t, stub)
+	if err == nil || !strings.Contains(err.Error(), "exceeded 50ms") {
+		t.Fatalf("err = %v, want budget error", err)
+	}
+	assertCalls(t, stub, afterStoppedAdd("exists", "discard", "blackhole-remove")...)
+	if len(stub.deleteOpts) != 0 || !equalStrings(stub.discardHashes, []string{newHash}) {
+		t.Errorf("delete %+v, discard %v, want no delete and discard of new %s", stub.deleteOpts, stub.discardHashes, newHash)
+	}
+}
+
+func TestSubmit_DeleteFirstFinishPhaseBounded(t *testing.T) {
+	withReplaceBudgets(t, 50*time.Millisecond, 50*time.Millisecond)
+	stub := deleteFirstStub()
+	stub.waitBlocks = true
+	done := make(chan error, 1)
+	go func() {
+		_, err := submitDeleteFirst(t, stub)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("finish phase not bounded by the start budget")
+	}
+	assertCalls(t, stub, afterStoppedAdd("delete", "wait-absent")...)
+	assertNoDiscardNoResume(t, stub)
+}
+
+func selectionConvergeStub(t *testing.T, newEntry *model.Entry) (*stubClient, string) {
+	t.Helper()
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.files = partialSelection()
+	_, newHash := buildTestTorrent(t)
+	stub.entries = []*model.Entry{{Hash: "oldhash", Name: "old name"}}
+	if newEntry != nil {
+		newEntry.Hash = strings.ToUpper(newHash)
+		stub.entries = append(stub.entries, newEntry)
+	}
+	return stub, newHash
+}
+
+func assertConverged(t *testing.T, stub *stubClient, newHash string) {
+	t.Helper()
+	if !equalStrings(stub.applyHashes, []string{newHash}) || !slices.Equal(stub.applyOpts[0].FileSelection, stub.files) {
+		t.Errorf("apply %v %+v, want new %s with the old selection", stub.applyHashes, stub.applyOpts, newHash)
+	}
+	if len(stub.deleteOpts) != 1 || stub.deleteOpts[0].Hash != "oldhash" || stub.deleteOpts[0].DeleteFiles {
+		t.Errorf("delete opts = %+v, want one delete of oldhash without files", stub.deleteOpts)
+	}
+	assertNoDiscardNoResume(t, stub)
+}
+
+func TestSubmit_SelectionStoppedNewConverges(t *testing.T) {
+	stub, newHash := selectionConvergeStub(t, &model.Entry{Stopped: true})
+	stub.existsByHash[newHash] = true
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists", "apply", "delete")
+	assertConverged(t, stub, newHash)
+}
+
+func TestSubmit_SelectionAlreadyAddedOnAddConverges(t *testing.T) {
+	stub, newHash := selectionConvergeStub(t, &model.Entry{Stopped: true})
+	stub.addErr = fmt.Errorf("%w: race", model.ErrAlreadyAdded)
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists", "add", "apply", "delete")
+	assertConverged(t, stub, newHash)
+}
+
+func TestSubmit_SelectionConvergeApplyErrorKeepsOld(t *testing.T) {
+	stub, newHash := selectionConvergeStub(t, &model.Entry{Stopped: true})
+	stub.existsByHash[newHash] = true
+	stub.applyErr = fmt.Errorf("connection refused")
+	_, err := submitDeleteFirst(t, stub)
+	if !errors.Is(err, stub.applyErr) || errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("err = %v, want apply error", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists", "apply")
+	assertNoDiscardNoResume(t, stub)
+}
+
+func TestSubmit_SelectionConvergeGuards(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry *model.Entry
+	}{
+		{"running", &model.Entry{}},
+		{"unhealthy", &model.Entry{Stopped: true, Unhealthy: true}},
+		{"absent", nil},
+	}
+	for _, tc := range cases {
+		for _, onAdd := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/onAdd=%v", tc.name, onAdd), func(t *testing.T) {
+				stub, newHash := selectionConvergeStub(t, tc.entry)
+				// запущенный новый качает все файлы: выбор старого не совпадает
+				stub.filesByHash = map[string][]model.TorrentFile{newHash: {{Path: "R/a", Wanted: true}, {Path: "R/b", Wanted: true}}}
+				want := []string{"details", "incoming", "exists"}
+				if onAdd {
+					stub.addErr = fmt.Errorf("%w: race", model.ErrAlreadyAdded)
+					want = append(want, "add")
+				} else {
+					stub.existsByHash[newHash] = true
+				}
+				if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+					t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+				}
+				assertCalls(t, stub, want...)
+				if len(stub.applyHashes) != 0 || len(stub.deleteOpts) != 0 {
+					t.Errorf("apply %v, delete %+v, want none", stub.applyHashes, stub.deleteOpts)
+				}
+				assertNoDiscardNoResume(t, stub)
+			})
+		}
+	}
+}
+
+func TestSubmit_SelectionConvergeRetriesFailedDrop(t *testing.T) {
+	newEntry := &model.Entry{Stopped: true}
+	stub, newHash := selectionConvergeStub(t, newEntry)
+	stub.existsByHash[newHash] = true
+	stub.deleteErr = fmt.Errorf("connection refused")
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, stub.deleteErr) {
+		t.Fatalf("first pass err = %v, want delete error", err)
+	}
+	// ApplySelection запустил новый, а удаление старого сорвалось: следующий прогон
+	newEntry.Stopped = false
+	stub.deleteErr = nil
+	stub.calls, stub.applyHashes, stub.applyOpts, stub.deleteOpts = nil, nil, nil, nil
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("second pass err = %v, want ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists", "delete")
+	if len(stub.applyHashes) != 0 || len(stub.deleteOpts) != 1 || stub.deleteOpts[0].Hash != "oldhash" || stub.deleteOpts[0].DeleteFiles {
+		t.Errorf("apply %v, delete opts %+v, want no apply and one delete of oldhash without files", stub.applyHashes, stub.deleteOpts)
+	}
+	assertNoDiscardNoResume(t, stub)
+}
+
+func TestSubmit_SelectionRunningNewKeepsOldUnlessMatching(t *testing.T) {
+	cases := []struct {
+		name     string
+		files    []model.TorrentFile
+		filesErr error
+	}{
+		{"different selection", []model.TorrentFile{{Path: "R/a", Wanted: false}, {Path: "R/b", Wanted: true}}, nil},
+		{"files error", nil, fmt.Errorf("connection refused")},
+		{"empty file list", []model.TorrentFile{}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub, newHash := selectionConvergeStub(t, &model.Entry{})
+			stub.existsByHash[newHash] = true
+			stub.filesByHash = map[string][]model.TorrentFile{newHash: tc.files}
+			if tc.filesErr != nil {
+				stub.filesErrByHash = map[string]error{newHash: tc.filesErr}
+			}
+			if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+				t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+			}
+			assertCalls(t, stub, "details", "incoming", "exists")
+			if len(stub.applyHashes) != 0 || len(stub.deleteOpts) != 0 {
+				t.Errorf("apply %v, delete %+v, want none", stub.applyHashes, stub.deleteOpts)
 			}
 		})
 	}

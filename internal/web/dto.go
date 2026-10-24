@@ -121,3 +121,14 @@ type testResultResp struct {
 type categoriesResp struct {
 	Categories []string `json:"categories"`
 }
+
+type pushDeviceResp struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+type pushStateResp struct {
+	PublicKey string           `json:"public_key"`
+	Devices   []pushDeviceResp `json:"devices"`
+}

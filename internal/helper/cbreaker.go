@@ -94,13 +94,11 @@ func (cb *CircuitBreaker) recordFailure(err error) {
 }
 
 func (cb *CircuitBreaker) reset() {
-	wasTripped := cb.state == StateOpen || cb.state == StateHalfOpen
 	cb.state = StateClosed
 	cb.failures = 0
 	cb.lastErr = nil
-	if wasTripped {
-		cb.clearAlert()
-	}
+	// инцидент мог достаться от прошлого экземпляра брейкера, поэтому закрываем после каждого успеха
+	cb.clearAlert()
 }
 
 func (cb *CircuitBreaker) notifyAlerts(wasOpen bool) {

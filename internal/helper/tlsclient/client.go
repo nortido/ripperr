@@ -40,6 +40,7 @@ func New(cfg Config) (*Client, error) {
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(int(timeout.Seconds())),
 		tls_client.WithClientProfile(profile),
+		tls_client.WithCustomRedirectFunc(checkDownloadRedirect),
 	}
 	proxyURL := resolveProxyURL(cfg.ProxyURL)
 	if proxyURL != "" {
@@ -68,6 +69,29 @@ func (c *Client) Do(req *nethttp.Request) (*nethttp.Response, error) {
 		return nil, err
 	}
 	return toNetHTTPResponse(fResp, req), nil
+}
+
+var ErrRedirectRefused = errors.New("redirect refused")
+
+type redirectRefusal string
+
+func (r redirectRefusal) Error() string { return string(r) }
+
+func (redirectRefusal) Is(target error) bool { return target == ErrRedirectRefused }
+
+func checkDownloadRedirect(req *fhttp.Request, via []*fhttp.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" {
+		return redirectRefusal("redirect to " + req.URL.Scheme + " refused")
+	}
+	// BOX.LOCAL. ведет туда же, а IsLocalHost сравнивает буквально
+	host := strings.TrimSuffix(strings.ToLower(req.URL.Hostname()), ".")
+	if helper.IsLocalHost(host) {
+		return redirectRefusal("redirect to " + host + " refused")
+	}
+	return nil
 }
 
 func resolveProxyURL(explicit string) string {

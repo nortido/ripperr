@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -126,7 +127,20 @@ type Runner struct {
 	AllowedCategories     []string `env:"RUNNER_ALLOWED_CATEGORIES, default="`
 	MagnetTimeout         int64    `env:"RUNNER_MAGNET_TIMEOUT, default=60"`
 	MirrorConfirm         bool     `env:"RUNNER_MIRROR_CONFIRM, default=true"`
+	RunOnStart            bool     `env:"RUNNER_RUN_ON_START, default=true"`
 	Timezone              string   // переопределение только из БД, пусто: локальная зона процесса
+}
+
+var AllowedRefreshPerDay = []int{1, 2, 3, 4, 6, 8, 12, 24}
+
+func (r Runner) ValidateSchedule() error {
+	if !slices.Contains(AllowedRefreshPerDay, r.ListRefreshPerDay) {
+		return fmt.Errorf("RUNNER_LIST_REFRESH_PER_DAY=%d must be one of %v", r.ListRefreshPerDay, AllowedRefreshPerDay)
+	}
+	if r.StartHour < 0 || r.StartHour > 23 {
+		return fmt.Errorf("RUNNER_START_HOUR=%d must be 0..23", r.StartHour)
+	}
+	return nil
 }
 
 func (r Runner) Validate() error {
@@ -184,4 +198,7 @@ type Notifications struct {
 	PushoverToken    string
 	PushoverUser     string
 	PushoverEvents   []string
+	BrowserDisabled  bool
+	BrowserEvents    []string
+	Language         string
 }

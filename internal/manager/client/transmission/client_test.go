@@ -568,7 +568,7 @@ func TestDelete_CategoryInListDeletesFiles(t *testing.T) {
 	stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: "/downloads/movies"})
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
-	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x"}); err != nil {
+	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x", DeleteFiles: true}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(stub.removeCalls) != 1 || stub.removeCalls[0]["delete-local-data"] != true {
@@ -583,7 +583,7 @@ func TestDelete_CategoryMatchesButOutsideBaseKeepsFiles(t *testing.T) {
 	stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: "/mnt/archive/movies"})
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
-	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x"}); err != nil {
+	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x", DeleteFiles: true}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(stub.removeCalls) != 1 || stub.removeCalls[0]["delete-local-data"] != false {
@@ -595,7 +595,7 @@ func TestDelete_CategoryNotInListKeepsFiles(t *testing.T) {
 	stub := newStubServer(t, "/downloads")
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
-	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "tv", Name: "x"}); err != nil {
+	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "tv", Name: "x", DeleteFiles: true}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(stub.removeCalls) != 1 || stub.removeCalls[0]["delete-local-data"] != false {
@@ -609,7 +609,7 @@ func TestDelete_CategoryInsideBaseCheckFailsKeepsFiles(t *testing.T) {
 	stub.failTorrentGetFor = "h1"
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
-	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x"}); err != nil {
+	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x", DeleteFiles: true}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(stub.removeCalls) != 1 || stub.removeCalls[0]["delete-local-data"] != false {
@@ -622,7 +622,7 @@ func TestDelete_TorrentAbsentFromCheckKeepsFiles(t *testing.T) {
 	// раздачи в клиенте уже нет, torrentByHash вернет nil без ошибки. Файлы тоже не трогаем
 	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
 
-	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x"}); err != nil {
+	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x", DeleteFiles: true}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(stub.removeCalls) != 1 || stub.removeCalls[0]["delete-local-data"] != false {
@@ -1135,5 +1135,38 @@ func TestMapEntry_Unhealthy(t *testing.T) {
 func TestListRequestsErrorField(t *testing.T) {
 	if !slices.Contains(torrentFields, "error") {
 		t.Errorf("torrentFields %v lack error, List cannot see a local error", torrentFields)
+	}
+}
+
+func TestDelete_CallerKeepFilesWins(t *testing.T) {
+	stub := newStubServer(t, "/downloads")
+	stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: "/downloads/movies"})
+	c := newTestClient(t, stub, model.ManagerConfig{DeleteEnabled: true, DeleteCategories: []string{"movies"}, DeleteFilesEnabled: true})
+
+	if err := c.Delete(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: "movies", Name: "x", DeleteFiles: false}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(stub.removeCalls) != 1 || stub.removeCalls[0]["delete-local-data"] != false {
+		t.Fatalf("expected delete-local-data=false, got %v", stub.removeCalls)
+	}
+}
+
+func TestDeletesFilesIgnoresEmptyCategory(t *testing.T) {
+	cfg := model.ManagerConfig{DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"tv", ""}}
+	cases := []struct {
+		downloadDir string
+		category    string
+		want        bool
+	}{
+		{"/downloads", "", false},
+		{"/downloads/tv", "tv", true},
+	}
+	for _, tc := range cases {
+		stub := newStubServer(t, "/downloads")
+		stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: tc.downloadDir})
+		c := newTestClient(t, stub, cfg)
+		if got := c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: tc.category}); got != tc.want {
+			t.Fatalf("DeletesFiles(%q) = %v, want %v", tc.category, got, tc.want)
+		}
 	}
 }

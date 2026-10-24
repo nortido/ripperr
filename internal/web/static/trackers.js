@@ -170,7 +170,7 @@ function trackerFormHtml(tracker, key, pub, mirrors) {
   const raw = html`<div class="form-group form-group-full${rawCls}"><label class="form-label" for="tr-cred-${key}">${t('trackers.credentials')}</label>${credInput}<p class="form-hint">${t(credHint)}</p></div><div class="form-group form-group-full${rawCls}"><label class="form-label" for="tr-cookies-${key}">${t('trackers.cookies')}</label><input type="text" id="tr-cookies-${key}" class="input tr-cookies" autocomplete="off" name="${randomFieldName('tr-cookie')}" value="${tracker.cookies}"></div>`;
 
 
-  return html`<div class="tracker-form">${address}${mirrorsRow}${limits}${loginFieldsHtml(tracker, key)}${access}${downloadURL}${raw}</div>`;
+  return html`<div class="tracker-form">${address}${mirrorsRow}${limits}${loginFieldsHtml(tracker, key)}${rawOnly ? raw : ''}${advancedToggleHtml()}${access}${downloadURL}${rawOnly ? '' : raw}</div>`;
 }
 
 
@@ -391,9 +391,9 @@ function dialogTestEdit(key) {
 export async function testTracker(key, btn, form, mirrorValues) {
   if (!btn) return;
   await runTest(key, async function (signal) {
-    const opts = { method: 'POST', signal: signal };
+    const opts = { method: 'POST', signal: signal, headers: { 'X-Ripperr': '1' } };
     if (form && (form._addMode || isTrackerDirty(form, mirrorValues))) {
-      opts.headers = { 'Content-Type': 'application/json' };
+      opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify({ config: gatherTrackerConfig(form, mirrorValues, testEnabled(form, key)) });
     }
     const res = await fetch('/api/trackers/' + encodeURIComponent(key) + '/test', opts);
@@ -425,6 +425,11 @@ function dialogKeydown(e) {
   closeTrackerDialog();
 }
 
+// верхняя полоса мобильной версии остается живой: бургер закрывает диалог и открывает меню
+function setAppInert(on) {
+  document.querySelectorAll('.app > :not(.mobile-header)').forEach(function (el) { el.inert = on; });
+}
+
 export function closeTrackerDialog(opts) {
   // оверлей прошлого диалога еще гаснет: убираем сразу, иначе дубли id до конца анимации
   if (closingOverlay) {
@@ -447,7 +452,7 @@ export function closeTrackerDialog(opts) {
   document.removeEventListener('keydown', dialogKeydown, true);
   closePopovers();
   closeOpenCustomSelect();
-  document.querySelector('.app').inert = false;
+  setAppInert(false);
   document.documentElement.classList.remove('modal-open');
   if (d.key) paintTestButtons(d.key);
   const back = d.add
@@ -468,17 +473,19 @@ export function closeTrackerDialog(opts) {
 }
 
 function advancedToggleHtml() {
-  return html`<button type="button" class="btn btn-ghost btn-sm tr-advanced-toggle" aria-pressed="false">${t('trackers.advancedToggle')}</button>`;
+  return html`<button type="button" class="tr-advanced-toggle" aria-expanded="false"><span>${t('trackers.advancedToggle')}</span><span data-icon="chevron"></span></button>`;
 }
 
 function setAdvancedOpen(root, open) {
   root.classList.toggle('tr-advanced-open', open);
-  root.querySelector('.tr-advanced-toggle').setAttribute('aria-pressed', String(open));
+  root.querySelectorAll('.tr-advanced-toggle').forEach(function (b) { b.setAttribute('aria-expanded', String(open)); });
 }
 
 function bindAdvancedToggle(root) {
-  const btn = root.querySelector('.tr-advanced-toggle');
-  btn.addEventListener('click', function () { setAdvancedOpen(root, btn.getAttribute('aria-pressed') !== 'true'); });
+  // делегирование: в диалоге добавления форма с переключателем появляется после выбора типа
+  root.addEventListener('click', function (e) {
+    if (e.target.closest('.tr-advanced-toggle')) setAdvancedOpen(root, !root.classList.contains('tr-advanced-open'));
+  });
 }
 
 function showAttention(d, ms) {
@@ -662,14 +669,28 @@ function bindMirrorSuggestions(d) {
   renderMirrorSuggestions(d);
 }
 
-async function saveTrackerDialog(d) {
-  const body = gatherTrackerConfig(d.root, d.mirrors.getValues(), cardEnabled(d.key));
+function mirrorsToConfirm(d) {
   const tr = trackersByKey.get(d.key);
   // подтверждаем только отмеченные чипы, которые пользователь мог увидеть: поле зеркал спрятано при выключенном переключателе
-  const confirm = d.root.querySelector('.tr-use-mirrors').checked && tr && tr.confirm_on === true
+  return d.root.querySelector('.tr-use-mirrors').checked && tr && tr.confirm_on === true
     ? d.mirrors.getValues().filter(function (m) { return hostIn(tr.unconfirmed, m); })
     : [];
-  setSaving(d.saveBtn, true);
+}
+
+function updateTrackerSave(d) {
+  const field = d.root.querySelector('.tr-mirrors .chip-input-field');
+  // набранный, но не добавленный чип тоже правка: по blur он станет зеркалом
+  const pending = !!field && field.value.trim() !== '';
+  setSaving(d.saveBtn, !!d.saving);
+  // зеркала в ожидании подтверждения сохраняются и без правок формы
+  d.saveBtn.disabled = !!d.saving || !(isTrackerDirty(d.root, d.mirrors.getValues()) || mirrorsToConfirm(d).length > 0 || pending);
+}
+
+async function saveTrackerDialog(d) {
+  const body = gatherTrackerConfig(d.root, d.mirrors.getValues(), cardEnabled(d.key));
+  const confirm = mirrorsToConfirm(d);
+  d.saving = true;
+  updateTrackerSave(d);
   let res;
   try {
     res = await fetchJSON('/api/trackers/' + encodeURIComponent(d.key), {
@@ -679,7 +700,8 @@ async function saveTrackerDialog(d) {
     });
   } catch (err) {
     showToast(err.message, 'error');
-    setSaving(d.saveBtn, false);
+    d.saving = false;
+    updateTrackerSave(d);
     return;
   }
   showToast(t('trackers.saved', { key: d.key }), 'success');
@@ -805,7 +827,7 @@ function openAddTrackerDialog() {
   });
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${t('trackers.add')}</h2>${advancedToggleHtml()}<button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body"><div class="form-group"><label class="form-label" for="tr-add-type">${t('trackers.addType')}</label><select id="tr-add-type" class="select tr-add-type"><option value="" disabled selected>${t('trackers.addTypePlaceholder')}</option>${options}</select></div><div class="tracker-add-form"></div></div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-primary btn-save-tracker" disabled>${t('trackers.addConfirm')}</button></div></div>`;
+  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${t('trackers.add')}</h2><button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body"><div class="form-group"><label class="form-label" for="tr-add-type">${t('trackers.addType')}</label><select id="tr-add-type" class="select tr-add-type"><option value="" disabled selected>${t('trackers.addTypePlaceholder')}</option>${options}</select></div><div class="tracker-add-form"></div></div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-primary btn-save-tracker" disabled>${t('trackers.addConfirm')}</button></div></div>`;
   const root = overlay.querySelector('.modal');
   root._addMode = true;
   const saveBtn = root.querySelector('.btn-save-tracker');
@@ -832,7 +854,7 @@ function openAddTrackerDialog() {
   document.addEventListener('keydown', dialogKeydown, true);
 
   document.body.appendChild(overlay);
-  document.querySelector('.app').inert = true;
+  setAppInert(true);
   document.documentElement.classList.add('modal-open');
   initCustomSelects(root);
   hydrateIcons(overlay);
@@ -847,7 +869,7 @@ function openTrackerDialog(key) {
   const titleId = 'tracker-dialog-title';
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${tracker.name || key}</h2>${advancedToggleHtml()}<button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body">${trackerFormHtml(tracker, key, tracker.publicity || 'public', tracker.mirrors || [])}</div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-ghost btn-remove-tracker"><span data-icon="trash"></span><span>${t('trackers.remove')}</span></button><button type="button" class="btn btn-ghost btn-icon-only btn-test btn-test-tracker" data-key="${key}"></button><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div>`;
+  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${tracker.name || key}</h2><button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body">${trackerFormHtml(tracker, key, tracker.publicity || 'public', tracker.mirrors || [])}</div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-ghost btn-remove-tracker"><span data-icon="trash"></span><span>${t('trackers.remove')}</span></button><button type="button" class="btn btn-ghost btn-icon-only btn-test btn-test-tracker" data-key="${key}"></button><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div>`;
   const root = overlay.querySelector('.modal');
   const saved = item._trackerSaved;
   // форма стартует с выбором trackerDomainChoice, снимок обязан совпасть с ней, иначе диалог сразу "грязный"
@@ -868,7 +890,10 @@ function openTrackerDialog(key) {
     null,
     function (values) {
       syncTrackerDomainSelects(root, tracker.domain || '', values);
-      if (dialog && dialog.root === root) renderMirrorSuggestions(dialog);
+      if (dialog && dialog.root === root) {
+        renderMirrorSuggestions(dialog);
+        updateTrackerSave(dialog);
+      }
     },
     {
       decorate: function (val, chipEl) { markMirrorChip(trackersByKey.get(key), val, chipEl); },
@@ -891,8 +916,8 @@ function openTrackerDialog(key) {
   saveBtn.addEventListener('click', function () { saveTrackerDialog(d); });
   removeBtn.addEventListener('click', function () { removeTrackerFromDialog(d); });
   root.querySelector('.modal-close').addEventListener('click', function () { closeTrackerDialog(); });
-  root.addEventListener('input', function () { dialogTestEdit(key); });
-  root.addEventListener('change', function () { dialogTestEdit(key); });
+  root.addEventListener('input', function () { dialogTestEdit(key); updateTrackerSave(d); });
+  root.addEventListener('change', function () { dialogTestEdit(key); updateTrackerSave(d); });
 
   // выделение в поле, дотянутое мышью за рамку, дает click по подложке. Закрываем,
   // только если и нажатие, и отпускание были на ней
@@ -905,7 +930,7 @@ function openTrackerDialog(key) {
   document.addEventListener('keydown', dialogKeydown, true);
 
   document.body.appendChild(overlay);
-  document.querySelector('.app').inert = true;
+  setAppInert(true);
   document.documentElement.classList.add('modal-open');
   initCustomSelects(root);
   initPasswordToggles(root);
@@ -919,6 +944,7 @@ function openTrackerDialog(key) {
   hydrateIcons(overlay);
   root.focus();
   if (attn.pending) showAttention(d, attn);
+  updateTrackerSave(d);
 }
 
 function trackerKeys(list) {

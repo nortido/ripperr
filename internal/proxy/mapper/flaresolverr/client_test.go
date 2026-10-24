@@ -1,11 +1,14 @@
 package flaresolverr
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSendPostAndDecode(t *testing.T) {
@@ -29,5 +32,35 @@ func TestSendPostAndDecode(t *testing.T) {
 	}
 	if res.Status != "ok" || res.Solution.Status != 200 || res.Solution.UserAgent != "ua" {
 		t.Fatalf("response = %+v", res)
+	}
+}
+
+func TestSendStopsOnRequestContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	t.Cleanup(func() {
+		close(release)
+		srv.Close()
+	})
+
+	c := New(srv.Client(), &Config{Host: srv.URL, MaxTimeout: 60000})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://example.com/", nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Send(req, &Payload{URL: req.URL.String()})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want DeadlineExceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Send ignored the request context")
 	}
 }

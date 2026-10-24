@@ -1,14 +1,9 @@
 package torrentmeta
 
-import (
-	"bytes"
-	"strings"
-
-	"github.com/anacrolix/torrent/metainfo"
-)
+import "strings"
 
 func InfoHash(data []byte) (string, error) {
-	mi, err := metainfo.Load(bytes.NewReader(data))
+	mi, err := load(data)
 	if err != nil {
 		return "", err
 	}

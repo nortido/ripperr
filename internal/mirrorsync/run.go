@@ -179,7 +179,8 @@ func runOnce(ctx context.Context, d Deps) {
 	}
 
 	var total int
-	var fresh, digest []string
+	var fresh []string
+	var digest []notify.MirrorDigestItem
 	err = settings.UpdateMirrorSync(wctx, d.Store, func(m *settings.MirrorSync) {
 		total, fresh, digest = 0, nil, nil
 		if !d.keepDueOnOutage || !res.outage {
@@ -223,7 +224,7 @@ func runOnce(ctx context.Context, d Deps) {
 					// remove основного адреса Pending не показывает, в сводке он был бы без кнопки
 					ofDomain := settings.MirrorHostKey(s.Host) == settings.MirrorHostKey(d.Items[key].Domain)
 					if mirrorsOn && (s.Kind == settings.MirrorKindMain || (s.Kind == settings.MirrorKindRemove && d.ConfirmOn && !ofDomain)) {
-						digest = append(digest, digestLine(d, key, s))
+						digest = append(digest, digestItem(d, key, s))
 					}
 				}
 			}
@@ -231,7 +232,7 @@ func runOnce(ctx context.Context, d Deps) {
 			if d.ConfirmOn && mirrorsOn {
 				for _, a := range autoLog[key] {
 					if a.Kind == settings.MirrorAutoAdded {
-						digest = append(digest, fmt.Sprintf("%s: новое зеркало %s ждет подтверждения", trackerLabel(d, key), a.Host))
+						digest = append(digest, notify.MirrorDigestItem{Tracker: trackerLabel(d, key), Kind: notify.DigestConfirm, Host: a.Host})
 					}
 				}
 			}
@@ -286,19 +287,21 @@ func trackerLabel(d Deps, key string) string {
 	return key
 }
 
-func digestLine(d Deps, key string, s settings.MirrorSuggestion) string {
-	name := trackerLabel(d, key)
+func digestItem(d Deps, key string, s settings.MirrorSuggestion) notify.MirrorDigestItem {
+	item := notify.MirrorDigestItem{Tracker: trackerLabel(d, key), Host: s.Host}
 	if s.Kind == settings.MirrorKindMain {
-		return fmt.Sprintf("%s: основной адрес %s вместо %s", name, s.Host, s.From)
+		item.Kind = notify.DigestMain
+		item.From = s.From
+		return item
 	}
-	reason := ""
+	item.Kind = notify.DigestRemove
 	switch s.Reason {
 	case settings.MirrorReasonDead:
-		reason = " (не отвечает)"
+		item.Reason = notify.DigestReasonDead
 	case settings.MirrorReasonJackett:
-		reason = " (нет в списке Jackett)"
+		item.Reason = notify.DigestReasonJackett
 	}
-	return fmt.Sprintf("%s: убрать %s%s", name, s.Host, reason)
+	return item
 }
 
 func suggestLine(key string, s settings.MirrorSuggestion) string {

@@ -84,3 +84,20 @@ func TestRegistryHookConcurrentNoRace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestRegistryRetainDropsSilently(t *testing.T) {
+	r := New()
+	var calls int
+	r.SetHook(func(bool, string, string) { calls++ })
+	r.Open("a", "x")
+	r.Open("b", "y")
+	calls = 0
+	r.Retain([]string{"a"})
+	list := r.List()
+	if len(list) != 1 || list[0].Tracker != "a" {
+		t.Fatalf("list = %+v", list)
+	}
+	if calls != 0 {
+		t.Fatalf("hook called %d times", calls)
+	}
+}

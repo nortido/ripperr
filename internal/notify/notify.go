@@ -9,17 +9,24 @@ import (
 	"html"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/textproto"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"ripperr/internal/helper"
 	"ripperr/internal/metrics"
 	"ripperr/internal/system/logger"
+	"ripperr/internal/webpush"
+
+	"golang.org/x/net/proxy"
 )
 
 const (
@@ -75,6 +82,9 @@ type Config struct {
 	PushoverToken    string
 	PushoverUser     string
 	PushoverEvents   []string
+	BrowserDisabled  bool
+	BrowserEvents    []string
+	Language         string
 }
 
 type Event struct {
@@ -84,13 +94,16 @@ type Event struct {
 	URL      string
 	ImageURL string
 	// AppPath: хеш-маршрут в интерфейсе; AppLink: полная ссылка, ее собирает Notifier
-	AppPath string
-	AppLink string
+	AppPath   string
+	AppLink   string
+	msg       string
+	args      []string
+	digest    []MirrorDigestItem
+	linkLabel string
 }
 
 const (
 	pathTrackers = "#trackers"
-	appLinkLabel = "Открыть в Ripperr"
 	// router.js режет name до 200 знаков
 	maxLinkedName = 200
 )
@@ -127,72 +140,83 @@ func (e Event) plain() string {
 func UpdatedEvent(name, url, imageURL string) Event {
 	return Event{
 		Kind:     KindUpdated,
-		Text:     "Раздача обновлена в torrent-клиенте:",
+		msg:      msgUpdated,
 		Subject:  name,
 		URL:      url,
 		ImageURL: imageURL,
 		AppPath:  dashboardPath("", name),
-	}
+	}.withDefaultText()
 }
 
 func BrokenEvent(name, url string, streak int) Event {
 	return Event{
 		Kind:    KindBroken,
-		Text:    fmt.Sprintf("Ошибок подряд: %d. Раздача отправлена в игнор и больше не проверяется:", streak),
+		msg:     msgBroken,
+		args:    []string{strconv.Itoa(streak)},
 		Subject: name,
 		URL:     url,
 		AppPath: dashboardPath("ignored", name),
-	}
+	}.withDefaultText()
 }
 
 func TrackerDownEvent(tracker, errMsg string) Event {
 	return Event{
 		Kind:    KindTrackerDown,
-		Text:    fmt.Sprintf("Трекер %s недоступен: %s\nПроверки этого трекера приостановлены.", tracker, errMsg),
+		msg:     msgTrackerDown,
+		args:    []string{tracker, errMsg},
 		AppPath: pathTrackers,
-	}
+	}.withDefaultText()
 }
 
 func TrackerUpEvent(tracker string) Event {
 	return Event{
 		Kind:    KindTrackerUp,
-		Text:    fmt.Sprintf("Трекер %s снова доступен, проверки возобновлены.", tracker),
+		msg:     msgTrackerUp,
+		args:    []string{tracker},
 		AppPath: pathTrackers,
-	}
+	}.withDefaultText()
 }
 
 func MirrorSwitchedEvent(tracker, from, to string) Event {
 	return Event{
 		Kind:    KindMirrorSwitched,
-		Text:    fmt.Sprintf("Трекер %s: %s не отвечает, проверки переключены на %s.", tracker, from, to),
+		msg:     msgMirrorSwitched,
+		args:    []string{tracker, from, to},
 		AppPath: pathTrackers,
-	}
+	}.withDefaultText()
 }
 
-func MirrorDigestEvent(lines []string) Event {
+func MirrorDigestEvent(items []MirrorDigestItem) Event {
 	return Event{
 		Kind:    KindMirrorSuggested,
-		Text:    "Зеркала трекеров: " + strings.Join(lines, "; "),
+		msg:     msgMirrorDigest,
+		digest:  items,
 		AppPath: pathTrackers,
-	}
+	}.withDefaultText()
 }
 
 func MirrorPausedEvent(tracker, host string) Event {
 	return Event{
 		Kind:    KindMirrorSuggested,
-		Text:    fmt.Sprintf("Трекер %s на паузе: отвечает только новое зеркало %s. Подтвердите его в настройках трекера.", tracker, host),
+		msg:     msgMirrorPaused,
+		args:    []string{tracker, host},
 		AppPath: pathTrackers,
-	}
+	}.withDefaultText()
 }
 
 func CheckFailedEvent(name, url, errMsg string) Event {
 	return Event{
 		Kind:    KindCheckFailed,
-		Text:    "Ошибка проверки раздачи: " + errMsg,
+		msg:     msgCheckFailed,
+		args:    []string{errMsg},
 		Subject: name,
 		URL:     url,
 		AppPath: dashboardPath("", name),
-	}
+	}.withDefaultText()
+}
+
+func TestEvent(appLink string) Event {
+	return Event{Kind: KindTest, msg: msgTest, AppLink: appLink}.withDefaultText()
 }
 
 func DefaultEvents() []string {
@@ -219,17 +243,24 @@ func wants(events []string, kind string) bool {
 }
 
 type Notifier struct {
-	cfg    Config
-	hc     *http.Client
-	appURL string
+	cfg      Config
+	hc       *http.Client
+	posterHC *http.Client
+	appURL   string
+	push     *webpush.Store
 }
 
 func New(cfg Config, proxyURL string) *Notifier {
-	return &Notifier{cfg: cfg, hc: newHTTPClient(proxyURL)}
+	return &Notifier{cfg: cfg, hc: newHTTPClient(proxyURL), posterHC: newPosterClient(proxyURL)}
 }
 
 func (n *Notifier) WithAppURL(appURL string) *Notifier {
 	n.appURL = appURL
+	return n
+}
+
+func (n *Notifier) WithPush(p *webpush.Store) *Notifier {
+	n.push = p
 	return n
 }
 
@@ -246,10 +277,216 @@ func newHTTPClient(proxyURL string) *http.Client {
 	return &http.Client{Timeout: sendTimeout, Transport: helper.ProxyTransport(proxyURL)}
 }
 
+var posterTransports sync.Map
+
+// не func: notify_test.go подменяет разрешение имен
+var lookupPosterHost = func(ctx context.Context, host string) ([]netip.Addr, error) {
+	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+}
+
+func newPosterClient(proxyURL string) *http.Client {
+	proxyURL = strings.TrimSpace(proxyURL)
+	base := helper.ProxyTransport(proxyURL)
+	// ключ по базовому транспорту: helper уже кеширует его вместе с NO_PROXY, а notify.New
+	// зовут на каждом переходе предохранителя, и пулы соединений плодить нельзя
+	var key any = ""
+	if base != nil {
+		key = base
+	}
+	if tr, ok := posterTransports.Load(key); ok {
+		return &http.Client{Timeout: sendTimeout, Transport: tr.(http.RoundTripper)}
+	}
+	var tr *http.Transport
+	if bt, ok := base.(*http.Transport); ok {
+		tr = bt.Clone()
+	} else {
+		tr = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	// постеры не должны идти через HTTP(S)_PROXY из окружения: это обход проверок
+	if proxyURL == "" {
+		tr.Proxy = nil
+	}
+	proxyAddr := proxyDialAddr(proxyURL)
+	plain := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	guarded := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: publicOnly}
+	var rt http.RoundTripper = tr
+	if socks := socksPosterDialer(proxyURL, plain); socks != nil {
+		// имя резолвим и проверяем тут, а прокси получает готовый IP: иначе он мог бы
+		// заново резолвить имя в локальный адрес (DNS rebinding)
+		tr.Proxy = nil
+		tr.DialContext = socks
+	} else {
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// сам прокси может стоять в локальной сети: к нему идем без проверки, а он уже сам
+			// резолвит адрес постера
+			if proxyAddr != "" && addr == proxyAddr {
+				return plain.DialContext(ctx, network, addr)
+			}
+			return guarded.DialContext(ctx, network, addr)
+		}
+		if proxyAddr != "" {
+			rt = posterProxyGuard{next: tr, proxyAddr: proxyAddr}
+		}
+	}
+	actual, _ := posterTransports.LoadOrStore(key, rt)
+	return &http.Client{Timeout: sendTimeout, Transport: actual.(http.RoundTripper)}
+}
+
+func socksPosterDialer(raw string, forward proxy.Dialer) func(context.Context, string, string) (net.Conn, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "socks5" && u.Scheme != "socks5h") || u.Hostname() == "" {
+		return nil
+	}
+	var auth *proxy.Auth
+	if u.User != nil {
+		pass, _ := u.User.Password()
+		auth = &proxy.Auth{User: u.User.Username(), Password: pass}
+	}
+	d, err := proxy.SOCKS5("tcp", proxyDialAddr(raw), auth, forward)
+	if err != nil {
+		return nil
+	}
+	cd, ok := d.(proxy.ContextDialer)
+	if !ok {
+		return nil
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := resolvePosterHost(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := cd.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		return nil, lastErr
+	}
+}
+
+func resolvePosterHost(ctx context.Context, host string) ([]netip.Addr, error) {
+	var ips []netip.Addr
+	var err error
+	if ip, perr := netip.ParseAddr(host); perr == nil {
+		ips = []netip.Addr{ip}
+	} else if ips, err = lookupPosterHost(ctx, host); err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("poster host %s did not resolve", host)
+	}
+	for _, ip := range ips {
+		if err = publicAddr(ip); err != nil {
+			return nil, err
+		}
+	}
+	return ips, nil
+}
+
+func proxyDialAddr(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		switch u.Scheme {
+		case "https":
+			port = "443"
+		case "socks5", "socks5h":
+			port = "1080"
+		default:
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(u.Hostname(), port)
+}
+
+type posterProxyGuard struct {
+	next      http.RoundTripper
+	proxyAddr string
+}
+
+func (g posterProxyGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := g.check(req); err != nil {
+		return nil, err
+	}
+	return g.next.RoundTrip(req)
+}
+
+// прокси сам резолвит имя заново, так что подмена DNS между проверкой и запросом остается
+func (g posterProxyGuard) check(req *http.Request) error {
+	host := req.URL.Hostname()
+	port := req.URL.Port()
+	if port == "" {
+		port = "80"
+		if req.URL.Scheme == "https" {
+			port = "443"
+		}
+	}
+	if strings.EqualFold(net.JoinHostPort(host, port), g.proxyAddr) {
+		return errors.New("poster is on the proxy address")
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return publicAddr(ip)
+	}
+	ips, err := lookupPosterHost(req.Context(), host)
+	if err != nil {
+		return err
+	}
+	for _, ip := range ips {
+		if err = publicAddr(ip); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var (
+	cgnat          = netip.MustParsePrefix("100.64.0.0/10")
+	nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96")
+	nat64Local     = netip.MustParsePrefix("64:ff9b:1::/48")
+)
+
+func publicAddr(ip netip.Addr) error {
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || cgnat.Contains(ip) || nat64Local.Contains(ip) {
+		return fmt.Errorf("poster address %s is not public", ip)
+	}
+	if nat64WellKnown.Contains(ip) {
+		// в 64:ff9b::/96 IPv4 лежит в последних четырех байтах: за ним может стоять частный адрес
+		b := ip.As16()
+		return publicAddr(netip.AddrFrom4([4]byte(b[12:])))
+	}
+	return nil
+}
+
+func publicOnly(_, address string, _ syscall.RawConn) error {
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return err
+	}
+	return publicAddr(ap.Addr())
+}
+
 func (n *Notifier) HasTransport() bool {
 	if n == nil {
 		return false
 	}
+	return n.otherReady() || n.browserReady()
+}
+
+func (n *Notifier) otherReady() bool {
 	return n.telegramReady() || n.cfg.WebhookURL != "" || n.emailReady() || n.pushoverReady()
 }
 
@@ -264,10 +501,15 @@ func (n *Notifier) wants() bool {
 func (n *Notifier) Notify(ev Event) {
 	// сюда приходят из воркера трекера и предохранителя, их держать нельзя. Каждый канал
 	// шлет в своей горутине, ошибки только в лог
-	if !n.HasTransport() || !n.wants() {
+	if n == nil || !n.wants() {
 		return
 	}
-	ev = n.withLink(ev)
+	// устройства читаются из БД один раз за вызов: Notify не должен надолго держать воркер
+	browser := !n.cfg.BrowserDisabled && wants(n.cfg.BrowserEvents, ev.Kind) && n.browserReady()
+	if !browser && !n.otherReady() {
+		return
+	}
+	ev = n.withLink(n.localize(ev))
 	if !n.cfg.TelegramDisabled && n.telegramReady() && wants(n.cfg.TelegramEvents, ev.Kind) {
 		n.deliver(n.sendTelegram, ev, "telegram")
 	}
@@ -279,6 +521,9 @@ func (n *Notifier) Notify(ev Event) {
 	}
 	if !n.cfg.PushoverDisabled && n.pushoverReady() && wants(n.cfg.PushoverEvents, ev.Kind) {
 		n.deliver(n.sendPushover, ev, "pushover")
+	}
+	if browser {
+		n.deliver(n.browserSender(), ev, "browser")
 	}
 }
 
@@ -338,7 +583,7 @@ func (n *Notifier) Send(ctx context.Context, ev Event) error {
 	if !n.HasTransport() {
 		return errors.New("no notification transport configured")
 	}
-	ev = n.withLink(ev)
+	ev = n.withLink(n.localize(ev))
 	var errs []error
 	if n.telegramReady() {
 		if err := n.sendTelegram(ctx, ev); err != nil {
@@ -358,6 +603,11 @@ func (n *Notifier) Send(ctx context.Context, ev Event) error {
 	if n.pushoverReady() {
 		if err := n.sendPushover(ctx, ev); err != nil {
 			errs = append(errs, fmt.Errorf("pushover: %w", err))
+		}
+	}
+	if n.push != nil {
+		if err := n.browserSender()(ctx, ev); err != nil {
+			errs = append(errs, fmt.Errorf("browser: %w", err))
 		}
 	}
 	return errors.Join(errs...)
@@ -401,7 +651,7 @@ func withLinkLine(text, line string, limit int) string {
 func telegramText(ev Event, limit int) (text, parseMode string) {
 	linkLine := ""
 	if ev.AppLink != "" {
-		linkLine = appLinkLabel + ": " + ev.AppLink
+		linkLine = ev.label() + ": " + ev.AppLink
 	}
 	// разметка только когда есть и имя, и ссылка. В HTML экранировать надо лишь & < >
 	if ev.Subject == "" || ev.URL == "" {
@@ -419,7 +669,7 @@ func telegramText(ev Event, limit int) (text, parseMode string) {
 	subject := ev.Subject
 	room := limit - len([]rune(ev.Text)) - 1
 	if ev.AppLink != "" {
-		room -= len([]rune(appLinkLabel)) + 1
+		room -= len([]rune(ev.label())) + 1
 	}
 	if room < len([]rune(subject)) {
 		subject = helper.Substr(subject, 0, max(room, 0))
@@ -427,7 +677,7 @@ func telegramText(ev Event, limit int) (text, parseMode string) {
 	text = html.EscapeString(ev.Text) + "\n" +
 		`<a href="` + html.EscapeString(ev.URL) + `">` + html.EscapeString(subject) + `</a>`
 	if ev.AppLink != "" {
-		text += "\n" + `<a href="` + html.EscapeString(ev.AppLink) + `">` + appLinkLabel + `</a>`
+		text += "\n" + `<a href="` + html.EscapeString(ev.AppLink) + `">` + ev.label() + `</a>`
 	}
 	return text, "HTML"
 }
@@ -464,7 +714,7 @@ func (n *Notifier) fetchImage(ctx context.Context, imageURL string) ([]byte, err
 		return nil, err
 	}
 	req.Header.Set("User-Agent", posterUserAgent)
-	res, err := n.hc.Do(req)
+	res, err := n.posterHC.Do(req)
 	if err != nil {
 		return nil, err
 	}

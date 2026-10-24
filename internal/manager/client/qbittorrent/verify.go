@@ -99,6 +99,9 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 	if err != nil {
 		return err
 	}
+	if err = refuseV2(data, opts.Name); err != nil {
+		return err
+	}
 	if err = c.preAddPresenceCheck(ctx, hash, opts.Name, opts.Hash); err != nil {
 		return err
 	}
@@ -114,6 +117,10 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 }
 
 func (c *Client) addMagnetURLVerified(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error {
+	// btmh есть только у v2/hybrid, а их qbit ищет по SHA-256 и проверка присутствия по btih промахнулась бы
+	if strings.Contains(strings.ToLower(magnet), "xt=urn:btmh:") {
+		return errV2(opts.Name)
+	}
 	hash, ok := torrentmeta.BtihFromMagnet(magnet)
 	if ok {
 		if err := c.preAddPresenceCheck(ctx, hash, opts.Name, opts.Hash); err != nil {
@@ -127,4 +134,16 @@ func (c *Client) addMagnetURLVerified(ctx context.Context, magnet string, opts m
 		return c.ensurePresentAfterAdd(ctx, hash)
 	}
 	return nil
+}
+
+func refuseV2(data []byte, name string) error {
+	// UnmarshalInfo строже InfoHash: при ошибке разбора ведем себя как раньше, иначе перестал бы добавляться годный v1
+	if v2, err := torrentmeta.HasV2(data); err == nil && v2 {
+		return errV2(name)
+	}
+	return nil
+}
+
+func errV2(name string) error {
+	return fmt.Errorf("torrent %s has v2 metadata: qBittorrent keys it by SHA-256, not supported", name)
 }

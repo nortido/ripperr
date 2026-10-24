@@ -40,6 +40,10 @@ func (c *Client) applySelection(ctx context.Context, hash string, opts model.Man
 	return fmt.Errorf("apply file selection to %s: %w", opts.Name, err)
 }
 
+func (c *Client) ApplySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
+	return c.setSelection(ctx, hash, opts)
+}
+
 func (c *Client) setSelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
 	files, err := c.Files(ctx, hash)
 	if err != nil {

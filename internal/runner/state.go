@@ -2,6 +2,7 @@ package runner
 
 import (
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -9,16 +10,20 @@ import (
 )
 
 type State struct {
-	trigger  chan bool
-	force    chan string
-	active   atomic.Int32
-	gen      atomic.Uint32
-	restart  atomic.Bool
-	dry      atomic.Bool
-	stopping atomic.Bool
-	itemsMu  sync.Mutex
-	queued   map[string]struct{}
-	current  map[int]string
+	trigger         chan bool
+	force           chan string
+	active          atomic.Int32
+	gen             atomic.Uint32
+	normalActive    atomic.Int32
+	waitingSettings atomic.Bool
+	mu              sync.Mutex
+	torrents        torrentLocks
+	restart         atomic.Bool
+	dry             atomic.Bool
+	stopping        atomic.Bool
+	itemsMu         sync.Mutex
+	queued          map[string]struct{}
+	current         map[int]string
 }
 
 func NewState() *State {
@@ -37,7 +42,13 @@ func (s *State) Running() bool {
 }
 
 func (s *State) Begin(gen uint32) {
-	if s != nil && gen == s.gen.Load() {
+	if s == nil {
+		return
+	}
+	// проверка поколения и счетчик под одним замком: иначе Reset между ними оставит 1 навсегда или уведет в минус
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen == s.gen.Load() {
 		if s.active.Add(1) == 1 {
 			logger.Info("check pass started")
 		}
@@ -45,7 +56,12 @@ func (s *State) Begin(gen uint32) {
 }
 
 func (s *State) End(gen uint32) {
-	if s == nil || gen != s.gen.Load() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen != s.gen.Load() {
 		return
 	}
 	// последняя запись прохода: очередь и текущие записи гасим здесь, иначе
@@ -148,10 +164,13 @@ func (s *State) Reset() uint32 {
 	if s == nil {
 		return 0
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.clearItems()
 	if s.active.Swap(0) != 0 {
 		logger.Info("check pass finished (reset)")
 	}
+	s.normalActive.Store(0)
 	s.dry.Store(false)
 	s.stopping.Store(false)
 	return s.gen.Add(1)
@@ -261,4 +280,105 @@ func (s *State) clearItems() {
 	defer s.itemsMu.Unlock()
 	s.queued = nil
 	s.current = nil
+}
+
+func (s *State) BeginNormal(gen uint32) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen == s.gen.Load() {
+		s.normalActive.Add(1)
+	}
+}
+
+func (s *State) EndNormal(gen uint32) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen == s.gen.Load() {
+		s.normalActive.Add(-1)
+	}
+}
+
+func (s *State) NormalRunning() bool {
+	return s != nil && s.normalActive.Load() > 0
+}
+
+func (s *State) SetWaitingSettings(v bool) {
+	if s != nil {
+		s.waitingSettings.Store(v)
+	}
+}
+
+func (s *State) WaitingSettings() bool {
+	return s != nil && s.waitingSettings.Load()
+}
+
+type torrentGate struct {
+	ch   chan struct{}
+	refs int
+}
+
+type torrentLocks struct {
+	mu sync.Mutex
+	m  map[string]*torrentGate
+}
+
+func (l *torrentLocks) acquire(key string) *torrentGate {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.m == nil {
+		l.m = map[string]*torrentGate{}
+	}
+	g := l.m[key]
+	if g == nil {
+		g = &torrentGate{ch: make(chan struct{}, 1)}
+		l.m[key] = g
+	}
+	g.refs++
+	return g
+}
+
+func (l *torrentLocks) release(key string, g *torrentGate) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	g.refs--
+	if g.refs == 0 {
+		delete(l.m, key)
+	}
+}
+
+func (s *State) LockTorrent(hash string) (unlock func()) {
+	if s == nil {
+		return func() {}
+	}
+	key := strings.ToLower(hash)
+	g := s.torrents.acquire(key)
+	g.ch <- struct{}{}
+	return func() {
+		<-g.ch
+		s.torrents.release(key, g)
+	}
+}
+
+func (s *State) TryLockTorrent(hash string) (unlock func(), ok bool) {
+	if s == nil {
+		return func() {}, true
+	}
+	key := strings.ToLower(hash)
+	g := s.torrents.acquire(key)
+	select {
+	case g.ch <- struct{}{}:
+		return func() {
+			<-g.ch
+			s.torrents.release(key, g)
+		}, true
+	default:
+		s.torrents.release(key, g)
+		return nil, false
+	}
 }

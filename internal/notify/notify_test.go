@@ -3,12 +3,15 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,12 +27,12 @@ func TestEventTextsDistinguishTypesAndCarrySubject(t *testing.T) {
 		wantKw  string
 		wantSub string
 	}{
-		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1", ""), "Раздача обновлена в torrent-клиенте:", "Some.Release.2026"},
-		{"broken", BrokenEvent("Broken.Release", "https://example.com/t2", 5), "игнор", "Broken.Release"},
-		{"tracker down", TrackerDownEvent("rutracker", "connection refused"), "недоступен", "rutracker"},
-		{"tracker up", TrackerUpEvent("rutracker"), "возобновлены", "rutracker"},
-		{"mirror digest", MirrorDigestEvent([]string{"kinozal: основной адрес kinozal.me вместо kinozal.tv", "rutor: убрать rutor.example (не отвечает)"}), "Зеркала трекеров", "rutor.example"},
-		{"mirror paused", MirrorPausedEvent("kinozal", "kinozal.xyz"), "на паузе", "kinozal.xyz"},
+		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1", ""), "Release updated in the torrent client:", "Some.Release.2026"},
+		{"broken", BrokenEvent("Broken.Release", "https://example.com/t2", 5), "ignored", "Broken.Release"},
+		{"tracker down", TrackerDownEvent("rutracker", "connection refused"), "unavailable", "rutracker"},
+		{"tracker up", TrackerUpEvent("rutracker"), "resumed", "rutracker"},
+		{"mirror digest", MirrorDigestEvent([]MirrorDigestItem{{Tracker: "kinozal", Kind: DigestMain, Host: "kinozal.me", From: "kinozal.tv"}, {Tracker: "rutor", Kind: DigestRemove, Host: "rutor.example", Reason: DigestReasonDead}}), "Tracker mirrors", "rutor.example"},
+		{"mirror paused", MirrorPausedEvent("kinozal", "kinozal.xyz"), "is paused", "kinozal.xyz"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -556,6 +559,7 @@ func TestSendTelegramUploadsImageBytes(t *testing.T) {
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 
 	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
+	n.posterHC = img.Client()
 	ev := UpdatedEvent("Some.Release", "https://example.com/t1", img.URL+"/poster.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -568,6 +572,135 @@ func TestSendTelegramUploadsImageBytes(t *testing.T) {
 	}
 	if !strings.Contains(gotCaption, "Some.Release") {
 		t.Errorf("caption %q lost the release name", gotCaption)
+	}
+}
+
+func TestTelegramPosterOnLocalAddressNotFetched(t *testing.T) {
+	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
+	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
+	telegramAPIURL = "http://127.0.0.1:1/bot%s/sendMessage"
+
+	var imgHits atomic.Int32
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		imgHits.Add(1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("JPEGBYTES"))
+	}))
+	defer img.Close()
+
+	var gotContentType string
+	var body struct {
+		Photo string `json:"photo"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
+
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
+	ev := UpdatedEvent("Some.Release", "https://example.com/t1", img.URL+"/poster.jpg")
+	if err := n.Send(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if hits := imgHits.Load(); hits != 0 {
+		t.Errorf("poster server on a loopback address got %d requests, want 0", hits)
+	}
+	if !strings.HasPrefix(gotContentType, "application/json") {
+		t.Errorf("content-type = %q, want a JSON photo link, not an upload", gotContentType)
+	}
+	if body.Photo != img.URL+"/poster.jpg" {
+		t.Errorf("photo = %q, want the original link", body.Photo)
+	}
+}
+
+func fakePosterLookup(t *testing.T, ips map[string]string) {
+	t.Helper()
+	orig := lookupPosterHost
+	t.Cleanup(func() { lookupPosterHost = orig })
+	lookupPosterHost = func(_ context.Context, host string) ([]netip.Addr, error) {
+		ip, ok := ips[host]
+		if !ok {
+			return nil, errors.New("no such host " + host)
+		}
+		return []netip.Addr{netip.MustParseAddr(ip)}, nil
+	}
+}
+
+func TestPosterClientProxyModeRefusesNameResolvingToLocal(t *testing.T) {
+	var hits atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("JPEGBYTES"))
+	}))
+	defer proxy.Close()
+	fakePosterLookup(t, map[string]string{"lan.example.invalid": "192.168.1.1"})
+
+	res, err := newPosterClient(proxy.URL).Get("http://lan.example.invalid/p.jpg")
+	if err == nil {
+		_ = res.Body.Close()
+		t.Fatal("GET succeeded, want a refusal for a name resolving to a private address")
+	}
+	if hits.Load() != 0 {
+		t.Errorf("proxy got %d requests, want 0", hits.Load())
+	}
+}
+
+func TestPosterClientProxyModeRefusesProxyAddress(t *testing.T) {
+	fakePosterLookup(t, map[string]string{"proxy.example.invalid": "93.184.216.34"})
+
+	res, err := newPosterClient("http://proxy.example.invalid:3128").Get("http://proxy.example.invalid:3128/p.jpg")
+	if err == nil {
+		_ = res.Body.Close()
+		t.Fatal("GET succeeded, want a refusal for a poster on the proxy address")
+	}
+	if !strings.Contains(err.Error(), "proxy address") {
+		t.Errorf("error = %q, want the proxy address refusal", err)
+	}
+}
+
+func TestPosterClientUsesProxy(t *testing.T) {
+	fakePosterLookup(t, map[string]string{"poster.example.invalid": "93.184.216.34"})
+	var gotURL string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.String()
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("JPEGBYTES"))
+	}))
+	defer proxy.Close()
+
+	hc := newPosterClient(proxy.URL)
+	res, err := hc.Get("http://poster.example.invalid/p.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/jpeg" {
+		t.Errorf("status %d, content-type %q, want 200 image/jpeg", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	if gotURL != "http://poster.example.invalid/p.jpg" {
+		t.Errorf("proxy got %q, want the absolute poster URL", gotURL)
+	}
+}
+
+func TestPosterClientRefusesLoopbackDial(t *testing.T) {
+	var hits atomic.Int32
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+	}))
+	defer local.Close()
+
+	hc := newPosterClient("")
+	res, err := hc.Get(local.URL)
+	if err == nil {
+		_ = res.Body.Close()
+		t.Fatal("GET to a loopback address succeeded, want a refused dial")
+	}
+	if hits.Load() != 0 {
+		t.Errorf("loopback server got %d requests, want 0", hits.Load())
 	}
 }
 
@@ -594,6 +727,7 @@ func TestSendTelegramFallsBackToURLWhenImageNotFetchable(t *testing.T) {
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 
 	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
+	n.posterHC = img.Client()
 	ev := UpdatedEvent("Some.Release", "https://example.com/t1", img.URL+"/poster.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -718,6 +852,7 @@ func TestTelegramCaptionTrimsNameNotMarkup(t *testing.T) {
 	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
 
 	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
+	n.posterHC = img.Client()
 	ev := UpdatedEvent(strings.Repeat("я", 2000), "https://example.com/t1", img.URL+"/poster.jpg")
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
@@ -986,12 +1121,12 @@ func TestMirrorSuggestedEvents(t *testing.T) {
 	if !slices.Contains(DefaultEvents(), KindMirrorSuggested) {
 		t.Fatalf("mirror_suggested must be in the default events: %v", DefaultEvents())
 	}
-	digest := MirrorDigestEvent([]string{"a: один", "b: два"})
-	if digest.Kind != KindMirrorSuggested || digest.Text != "Зеркала трекеров: a: один; b: два" {
+	digest := MirrorDigestEvent([]MirrorDigestItem{{Tracker: "a", Kind: DigestConfirm, Host: "a.x"}, {Tracker: "b", Kind: DigestRemove, Host: "b.x"}})
+	if digest.Kind != KindMirrorSuggested || digest.Text != "Tracker mirrors: a: new mirror a.x awaits confirmation; b: remove b.x" {
 		t.Fatalf("digest = %+v", digest)
 	}
 	paused := MirrorPausedEvent("kinozal", "kinozal.xyz")
-	want := "Трекер kinozal на паузе: отвечает только новое зеркало kinozal.xyz. Подтвердите его в настройках трекера."
+	want := "Tracker kinozal is paused: only the new mirror kinozal.xyz responds. Confirm it in the tracker settings."
 	if paused.Kind != KindMirrorSuggested || paused.Text != want {
 		t.Fatalf("paused = %+v", paused)
 	}
@@ -1019,5 +1154,150 @@ func TestSendIgnoresChannelDisabled(t *testing.T) {
 	}
 	if whHits.Load() != 1 {
 		t.Fatalf("test message must reach a disabled channel, hits %d", whHits.Load())
+	}
+}
+
+type socksConnect struct {
+	atyp byte
+	host string
+	port int
+}
+
+func fakeSocksServer(t *testing.T, accept ...string) (addr string, connects func() []socksConnect) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []socksConnect
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = c.Close() }()
+				hdr := make([]byte, 2)
+				if _, err := io.ReadFull(c, hdr); err != nil {
+					return
+				}
+				if _, err := io.ReadFull(c, make([]byte, hdr[1])); err != nil {
+					return
+				}
+				_, _ = c.Write([]byte{5, 0})
+				req := make([]byte, 4)
+				if _, err := io.ReadFull(c, req); err != nil {
+					return
+				}
+				var host string
+				switch req[3] {
+				case 1:
+					ip := make([]byte, 4)
+					_, _ = io.ReadFull(c, ip)
+					host = net.IP(ip).String()
+				case 3:
+					l := make([]byte, 1)
+					_, _ = io.ReadFull(c, l)
+					name := make([]byte, l[0])
+					_, _ = io.ReadFull(c, name)
+					host = string(name)
+				case 4:
+					ip := make([]byte, 16)
+					_, _ = io.ReadFull(c, ip)
+					host = net.IP(ip).String()
+				}
+				p := make([]byte, 2)
+				_, _ = io.ReadFull(c, p)
+				mu.Lock()
+				got = append(got, socksConnect{atyp: req[3], host: host, port: int(p[0])<<8 | int(p[1])})
+				mu.Unlock()
+				if slices.Contains(accept, host) {
+					_, _ = c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
+			}()
+		}
+	}()
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln.Addr().String(), func() []socksConnect {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(got)
+	}
+}
+
+func TestPosterClientSocksSendsResolvedIP(t *testing.T) {
+	fakePosterLookup(t, map[string]string{"poster.example.invalid": "93.184.216.34"})
+	addr, connects := fakeSocksServer(t)
+
+	res, err := newPosterClient("socks5://" + addr).Get("http://poster.example.invalid/p.jpg")
+	if err == nil {
+		_ = res.Body.Close()
+	}
+	got := connects()
+	if len(got) != 1 {
+		t.Fatalf("socks server got %d CONNECT requests (GET err %v), want 1", len(got), err)
+	}
+	if got[0].atyp != 1 || got[0].host != "93.184.216.34" || got[0].port != 80 {
+		t.Errorf("CONNECT = %+v, want IPv4 93.184.216.34:80", got[0])
+	}
+}
+
+func TestPosterClientSocksRefusesNameResolvingToLocal(t *testing.T) {
+	fakePosterLookup(t, map[string]string{"lan.example.invalid": "10.0.0.5"})
+	addr, connects := fakeSocksServer(t)
+
+	res, err := newPosterClient("socks5://" + addr).Get("http://lan.example.invalid/p.jpg")
+	if err == nil {
+		_ = res.Body.Close()
+		t.Fatal("GET succeeded, want a refusal for a name resolving to a private address")
+	}
+	if n := len(connects()); n != 0 {
+		t.Errorf("socks server got %d CONNECT requests, want 0", n)
+	}
+}
+
+func TestPosterClientIgnoresEnvProxy(t *testing.T) {
+	hc := newPosterClient("")
+	tr, ok := hc.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport is %T, want *http.Transport", hc.Transport)
+	}
+	if tr.Proxy != nil {
+		t.Error("poster transport has a Proxy func, want nil so HTTP(S)_PROXY is never used")
+	}
+}
+
+func TestPublicAddrRefusesCGNATAndNAT64Private(t *testing.T) {
+	for _, s := range []string{"100.64.0.1", "100.127.255.254", "64:ff9b::a00:1", "64:ff9b:1::5db8:d822"} {
+		if err := publicAddr(netip.MustParseAddr(s)); err == nil {
+			t.Errorf("publicAddr(%s) = nil, want a refusal", s)
+		}
+	}
+	for _, s := range []string{"93.184.216.34", "64:ff9b::5db8:d822", "100.128.0.1"} {
+		if err := publicAddr(netip.MustParseAddr(s)); err != nil {
+			t.Errorf("publicAddr(%s) = %v, want nil", s, err)
+		}
+	}
+}
+
+func TestPosterClientSocksTriesNextAnswer(t *testing.T) {
+	orig := lookupPosterHost
+	t.Cleanup(func() { lookupPosterHost = orig })
+	lookupPosterHost = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34"), netip.MustParseAddr("93.184.216.35")}, nil
+	}
+	addr, connects := fakeSocksServer(t, "93.184.216.35")
+
+	res, err := newPosterClient("socks5://" + addr).Get("http://poster.example.invalid/p.jpg")
+	if err == nil {
+		_ = res.Body.Close()
+	}
+	got := connects()
+	if len(got) < 2 || got[0].host != "93.184.216.34" || got[1].host != "93.184.216.35" {
+		t.Errorf("CONNECT requests = %+v (GET err %v), want the first answer refused, then the second tried", got, err)
 	}
 }

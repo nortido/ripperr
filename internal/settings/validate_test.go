@@ -272,3 +272,29 @@ func TestWebPatchFromJSON(t *testing.T) {
 		t.Errorf("hosts = %v, want %v", o.AllowedHosts, want)
 	}
 }
+
+func TestIntegrationsPatchValidatesLanguage(t *testing.T) {
+	for _, lang := range []string{"de", "RU", "en "} {
+		body := `{"notifications":{"language":"` + lang + `"}}`
+		_, err := IntegrationsPatchFromJSON(json.RawMessage(body))
+		if err == nil || !strings.Contains(err.Error(), "notifications.language must be en or ru") {
+			t.Errorf("%s: err = %v, want notifications.language must be en or ru", body, err)
+		}
+	}
+	for _, lang := range []string{"", "en", "ru"} {
+		body := `{"notifications":{"language":"` + lang + `"}}`
+		if _, err := IntegrationsPatchFromJSON(json.RawMessage(body)); err != nil {
+			t.Errorf("%s: unexpected error %v", body, err)
+		}
+	}
+}
+
+func TestIntegrationsPatchRejectsUnknownBrowserEvent(t *testing.T) {
+	o, err := IntegrationsPatchFromJSON(json.RawMessage(`{"notifications":{"browser":{"events":["nope"]}}}`))
+	if err == nil {
+		err = ValidateIntegrationsPatch(o)
+	}
+	if err == nil || !strings.Contains(err.Error(), "notifications.browser.events") {
+		t.Fatalf("err = %v, want notifications.browser.events", err)
+	}
+}

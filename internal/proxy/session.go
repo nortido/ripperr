@@ -2,29 +2,77 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
-
-	"ripperr/internal/helper"
+	"sync"
 )
 
 const cmdDestroySession = "sessions.destroy"
 
-var sessionLocks helper.KeyedMutex
+type gateEntry struct {
+	ch   chan struct{}
+	refs int
+}
 
-func (f *client) DestroyFlareSession(sessionID string) (err error) {
+type sessionGate struct {
+	mu sync.Mutex
+	m  map[string]*gateEntry
+}
+
+var sessionLocks sessionGate
+
+func (g *sessionGate) lock(ctx context.Context, id string) (unlock func(), err error) {
+	// KeyedMutex после Delete отдает новичку свежий мьютекс рядом с ожидающим старого, поэтому свой счетчик ссылок
+	g.mu.Lock()
+	if g.m == nil {
+		g.m = map[string]*gateEntry{}
+	}
+	e := g.m[id]
+	if e == nil {
+		e = &gateEntry{ch: make(chan struct{}, 1)}
+		g.m[id] = e
+	}
+	e.refs++
+	g.mu.Unlock()
+
+	select {
+	case e.ch <- struct{}{}:
+		return func() {
+			<-e.ch
+			g.release(id, e)
+		}, nil
+	case <-ctx.Done():
+		g.release(id, e)
+		return nil, ctx.Err()
+	}
+}
+
+func (g *sessionGate) release(id string, e *gateEntry) {
+	g.mu.Lock()
+	e.refs--
+	if e.refs == 0 {
+		delete(g.m, id)
+	}
+	g.mu.Unlock()
+}
+
+func (f *client) DestroyFlareSession(ctx context.Context, sessionID string) (err error) {
 	if sessionID == "" {
 		return
 	}
-	mu := sessionLocks.Mutex(sessionID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock, err := sessionLocks.lock(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	var (
 		data []byte
 		resp *http.Response
+		req  *http.Request
 		body struct {
 			Status  string `json:"status"`
 			Message string `json:"message"`
@@ -37,7 +85,11 @@ func (f *client) DestroyFlareSession(sessionID string) (err error) {
 	if data, err = json.Marshal(payload); err != nil {
 		return
 	}
-	if resp, err = f.hc.Post(f.conf.Flaresolverr.URL, "application/json", bytes.NewBuffer(data)); err != nil {
+	if req, err = http.NewRequestWithContext(ctx, http.MethodPost, f.conf.Flaresolverr.URL, bytes.NewReader(data)); err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err = f.hc.Do(req); err != nil {
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -46,12 +98,10 @@ func (f *client) DestroyFlareSession(sessionID string) (err error) {
 	}
 	if body.Status != "ok" {
 		if strings.Contains(body.Message, "doesn't exist") {
-			sessionLocks.Delete(sessionID)
 			return
 		}
 		err = fmt.Errorf("flaresolverr sessions.destroy: %s", body.Message)
 		return
 	}
-	sessionLocks.Delete(sessionID)
 	return
 }

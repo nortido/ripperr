@@ -43,6 +43,8 @@ type ManagerDeleteOptions struct {
 	Hash     string
 	Category string
 	Name     string
+	// решение принимает вызывающий один раз, клиент может только сузить его своей проверкой
+	DeleteFiles bool
 }
 
 type ManagerConfig struct {

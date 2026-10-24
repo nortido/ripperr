@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"ripperr/internal/helper/torrentmeta"
@@ -29,6 +30,10 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string, ro mod
 	}
 	if len(torrentData) == 0 {
 		return fmt.Errorf("export torrent failed: empty result")
+	}
+	// удаление с файлами без возможности добавить обратно потеряло бы раздачу, поэтому отказ до любых изменений
+	if err = refuseV2(torrentData, torrentHash); err != nil {
+		return err
 	}
 
 	name, comment, err := c.GetTorrentDetails(ctx, torrentHash)
@@ -70,6 +75,14 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string, ro mod
 		AutoManaged:    entry.AutoManaged,
 		MaxRatio:       entry.MaxRatio,
 		MaxSeedingTime: entry.MaxSeedingTime,
+		Stopped:        entry.Stopped,
+	}
+	files, err := c.Files(ctx, torrentHash)
+	if err != nil {
+		return fmt.Errorf("read file selection: %w", err)
+	}
+	if slices.ContainsFunc(files, func(f model.TorrentFile) bool { return !f.Wanted }) {
+		opts.FileSelection = files
 	}
 
 	// пара ложится в blackhole до удаления: если qbit упадет или запрос отменят дальше,

@@ -21,6 +21,7 @@ import (
 	"ripperr/internal/notify"
 	"ripperr/internal/settings"
 	"ripperr/internal/system/logger"
+	"ripperr/internal/webpush"
 )
 
 func (s *Server) handleGetIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -62,8 +63,8 @@ var mirrorSourceProbe = func(ctx context.Context, cfg config.App) (int, error) {
 	return mirrorsync.TestSource(ctx, mirrorsync.Client(cfg.MirrorSource, cfg.Runner.DownloadProxy, 10*time.Second), mirrorsync.SourceURLs(cfg.MirrorSource))
 }
 
-var sendNotification = func(ctx context.Context, cfg notify.Config, proxyURL string, ev notify.Event) error {
-	return notify.New(cfg, proxyURL).Send(ctx, ev)
+var sendNotification = func(ctx context.Context, cfg notify.Config, proxyURL string, push *webpush.Store, ev notify.Event) error {
+	return notify.New(cfg, proxyURL).WithPush(push).Send(ctx, ev)
 }
 
 func (s *Server) handlePutIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +73,11 @@ func (s *Server) handlePutIntegrations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	cfg := s.effective()
+	cfg, err := s.writableConfig()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, settingsUnreadableMsg)
+		return
+	}
 	sent := body
 	if body, err = settings.UnmaskIntegrationsPatch(body, &cfg); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -80,7 +85,7 @@ func (s *Server) handlePutIntegrations(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	body, err = s.resolveTelegramChatID(ctx, sent, body)
+	body, err = s.resolveTelegramChatID(ctx, cfg, sent, body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -93,7 +98,7 @@ func (s *Server) handlePutIntegrations(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) resolveTelegramChatID(ctx context.Context, sent, body json.RawMessage) (json.RawMessage, error) {
+func (s *Server) resolveTelegramChatID(ctx context.Context, cfg config.App, sent, body json.RawMessage) (json.RawMessage, error) {
 	var patch struct {
 		Notifications struct {
 			Telegram struct {
@@ -112,7 +117,6 @@ func (s *Server) resolveTelegramChatID(ctx context.Context, sent, body json.RawM
 		// токен стерли, chat id от старого больше не годится
 		return setTelegramChatID(body, "")
 	}
-	cfg := s.effective()
 	if *token == settings.SecretMask {
 		// маска значит "токен не менялся". Недостающий chat id ищем по действующему
 		// токену, саму маску в резолвер не отдаем
@@ -209,6 +213,10 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 	case "notify":
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
+		var push *webpush.Store
+		if ch := notifyChannel(req.Config); ch == "" || ch == "browser" {
+			push = webpush.NewStore(s.db)
+		}
 		if cfg.Notify.TelegramToken != "" && cfg.Notify.TelegramChatID == "" {
 			chatID, err := telegramChatIDResolver(ctx, cfg.Notify.TelegramToken, cfg.Runner.DownloadProxy)
 			if err != nil {
@@ -217,7 +225,7 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 			}
 			cfg.Notify.TelegramChatID = chatID
 		}
-		s.testResult(w, r, req.Kind, sendNotification(ctx, notify.Config(cfg.Notify), cfg.Runner.DownloadProxy, notify.Event{Kind: notify.KindTest, Text: "Ripperr: connectivity test", AppLink: notify.Link(cfg.Web.AppURL, "#dashboard")}))
+		s.testResult(w, r, req.Kind, sendNotification(ctx, notify.Config(cfg.Notify), cfg.Runner.DownloadProxy, push, notify.TestEvent(notify.Link(cfg.Web.AppURL, "#dashboard"))))
 	case "mirror_source":
 		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 		defer cancel()
@@ -359,8 +367,9 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 				AppToken string `json:"app_token"`
 				UserKey  string `json:"user_key"`
 			} `json:"pushover"`
-			Channel string `json:"channel"`
-			Enabled bool   `json:"enabled"`
+			Channel  string  `json:"channel"`
+			Enabled  bool    `json:"enabled"`
+			Language *string `json:"language"`
 		}
 		if err := json.Unmarshal(raw, &c); err != nil {
 			return cfg, err
@@ -372,6 +381,10 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 		cfg.Notify.EmailFrom, cfg.Notify.EmailTo = c.Email.From, c.Email.To
 		cfg.Notify.PushoverToken, cfg.Notify.PushoverUser = c.Pushover.AppToken, c.Pushover.UserKey
 		cfg.Notify.Enabled = c.Enabled
+		// нет поля: остается сохраненный язык; чужое значение при тесте не проверяем, оно рендерится как en
+		if c.Language != nil {
+			cfg.Notify.Language = *c.Language
+		}
 		// маски возвращаем до сравнения токенов, иначе скрытый токен сошел бы
 		// за новый и сбросил сохраненный chat id
 		if err := settings.RestoreMaskedSecrets(&cfg, &orig); err != nil {
@@ -397,14 +410,22 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 	return cfg, nil
 }
 
+func notifyChannel(raw json.RawMessage) string {
+	var c struct {
+		Channel string `json:"channel"`
+	}
+	_ = json.Unmarshal(raw, &c)
+	return c.Channel
+}
+
 func keepOnlyNotifyChannel(n *config.Notifications, channel string) error {
 	if channel == "" {
 		return nil
 	}
 	switch channel {
-	case "telegram", "webhook", "email", "pushover":
+	case "telegram", "webhook", "email", "pushover", "browser":
 	default:
-		return fmt.Errorf("channel must be telegram, webhook, email, or pushover")
+		return fmt.Errorf("channel must be telegram, webhook, email, pushover, or browser")
 	}
 	if channel != "telegram" {
 		n.TelegramToken, n.TelegramChatID = "", ""

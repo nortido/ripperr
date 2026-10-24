@@ -244,6 +244,35 @@ func (d *domainOverride) LoginAuthHint() string {
 	return ""
 }
 
+func (d *domainOverride) FlareSession() string {
+	if v, ok := d.ITracker.(interface{ FlareSession() string }); ok {
+		return v.FlareSession()
+	}
+	return ""
+}
+
+func (d *domainOverride) PostLoginURL() string {
+	if v, ok := d.ITracker.(interface{ PostLoginURL() string }); ok {
+		return trackerModel.ReplaceURLHost(v.PostLoginURL(), d.domain)
+	}
+	return ""
+}
+
+func (d *domainOverride) CookiesIncomplete(cookies []*http.Cookie) bool {
+	if v, ok := d.ITracker.(interface {
+		CookiesIncomplete([]*http.Cookie) bool
+	}); ok {
+		return v.CookiesIncomplete(cookies)
+	}
+	return false
+}
+
+func (d *domainOverride) EnhanceCookies(cookies []*http.Cookie) {
+	if v, ok := d.ITracker.(interface{ EnhanceCookies([]*http.Cookie) }); ok {
+		v.EnhanceCookies(cookies)
+	}
+}
+
 func withActiveDomain(tr client.ITracker, domain string) client.ITracker {
 	if domain == "" || tr.GetDomain() == domain {
 		return tr

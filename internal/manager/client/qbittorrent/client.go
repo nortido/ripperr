@@ -176,11 +176,13 @@ func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) (e
 		return
 	}
 	logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))
-	return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, c.DeletesFiles(ctx, opts))
+	return c.client.DeleteTorrentsCtx(ctx, []string{opts.Hash}, opts.DeleteFiles && c.DeletesFiles(ctx, opts))
 }
 
 func (c *Client) DeletesFiles(_ context.Context, opts model.ManagerDeleteOptions) bool {
-	return c.config.DeleteEnabled && c.config.DeleteFilesEnabled && slices.Contains(c.config.DeleteCategories, opts.Category)
+	// "tv," из env дает пустую категорию, она совпала бы с раздачами без категории
+	return c.config.DeleteEnabled && c.config.DeleteFilesEnabled && opts.Category != "" &&
+		slices.Contains(c.config.DeleteCategories, opts.Category)
 }
 
 func (c *Client) getProperties(ctx context.Context, t *qbt.Torrent) (p *qbt.TorrentProperties, err error) {

@@ -1,13 +1,9 @@
 package torrentmeta
 
-import (
-	"bytes"
-
-	"github.com/anacrolix/torrent/metainfo"
-)
+import "bytes"
 
 func SetComment(data []byte, comment string) ([]byte, error) {
-	mi, err := metainfo.Load(bytes.NewReader(data))
+	mi, err := load(data)
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +16,7 @@ func SetComment(data []byte, comment string) ([]byte, error) {
 }
 
 func Comment(data []byte) (string, error) {
-	mi, err := metainfo.Load(bytes.NewReader(data))
+	mi, err := load(data)
 	if err != nil {
 		return "", err
 	}

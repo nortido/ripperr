@@ -34,6 +34,10 @@ const (
 
 var SettleDelay = 3 * time.Second // переменная, чтобы тесты могли ужать
 
+// клиент после своего рестарта может минутами отдавать неполный список, и пауза
+// SettleDelay его не переждет. Отсутствие старого принимаем только со второго тика
+var confirmAbsentAfter = sweepInterval / 2
+
 type client interface {
 	AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) error
 	AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error
@@ -46,6 +50,8 @@ type client interface {
 type Store struct {
 	dir    string
 	client client
+	// новый хеш замены -> когда старый впервые не нашелся; трогает только горутина подметания
+	absentSeen map[string]time.Time
 }
 
 func New(dir string, c client) *Store {
@@ -98,11 +104,12 @@ func (s *Store) Write(data []byte, magnet string, opts model.ManagerAddFileOptio
 func writeFileAtomic(path string, data []byte) error {
 	// у пары с одним магнитом json это вся страховка, а os.WriteFile потеряет ее при
 	// падении посреди записи. Пишем во временный файл, fsync, потом rename поверх
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	// CreateTemp: 0600 (в паре passkey) и свое имя на писателя, общий .tmp ломал параллельную запись
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	if _, err = f.Write(data); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
@@ -317,6 +324,10 @@ func (s *Store) Sweep(ctx context.Context) {
 }
 
 func (s *Store) SweepOnce(ctx context.Context) {
+	// запись переживает только тик, на котором ее подтвердили: недоступный клиент,
+	// ошибка пробы или пропавшая пара начинают подтверждение заново
+	prevAbsent := s.absentSeen
+	s.absentSeen = map[string]time.Time{}
 	// одна проба доступности на тик: нет смысла обходить каталог (и логировать
 	// сломанные пары каждый тик), пока клиент загрузок просто лежит
 	probeCtx, cancel := context.WithTimeout(ctx, reachableTimeout)
@@ -336,7 +347,7 @@ func (s *Store) SweepOnce(ctx context.Context) {
 		// оставить новый торрент остановленным навсегда
 		if replacePair(b.opts, b.hash) && !strings.HasPrefix(b.reason, reasonHashMismatch) {
 			if time.Since(b.modTime) >= freshPairGrace {
-				s.finishReplace(ctx, blackholePair{hash: b.hash, opts: b.opts, modTime: b.modTime})
+				s.finishReplace(ctx, blackholePair{hash: b.hash, opts: b.opts, modTime: b.modTime}, prevAbsent)
 			}
 			continue
 		}
@@ -361,7 +372,7 @@ func (s *Store) SweepOnce(ctx context.Context) {
 			continue
 		}
 		if replacePair(p.opts, p.hash) {
-			s.finishReplace(ctx, p)
+			s.finishReplace(ctx, p, prevAbsent)
 			continue
 		}
 		addErr := s.readd(ctx, p)
@@ -386,14 +397,18 @@ func (s *Store) readd(ctx context.Context, p blackholePair) error {
 	addCtx, cancel := context.WithTimeout(ctx, AddTimeout)
 	defer cancel()
 	opts := p.opts
-	opts.Stopped = false
+	// новый торрент замены всегда запускаем. Остановленную обычную пару пишут перезаливка
+	// с комментарием и «Перекачать» для торрента, который пользователь остановил сам
+	if replacePair(p.opts, p.hash) {
+		opts.Stopped = false
+	}
 	if len(p.torrent) > 0 {
 		return s.client.AddFromBuffer(addCtx, bytes.NewBuffer(p.torrent), opts)
 	}
 	return s.client.AddFromMagnet(addCtx, p.magnet, opts)
 }
 
-func (s *Store) finishReplace(ctx context.Context, p blackholePair) {
+func (s *Store) finishReplace(ctx context.Context, p blackholePair, prevAbsent map[string]time.Time) {
 	old := p.opts.ReplacesHash
 	oldPresent, err := s.client.Exists(ctx, old)
 	if err != nil {
@@ -416,6 +431,16 @@ func (s *Store) finishReplace(ctx context.Context, p blackholePair) {
 		}
 		removeBlackholePair(s.dir, p.hash)
 		logger.Info(fmt.Sprintf("blackhole sweep: replace %s (%s) rolled back, old torrent %s kept", p.opts.Name, p.hash, old))
+		return
+	}
+	first, seen := prevAbsent[p.hash]
+	if !seen {
+		s.absentSeen[p.hash] = time.Now()
+		logger.Info(fmt.Sprintf("blackhole sweep: replace %s (%s): old torrent absent, confirming on the next sweep", p.opts.Name, p.hash))
+		return
+	}
+	if time.Since(first) < confirmAbsentAfter {
+		s.absentSeen[p.hash] = first
 		return
 	}
 	// одной пробе "нет" не верим: клиент мог еще не дочитать свой список

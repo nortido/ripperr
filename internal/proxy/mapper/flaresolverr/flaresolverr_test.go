@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"ripperr/internal/helper"
 	"ripperr/internal/model/proxy"
 )
 
@@ -85,5 +86,39 @@ func TestSolutionCookiesSkipsEmptyNames(t *testing.T) {
 	got := SolutionCookies(resp)
 	if len(got) != 1 || got[0].Name != "uid" {
 		t.Fatalf("got = %+v", got)
+	}
+}
+
+func buildNoPanic(t *testing.T, resp *Response) (err error) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("BuildResponse panicked: %v", r)
+		}
+	}()
+	req, _ := http.NewRequest(http.MethodGet, "https://rutracker.org/", nil)
+	_, err = BuildResponse(resp, req)
+	return err
+}
+
+func TestBuildResponseWithoutSolution(t *testing.T) {
+	err := buildNoPanic(t, &Response{Status: "ok"})
+	if err == nil || err.Error() != "flaresolverr error: response without solution" {
+		t.Fatalf("err = %v", err)
+	}
+	err = buildNoPanic(t, nil)
+	if err == nil || err.Error() != "flaresolverr error: empty response" {
+		t.Fatalf("nil response err = %v", err)
+	}
+}
+
+func TestBuildResponseErrorKeepsMessage(t *testing.T) {
+	msg := "Error solving the challenge. Timeout after 60.0 seconds."
+	err := buildNoPanic(t, &Response{Status: "error", Message: msg})
+	if err == nil || err.Error() != "flaresolverr error: "+msg {
+		t.Fatalf("err = %v", err)
+	}
+	if !helper.IsFlareTimeout(err) {
+		t.Fatal("IsFlareTimeout must match")
 	}
 }

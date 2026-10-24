@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="en" data-theme="dark">
 <head>
   <script>
     (function () {
-      var lang = 'ru';
+      var lang = 'en';
       try {
         var l = localStorage.getItem('ripperr-lang');
         if (l === 'ru' || l === 'en') lang = l;
@@ -43,6 +43,7 @@
         <span data-icon="menu"></span>
       </button>
       <a class="mobile-header-brand" href="#dashboard"><img class="mobile-header-logo" src="icon.svg" alt="" width="26" height="26"><span class="mobile-header-brand-text">Ripp<span class="brand-tail">err</span></span></a>
+      <div class="mobile-header-actions" id="mobile-header-actions" hidden></div>
     </header>
 
     <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>

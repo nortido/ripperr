@@ -53,8 +53,9 @@ tags or file selection.
 - Magnet-only topics: the `.torrent` is fetched from the DHT and the topic link is written into it.
 - Dry run: a full pass that touches nothing, to see what would be updated.
 - Web UI in English and Russian, dark, light and OLED themes, works on phones.
-- Notifications to Telegram (with the release poster), a generic webhook, email (SMTP) and Pushover,
-  each channel with its own list of events.
+- Notifications to Telegram (with the release poster), a generic webhook, email (SMTP), Pushover and browser push notifications (Web Push, one subscription per device, HTTPS only; iPhone and iPad only as a Home Screen app on iOS 16.4+),
+  each channel with its own list of events. Notification texts are English or Russian: one setting for all
+  channels on the Integrations page (default English).
 - Health probes and Prometheus metrics (see [Monitoring](#monitoring)).
 - One account with a hashed password. Login is always required; the first account can be created only
   from a local address or an allowed host (see [Access](#access)).
@@ -137,7 +138,7 @@ docker run -d --name ripperr \
 Open `http://<host>:6410`, create the account on the first visit, then:
 
 1. **Integrations:** check the client connection (or switch to Transmission or Deluge), add the
-   notification channels you want (Telegram, webhook, email, Pushover) and tick the events each one gets.
+   notification channels you want (Telegram, webhook, email, Pushover, Browser) and tick the events each one gets.
 2. **Trackers:** add the trackers you use, enable them and enter credentials or cookies; the test
    button shows whether login works.
 3. **Settings:** pick the categories (and optionally tags) to monitor and the check schedule.
@@ -158,6 +159,7 @@ database and overrides them, so after the first start the UI is the main place t
 | `RUNNER_ALLOWED_CATEGORIES` | empty | categories to monitor, comma separated |
 | `RUNNER_TAG` | `watch` | only torrents with this tag; empty means all torrents of the categories; ignored with Deluge, which has no tags |
 | `RUNNER_START_HOUR` | `7` | hour of the first pass |
+| `RUNNER_RUN_ON_START` | `true` | run a pass right after the app starts; `false` waits for the schedule |
 | `RUNNER_LIST_REFRESH_PER_DAY` | `2` | passes per day |
 | `RUNNER_ERROR_STREAK_THRESHOLD` | `3` | failed checks in a row before a release is marked broken |
 | `RUNNER_DOWNLOAD_PROXY` | empty | `http://`, `https://` or `socks5://` proxy for tracker traffic |
@@ -181,7 +183,7 @@ database and overrides them, so after the first start the UI is the main place t
 | `DB_SECRETS_KEY` | empty | base64 of 32 bytes; encryption key for secrets in the database. If empty, the key is read from `secrets.key` next to the database file (created on first start). See [Secrets at rest](#secrets-at-rest) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
-Email, Pushover, the events of each notification channel and the metrics token have no variables: set them on
+Email, Pushover, the Browser channel, the events of each notification channel, the notification language and the metrics token have no variables: set them on
 the Integrations page.
 
 `WEB_LAN_BYPASS` no longer exists: any value is ignored. Remove it from your run line. Devices that used
@@ -196,18 +198,33 @@ Every log line goes to stdout and to `/config/logs/ripperr.log`. The file rotate
 - Until the account exists, every `/api` path except `/api/auth/state`, `/api/auth/setup`, `/api/auth/login` and
   `/api/auth/logout` answers `401`. The first account can be created only from a local address, `localhost`,
   a name without a dot, `.local`, `.lan`, `.home.arpa`, `.internal` or an allowed host; other `Host` values get `403`.
-  Create the account before you expose the port.
+  A request whose `Host` is a bare IP without a port is refused too: that is what an HTTPS reverse proxy such as
+  KeenDNS sends. Create the account on the LAN at `ip:6410` before you expose the port.
 - The session lasts 30 days and is extended once a day while you use it. Sign out ends the sessions on
   all devices.
 - Change the password in Settings, card Password: the current password and the new one twice (at least 8
   characters, as at setup). The change signs out every other device; this browser stays signed in. A wrong
   current password counts as a failed login attempt for the limit below.
 - The session cookie is `Secure` over HTTPS, also behind a reverse proxy that ends TLS (the browser's
-  `Origin` or `Referer` shows the scheme).
-- 5 login attempts per minute from one client address lock login for that address for 1 minute. Behind Docker
-  Desktop port publishing all clients share one address, so the lock is shared. At most 2 password checks run
-  at once; more get `429`. Set `WEB_TRUSTED_PROXY=true` only when every request comes through the proxy,
-  otherwise a client can fake the address.
+  `Origin` or `Referer` shows the scheme). Over HTTPS the cookies are named `__Host-ripperr_session` and
+  `__Host-ripperr_device`: the browser keeps them only for the exact host you opened, so a neighbour
+  subdomain cannot set them. Over plain `http` the names stay `ripperr_session` and `ripperr_device`. A browser
+  that still has the old `ripperr_*` cookies is moved to the new names on its next request over HTTPS, and
+  stays signed in.
+- Every API call that changes data (not `GET`, `HEAD`, `OPTIONS`) needs the header `X-Ripperr: 1`; a request
+  that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403`. The web UI sends
+  the header itself. A script or `curl` must add it, for example `-H 'X-Ripperr: 1'`.
+- 5 failed login attempts lock login for 24 hours. There is no unlock button; the counters live in memory, so
+  a container restart clears them. A browser that has signed in gets the device cookie `ripperr_device`
+  (`__Host-ripperr_device` over HTTPS, 400 days): it has its own counter, so a lock caused by someone else from the same address does not block
+  it, and its own 5 failures lock only this browser. A browser that is already signed in gets the cookie with
+  its next request; such browsers share one counter until their next sign-in gives each its own. Browsers
+  without the cookie share the counter of their client address; behind Docker Desktop port publishing that is
+  one address for all of them. Sign out keeps the device cookies; a password change revokes them, and other
+  browsers count by address until they sign in again. When 1024 addresses are already counted, a new address
+  waits. At most 2 password checks run at once; more get `429`. Set `WEB_TRUSTED_PROXY=true` only when every
+  request comes through the proxy, otherwise a client can fake the address.
+- Browser notifications (Web Push) need a page opened over HTTPS, for example the HTTPS domain of your router's reverse proxy (KeenDNS). On the plain `http://` LAN address the browser does not offer push. Open Integrations → Browser on each device and press "Enable on this device": every device subscribes itself, and the list shows the devices with a delete button. iPhone and iPad get push only from a Home Screen app (iOS 16.4 or newer): in Safari use Share → Add to Home Screen, open Ripperr from the icon, sign in there and enable the notifications. The App URL is not required for push; it is only used for links in the other channels. An expired device (the push service answers 404 or 410) is removed by itself.
 - Pages cannot be put in a frame (`X-Frame-Options: DENY`).
 
 ### Web access settings
@@ -236,6 +253,7 @@ Tracker logins, passwords and cookies, and everything you save in the UI (client
 - Rotate the key: run `decrypt-secrets` with the old key, delete `secrets.key` (or change `DB_SECRETS_KEY`) and start. A new key is created and the database is encrypted again.
 - Lost key: the secrets cannot be recovered. With the container stopped, run `sqlite3 ripperr.db "DELETE FROM settings; UPDATE trackers SET credentials='', cookies=''; PRAGMA user_version=1;"` in the config directory, then start. Ripperr makes a new key and you enter the settings again; the history is kept.
 - The database file is `ripperr.db` in the config directory. On the first start of this version the key check row is re-sealed with a new value (log line `secrets: key check re-sealed, older builds can no longer open this database`). Older builds then refuse the database with `secrets: key from <source> does not match this database`. To go back, restore the backup taken before the upgrade, or run `decrypt-secrets` with the new build first.
+- FlareSolverr is not part of Ripperr and logs each request body at INFO, including the login form (login and password) of trackers that log in through it. To keep it out of the FlareSolverr log, start FlareSolverr with `LOG_LEVEL=warning` (see [Environment variables](https://github.com/FlareSolverr/FlareSolverr#environment-variables); the default is `info`).
 
 ## Monitoring
 

@@ -1,4 +1,5 @@
 import { fetchJSON, showToast } from './api.js';
+import { browserDeviceCount, browserPanelHtml, initBrowserPush, reloadBrowserDevices } from './browserpush.js';
 import { cancelClose, closeAnimated, initHintToggles, initPasswordToggles, setSaving, updateSegmentThumb } from './components.js';
 import { hydrateIcons } from './icons.js';
 import { initCustomSelects } from './select.js';
@@ -6,16 +7,20 @@ import { abortTest, bindTestButton, forgetTest, paintTestButton, paintTestLine, 
 import { SECRET_MASK, html, secureInputAttrs } from './util.js';
 
 export let integrationsCache = null;
+// переключатель живет в расписании (PUT /api/schedule), карточка источника зеркал только показывает его.
+// null: старый сервер не знает mirror_confirm, переключатель не рисуем
+let mirrorConfirm = null;
 
 let clientDrafts = { qbit: {}, transmission: {}, deluge: {} };
 let clientDraftType = 'qbit';
 
-const NOTIFY_CHANNELS = ['telegram', 'webhook', 'email', 'pushover'];
+const NOTIFY_CHANNELS = ['telegram', 'webhook', 'email', 'pushover', 'browser'];
 const NOTIFY_CHANNEL_KEYS = {
   telegram: 'integrations.notifyChannelTelegram',
   webhook: 'integrations.notifyChannelWebhook',
   email: 'integrations.notifyChannelEmail',
   pushover: 'integrations.notifyChannelPushover',
+  browser: 'integrations.notifyChannelBrowser',
 };
 const NOTIFY_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched', 'mirror_suggested', 'check_failed'];
 const NOTIFY_EVENT_KEYS = {
@@ -77,7 +82,12 @@ export async function loadIntegrations() {
   intSnap = null;
   el.innerHTML = html`<div class="loading">${t('common.loading')}</div>`;
   try {
-    integrationsCache = await fetchJSON('/api/integrations');
+    const [data, sch] = await Promise.all([
+      fetchJSON('/api/integrations'),
+      fetchJSON('/api/schedule').catch(function () { return null; }),
+    ]);
+    integrationsCache = data;
+    mirrorConfirm = sch && typeof sch.mirror_confirm === 'boolean' ? sch.mirror_confirm : null;
     renderIntegrations(el, integrationsCache);
   } catch (err) {
     el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
@@ -101,7 +111,9 @@ export function renderIntegrations(el, data) {
   const proxyParts = parseDownloadProxy(p.download_proxy || '');
   const ms = data.mirror_source || {};
   const n = data.notifications || {};
-  const notifyType = initialNotifyChannel(n);
+  const filledType = initialNotifyChannel(n);
+  const notifyType = filledType || 'telegram';
+  notifyTabAuto = !filledType;
   // форма заново из данных сервера, прошлый результат к ней уже не относится
   INTEGRATION_TEST_KINDS.forEach(function (kind) { forgetTest('int:' + kind); });
 
@@ -145,6 +157,7 @@ export function renderIntegrations(el, data) {
           body: JSON.stringify({ kind: apiKind, config: getIntegrationTestConfig(apiKind) }),
           signal: signal,
         });
+        if (apiKind === 'notify' && getNotifyChannelType() === 'browser') reloadBrowserDevices();
         return { ok: !!res.ok, error: res.error || '' };
       }, { repaint: repaint });
     }, repaint);
@@ -214,6 +227,12 @@ export function renderIntegrations(el, data) {
     if (security) security.addEventListener('change', applyEmailPortPlaceholder);
     applyEmailPortPlaceholder();
     refresh();
+    initBrowserPush(el, function () {
+      if (notifyTabAuto && browserDeviceCount() > 0) selectNotifyChannel(el, 'browser', false);
+      notifyTabAuto = false;
+      updateNotifyTabs(el);
+      paintIntegrationTest('notify');
+    });
   }
 
   intSnap = snapshotIntegrations();
@@ -254,10 +273,19 @@ const INT_SECTIONS = {
     read: getMetricsFormValue,
     apply: function (doc, v) { doc.metrics = v; },
   },
+  mirror_confirm: {
+    read: function () {
+      const box = document.getElementById('mirror_confirm');
+      return box ? box.checked : false;
+    },
+    apply: function () {},
+  },
 };
 
 let intSnap = null;
 let intSaving = false;
+// устройства браузера приходят позже формы: пока вкладку никто не выбирал, переключаем на них
+let notifyTabAuto = false;
 
 function readClientSection() {
   const drafts = Object.assign({}, clientDrafts);
@@ -342,8 +370,15 @@ async function saveIntegrations() {
   intSaving = true;
   updateIntSave();
   try {
-    await fetchJSON('/api/integrations', { method: 'PUT', body: JSON.stringify(doc) });
-    integrationsCache = doc;
+    if (dirty.some(function (name) { return name !== 'mirror_confirm'; })) {
+      await fetchJSON('/api/integrations', { method: 'PUT', body: JSON.stringify(doc) });
+      integrationsCache = doc;
+    }
+    if (dirty.includes('mirror_confirm')) {
+      const v = JSON.parse(sent.mirror_confirm);
+      await fetchJSON('/api/schedule', { method: 'PUT', body: JSON.stringify({ mirror_confirm: v }) });
+      mirrorConfirm = v;
+    }
     dirty.forEach(function (name) { snap[name] = sent[name]; });
     showToast(t('integrations.saved'), 'success');
   } catch (err) {
@@ -401,6 +436,7 @@ function applyNotifyChannelType(el, type) {
 }
 
 function selectNotifyChannel(el, ch, focus) {
+  notifyTabAuto = false;
   if (getNotifyChannelType() !== ch) {
     applyNotifyChannelType(el, ch);
     // проверка относится к вкладке, с которой ушли
@@ -421,10 +457,23 @@ function updateNotifyTabs(el) {
   NOTIFY_CHANNELS.forEach(function (ch) {
     const tab = el.querySelector('#notify-tab-' + ch);
     if (tab) tab.classList.toggle('is-on', notifyChannelActive(v, ch));
+    // незаполненный канал не работает, поэтому переключатель выключен и неактивен.
+    // Сохраненное значение живет в data-saved и вернется, когда поля заполнят
+    const box = el.querySelector('#notify-ch-enabled-' + ch);
+    const filled = notifyChannelFilled(v, ch);
+    if (box && !filled && !box.disabled) {
+      box.dataset.saved = box.checked ? '1' : '';
+      box.checked = false;
+      box.disabled = true;
+    } else if (box && filled && box.disabled) {
+      box.disabled = false;
+      box.checked = box.dataset.saved === '1';
+    }
   });
 }
 
 function notifyChannelFilled(v, ch) {
+  if (ch === 'browser') return browserDeviceCount() > 0;
   const c = v[ch];
   if (ch === 'telegram') return c.bot_token.trim() !== '';
   if (ch === 'webhook') return c.url.trim() !== '';
@@ -445,6 +494,7 @@ function integrationTestMissing(kind) {
     const v = getMirrorSourceFormValue();
     return v.type !== 'custom' || v.url ? '' : t('integrations.testNeedsUrl');
   }
+  if (getNotifyChannelType() === 'browser' && browserDeviceCount() === 0) return t('integrations.testNeedsBrowser');
   return notifyChannelFilled(getNotifyFormValue(), getNotifyChannelType()) ? '' : t('integrations.testNeedsNotify');
 }
 
@@ -466,7 +516,7 @@ function initialNotifyChannel(n) {
   if (wh.url) return 'webhook';
   if (em.host) return 'email';
   if (po.app_token || po.user_key) return 'pushover';
-  return 'telegram';
+  return '';
 }
 
 function notifyEventsOf(ch) {
@@ -604,18 +654,24 @@ function notifyPasswordHtml(id, value, field) {
   return html`<div class="input-password-wrap"><input id="${id}" data-reveal="/api/integrations/secret" data-reveal-field="${field}"${secureInputAttrs('notify-secret')} value="${value}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eyeHidden"></span></button></div>`;
 }
 
+function mirrorConfirmHtml() {
+  if (mirrorConfirm === null) return '';
+  return html`<hr class="form-divider"><div class="form-group"><label class="form-switch"><input type="checkbox" id="mirror_confirm"${mirrorConfirm ? ' checked' : ''}><span>${t('settings.mirrorConfirm')}</span></label><p class="form-hint">${t('settings.mirrorConfirmHint')}</p></div>`;
+}
+
 function mirrorSourceCardHtml(ms) {
   const type = ms.type === 'jsdelivr' || ms.type === 'custom' ? ms.type : 'github';
   const opt = function (value, key) {
     return html`<option value="${value}"${type === value ? ' selected' : ''}>${t(key)}</option>`;
   };
-  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.mirrorSource')}</h2>${testButtonHtml('mirror_source')}</div><div class="card-body">${testLineHtml('mirror_source')}<div class="form-row"><div class="form-group"><label class="form-label" for="mirror-source-type">${t('integrations.mirrorSourceType')}</label><select class="select" id="mirror-source-type">${opt('github', 'integrations.mirrorSourceGithub')}${opt('jsdelivr', 'integrations.mirrorSourceJsdelivr')}${opt('custom', 'integrations.mirrorSourceCustom')}</select><p class="form-hint">${t('integrations.mirrorSourceHint')}</p></div><div class="form-group${type === 'custom' ? '' : ' hidden'}" id="mirror-source-url-group"><label class="form-label" for="mirror-source-url">${t('integrations.mirrorSourceUrl')}</label><input type="text" class="input" id="mirror-source-url" value="${ms.url || ''}" placeholder="https://example.com/{path}"><p class="form-hint">${t('integrations.mirrorSourceUrlHint')}</p></div></div><div class="form-group"><label class="form-switch"><input type="checkbox" id="mirror-source-direct"${ms.direct ? ' checked' : ''}><span>${t('integrations.mirrorSourceDirect')}</span></label></div></div></div>`;
+  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.mirrorSource')}</h2>${testButtonHtml('mirror_source')}</div><div class="card-body">${testLineHtml('mirror_source')}<div class="form-row"><div class="form-group"><label class="form-label" for="mirror-source-type">${t('integrations.mirrorSourceType')}</label><select class="select" id="mirror-source-type">${opt('github', 'integrations.mirrorSourceGithub')}${opt('jsdelivr', 'integrations.mirrorSourceJsdelivr')}${opt('custom', 'integrations.mirrorSourceCustom')}</select><p class="form-hint">${t('integrations.mirrorSourceHint')}</p></div><div class="form-group${type === 'custom' ? '' : ' hidden'}" id="mirror-source-url-group"><label class="form-label" for="mirror-source-url">${t('integrations.mirrorSourceUrl')}</label><input type="text" class="input" id="mirror-source-url" value="${ms.url || ''}" placeholder="https://example.com/{path}"><p class="form-hint">${t('integrations.mirrorSourceUrlHint')}</p></div><div class="form-group form-group-switch-end"><label class="form-switch"><input type="checkbox" id="mirror-source-direct"${ms.direct ? ' checked' : ''}><span>${t('integrations.mirrorSourceDirect')}</span></label></div></div>${mirrorConfirmHtml()}</div></div>`;
 }
 
 function notifyCardHtml(n, selected) {
   const tg = n.telegram || {};
   const wh = n.webhook || {};
   const em = n.email || {};
+  const br = n.browser || {};
   const po = n.pushover || {};
   const security = em.security || 'starttls';
   const securityOptions = ['starttls', 'tls', 'none'].map(function (s) {
@@ -632,7 +688,7 @@ function notifyCardHtml(n, selected) {
   const webhook = html`<div class="form-group"><label class="form-label" for="notify-webhook-url">${t('integrations.notifyWebhookUrl')}</label><input type="text" class="input" id="notify-webhook-url" autocomplete="off" value="${wh.url}"></div>`;
   const email = html`<div class="form-row int-row-3"><div class="form-group"><label class="form-label" for="notify-email-host">${t('integrations.notifyEmailHost')}</label><input type="text" class="input" id="notify-email-host" autocomplete="off" value="${em.host}"></div><div class="form-group"><label class="form-label" for="notify-email-port">${t('integrations.notifyEmailPort')}</label><input type="number" class="input" id="notify-email-port" min="0" max="65535" autocomplete="off" value="${em.port || ''}"></div><div class="form-group"><label class="form-label" for="notify-email-security">${t('integrations.notifyEmailSecurity')}</label><select class="select" id="notify-email-security">${securityOptions}</select></div></div><div class="form-row"><div class="form-group"><label class="form-label" for="notify-email-username">${t('integrations.notifyEmailUsername')}</label><input type="text" class="input" id="notify-email-username" autocomplete="off" value="${em.username}"><p class="form-hint">${t('integrations.notifyEmailAuthHint')}</p></div><div class="form-group"><label class="form-label" for="notify-email-password">${t('integrations.notifyEmailPassword')}</label>${notifyPasswordHtml('notify-email-password', em.password, 'notifications.email.password')}</div></div><div class="form-row"><div class="form-group"><label class="form-label" for="notify-email-from">${t('integrations.notifyEmailFrom')}</label><input type="text" class="input" id="notify-email-from" autocomplete="off" value="${em.from}"></div><div class="form-group"><label class="form-label" for="notify-email-to">${t('integrations.notifyEmailTo')}</label><input type="text" class="input" id="notify-email-to" autocomplete="off" value="${em.to}"><p class="form-hint">${t('integrations.notifyEmailToHint')}</p></div></div>`;
   const pushover = html`<div class="form-row"><div class="form-group"><label class="form-label" for="notify-pushover-token">${t('integrations.notifyPushoverToken')}</label>${notifyPasswordHtml('notify-pushover-token', po.app_token, 'notifications.pushover.app_token')}</div><div class="form-group"><label class="form-label" for="notify-pushover-user">${t('integrations.notifyPushoverUser')}</label>${notifyPasswordHtml('notify-pushover-user', po.user_key, 'notifications.pushover.user_key')}<p class="form-hint">${t('integrations.notifyPushoverHint')}</p></div></div>`;
-  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.notify')}</h2>${testButtonHtml('notify')}</div><div class="card-body" id="notify-card-body" autocomplete="off">${testLineHtml('notify')}<div class="form-group"><label class="form-switch"><input type="checkbox" id="notify-enabled"${n.enabled ? ' checked' : ''}><span>${t('integrations.notifyEnabled')}</span></label></div><div class="form-group"><span class="form-label" id="notify-tabs-label">${t('integrations.notifyChannels')}</span><div class="seg-ctrl notify-tabs" id="notify-tabs" role="tablist" aria-labelledby="notify-tabs-label"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${tabs}</div></div><div class="notify-panels">${panel('telegram', tg, telegram)}${panel('webhook', wh, webhook)}${panel('email', em, email)}${panel('pushover', po, pushover)}</div></div></div>`;
+  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.notify')}</h2>${testButtonHtml('notify')}</div><div class="card-body" id="notify-card-body" autocomplete="off">${testLineHtml('notify')}<div class="form-group"><label class="form-switch"><input type="checkbox" id="notify-enabled"${n.enabled ? ' checked' : ''}><span>${t('integrations.notifyEnabled')}</span></label></div><div class="form-group"><label class="form-label" for="notify-language">${t('integrations.notifyLanguage')}</label><select class="select" id="notify-language"><option value="ru"${n.language === 'ru' ? ' selected' : ''}>${t('settings.languageRu')}</option><option value="en"${n.language === 'ru' ? '' : ' selected'}>${t('settings.languageEn')}</option></select></div><div class="form-group"><span class="form-label" id="notify-tabs-label">${t('integrations.notifyChannels')}</span><div class="seg-ctrl seg-ctrl-fit notify-tabs" id="notify-tabs" role="tablist" aria-labelledby="notify-tabs-label"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${tabs}</div></div><div class="notify-panels">${panel('telegram', tg, telegram)}${panel('webhook', wh, webhook)}${panel('email', em, email)}${panel('pushover', po, pushover)}${panel('browser', br, browserPanelHtml())}</div></div></div>`;
 }
 
 function metricsCardHtml(m) {
@@ -713,7 +769,10 @@ export function getMetricsFormValue() {
 
 export function getNotifyFormValue() {
   const val = function (id) { return document.getElementById(id).value; };
-  const chEnabled = function (ch) { return document.getElementById('notify-ch-enabled-' + ch).checked; };
+  const chEnabled = function (ch) {
+    const box = document.getElementById('notify-ch-enabled-' + ch);
+    return box.disabled ? box.dataset.saved === '1' : box.checked;
+  };
   const events = function (ch) {
     return NOTIFY_EVENTS.filter(function (kind) {
       return document.getElementById('notify-ev-' + ch + '-' + kind).checked;
@@ -734,7 +793,9 @@ export function getNotifyFormValue() {
       events: events('email'),
     },
     pushover: { enabled: chEnabled('pushover'), app_token: val('notify-pushover-token'), user_key: val('notify-pushover-user'), events: events('pushover') },
+    browser: { enabled: chEnabled('browser'), events: events('browser') },
     enabled: document.getElementById('notify-enabled').checked,
+    language: val('notify-language'),
   };
 }
 

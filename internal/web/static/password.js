@@ -18,7 +18,7 @@ function fieldHtml(id, label, autocomplete) {
 export function passwordCardHtml() {
   // authState бывает еще не загружен при первой отрисовке, тогда имя пустое
   const username = authState && authState.username ? authState.username : '';
-  return html`<div class="card" id="password-card"><div class="card-header"><h2 class="card-title">${t('settings.password')}</h2></div><form class="card-body" id="password-form"><input type="text" autocomplete="username" value="${username}" hidden>${fieldHtml('password_current', t('settings.passwordCurrent'), 'current-password')}<div class="form-row">${fieldHtml('password_new', t('settings.passwordNew'), 'new-password')}${fieldHtml('password_repeat', t('settings.passwordRepeat'), 'new-password')}</div><p class="form-hint">${t('settings.passwordHint')}</p><button type="submit" class="btn btn-primary">${t('settings.passwordChange')}</button></form></div>`;
+  return html`<div class="card" id="password-card"><div class="card-header"><h2 class="card-title">${t('settings.password')}</h2></div><form class="card-body" id="password-form"><input type="text" autocomplete="username" value="${username}" hidden><div class="form-row password-current-row">${fieldHtml('password_current', t('settings.passwordCurrent'), 'current-password')}</div><div class="form-row">${fieldHtml('password_new', t('settings.passwordNew'), 'new-password')}${fieldHtml('password_repeat', t('settings.passwordRepeat'), 'new-password')}</div><p class="form-hint">${t('settings.passwordHint')}</p><button type="submit" class="btn btn-primary">${t('settings.passwordChange')}</button></form></div>`;
 }
 
 export function bindPasswordCard(el) {
@@ -29,6 +29,21 @@ export function bindPasswordCard(el) {
 
   const form = card.querySelector('#password-form');
   const submit = form.querySelector('button[type="submit"]');
+  let passwordSaving = false;
+
+  function updatePasswordSubmit() {
+    setSaving(submit, passwordSaving);
+    // без trim: пробел допустимый символ пароля; длину проверяет сервер
+    const filled = ['password_current', 'password_new', 'password_repeat'].every(function (name) {
+      return form.elements[name].value !== '';
+    });
+    submit.disabled = passwordSaving || !filled;
+  }
+
+  updatePasswordSubmit();
+  form.addEventListener('input', updatePasswordSubmit);
+  // change ловит автозаполнение менеджером паролей без события input
+  form.addEventListener('change', updatePasswordSubmit);
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
     const current = form.elements.password_current.value;
@@ -37,7 +52,8 @@ export function bindPasswordCard(el) {
       showToast(t('settings.passwordMismatch'), 'error');
       return;
     }
-    setSaving(submit, true);
+    passwordSaving = true;
+    updatePasswordSubmit();
     try {
       await fetchJSON('/api/auth/password', { method: 'POST', body: JSON.stringify({ current: current, new: next }) });
       form.reset();
@@ -49,7 +65,9 @@ export function bindPasswordCard(el) {
       }
       showToast(ERROR_KEYS[err.message] ? t(ERROR_KEYS[err.message]) : err.message, 'error');
     } finally {
-      setSaving(submit, false);
+      // form.reset() не шлет событий, поэтому кнопку гасит этот вызов
+      passwordSaving = false;
+      updatePasswordSubmit();
     }
   });
 }

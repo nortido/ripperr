@@ -201,3 +201,46 @@ func TestHandleRedownloadKeepsIgnoreMark(t *testing.T) {
 		})
 	}
 }
+
+func TestRedownloadBusyTorrent(t *testing.T) {
+	orig := managerClientFactory
+	defer func() { managerClientFactory = orig }()
+	const topic = "https://example.com/topic/7"
+	fc := &commentRecordingClient{entries: []*model.Entry{{URL: topic, Hash: "AbC123", Name: "x"}}}
+	managerClientFactory = func(string, model.ManagerConfig) (managerClient, error) { return fc, nil }
+	state := runner.NewState()
+	srv := New(&fakeStore{}, func() {}, testEffective, ":0", state, nil)
+	urlHash := storagePkg.URLHash(topic)
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/history/"+urlHash+"/redownload", nil)
+		req.SetPathValue("hash", urlHash)
+		w := httptest.NewRecorder()
+		srv.handleRedownload(w, req)
+		return w
+	}
+
+	unlock, ok := state.TryLockTorrent("abc123")
+	if !ok {
+		t.Fatal("lock must be free")
+	}
+	w := post()
+	unlock()
+	if w.Code != http.StatusConflict {
+		t.Fatalf("busy: status = %d, want 409, body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"code":"torrent_busy"`) {
+		t.Errorf("busy body = %s, want code torrent_busy", w.Body.String())
+	}
+	if fc.calls != 0 {
+		t.Fatalf("ForceRedownload calls = %d while busy, want 0", fc.calls)
+	}
+
+	if w = post(); w.Code != http.StatusOK || fc.calls != 1 {
+		t.Fatalf("free: status = %d calls = %d, want 200 and 1, body: %s", w.Code, fc.calls, w.Body.String())
+	}
+	unlock, ok = state.TryLockTorrent("abc123")
+	if !ok {
+		t.Fatal("lock still held after the redownload returned")
+	}
+	unlock()
+}

@@ -336,6 +336,71 @@ func TestPurgeDuplicateNames(t *testing.T) {
 	}
 }
 
+func TestPurgeDuplicateNamesCyrillic(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	for _, s := range []struct{ hash, name string }{{"w", "Сериал"}, {"l", "Сериал"}, {"variant", "сериал"}} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Name: s.name}); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.AddReleaseTime(ctx, s.hash, at, 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// check_log держит имя уникальным, поэтому проигравшую строку вставляем мимо AddCheckLog
+	if _, err := c.db.ExecContext(ctx, `INSERT INTO check_log (url_hash, item_name, status) VALUES ('l', 'Сериал', 'updated')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.PurgeDuplicateNames(ctx, map[string]string{"Сериал": "w"}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := c.ListItems(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.URLHash] = true
+	}
+	if got["l"] || !got["w"] || !got["variant"] {
+		t.Fatalf("history rows = %v, want w and variant only", got)
+	}
+	if rt := releaseUnix(t, c, "l"); len(rt) != 0 {
+		t.Fatalf("loser release_times = %v, want none", rt)
+	}
+	var n int
+	if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_log WHERE url_hash = 'l'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("loser check_log rows = %d, want 0", n)
+	}
+}
+
+func TestPurgeDuplicateNamesKeepsAsciiLookalike(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	// знак Кельвина Go сворачивает в "k", а SQL LOWER нет: чужой релиз "Kino" трогать нельзя
+	for _, s := range []struct{ hash, name string }{{"w", "Kino"}, {"other", "Kino"}} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Name: s.name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.PurgeDuplicateNames(ctx, map[string]string{"Kino": "w"}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := c.ListItems(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("history rows = %+v, want both kept", items)
+	}
+}
+
 func TestSetForceCheck(t *testing.T) {
 	c := newTestClient(t)
 	ctx := t.Context()

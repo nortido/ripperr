@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"ripperr/internal/helper"
@@ -43,6 +44,10 @@ type IClient interface {
 	GetResponse(ctx context.Context, link string, download bool) (res *http.Response, err error)
 }
 
+type Option func(*client)
+
+func WithFlareSession(id string) Option { return func(c *client) { c.flareSession = id } }
+
 type client struct {
 	ITracker
 	hc         *http.Client
@@ -50,7 +55,10 @@ type client struct {
 	px         proxy.IClient
 	cb         *helper.CircuitBreaker
 	header     *http.Header
+	cm         sync.RWMutex
 	cookies    []*http.Cookie
+	// своя сессия вместо имени трекера: проверка в настройках не трогает боевую
+	flareSession string
 }
 
 type cookieEnhancer interface {
@@ -81,7 +89,12 @@ func (c *client) flareSessionID() (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return p.FlareSession(), true
+	// обертка зеркала реализует метод всегда, пустое имя значит "сессии нет"
+	id := p.FlareSession()
+	if id != "" && c.flareSession != "" {
+		id = c.flareSession
+	}
+	return id, id != ""
 }
 
 func (c *client) finalizeCookies(cookies []*http.Cookie) []*http.Cookie {
@@ -103,19 +116,19 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 		savedCookies []*http.Cookie
 	)
 	if payload.Exists {
-		c.cookies = payload.Cookies
+		c.setCookies(helper.CloneCookies(payload.Cookies))
 		creds = payload.Credentials
 		savedCookies = helper.CloneCookies(payload.Cookies)
 	}
 	if forceLogin {
-		c.resetFlareSession()
-		c.cookies = nil
+		c.resetFlareSession(ctx)
+		c.setCookies(nil)
 	}
-	if !forceLogin && len(c.cookies) > 0 {
-		if validator, ok := c.ITracker.(loginAuthValidator); ok && validator.LoginAuthIncomplete(c.cookies) {
-			c.cookies = nil
-		} else if checker, ok := c.ITracker.(cookieCompletenessChecker); ok && checker.CookiesIncomplete(c.cookies) {
-			c.cookies = nil
+	if !forceLogin && len(c.cookieSnapshot()) > 0 {
+		if validator, ok := c.ITracker.(loginAuthValidator); ok && validator.LoginAuthIncomplete(c.cookieSnapshot()) {
+			c.setCookies(nil)
+		} else if checker, ok := c.ITracker.(cookieCompletenessChecker); ok && checker.CookiesIncomplete(c.cookieSnapshot()) {
+			c.setCookies(nil)
 		}
 	}
 	c.header = c.Headers()
@@ -127,9 +140,9 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 	if req, err = c.buildLoginRequest(ctx, creds); err != nil {
 		return
 	}
-	if len(c.cookies) == 0 {
+	if len(c.cookieSnapshot()) == 0 {
 		if !forceLogin {
-			c.resetFlareSession()
+			c.resetFlareSession(ctx)
 		}
 		if err = c.preflightFlareLogin(ctx); err != nil {
 			return
@@ -137,29 +150,29 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 		if res, err = c.loginFromPage(ctx, req); err != nil {
 			if !forceLogin && len(savedCookies) > 0 {
 				logger.Warn(fmt.Sprintf("%s login failed, using cookies from db: %s", c.GetName(), err))
-				c.cookies = savedCookies
-				c.cookies = c.finalizeCookies(c.cookies)
-				c.hc.Jar.SetCookies(req.URL, c.cookies)
+				c.setCookies(savedCookies)
+				c.setCookies(c.finalizeCookies(c.cookieSnapshot()))
+				c.hc.Jar.SetCookies(req.URL, c.cookieSnapshot())
 				return c.validateLoginAuth()
 			}
 			return
 		}
-		c.cookies = helper.MergeCookies(c.cookies, res.Cookies())
+		c.setCookies(helper.MergeCookies(c.cookieSnapshot(), res.Cookies()))
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()
-		c.cookies = c.syncFlarePageCookies(ctx, c.cookies)
+		c.setCookies(c.syncFlarePageCookies(ctx, c.cookieSnapshot()))
 	}
-	c.cookies = c.finalizeCookies(c.cookies)
+	c.setCookies(c.finalizeCookies(c.cookieSnapshot()))
 	if err = c.validateLoginAuth(); err != nil {
 		return
 	}
-	c.hc.Jar.SetCookies(req.URL, c.cookies)
+	c.hc.Jar.SetCookies(req.URL, c.cookieSnapshot())
 	return
 }
 
 func (c *client) validateLoginAuth() error {
 	v, ok := c.ITracker.(loginAuthValidator)
-	if !ok || !v.LoginAuthIncomplete(c.cookies) {
+	if !ok || !v.LoginAuthIncomplete(c.cookieSnapshot()) {
 		return nil
 	}
 	msg := "login failed: no auth cookies (uid/pass)"
@@ -169,8 +182,20 @@ func (c *client) validateLoginAuth() error {
 	return fmt.Errorf("%s: %s", c.GetName(), msg)
 }
 
+func (c *client) cookieSnapshot() []*http.Cookie {
+	c.cm.RLock()
+	defer c.cm.RUnlock()
+	return helper.CloneCookies(c.cookies)
+}
+
+func (c *client) setCookies(v []*http.Cookie) {
+	c.cm.Lock()
+	c.cookies = v
+	c.cm.Unlock()
+}
+
 func (c *client) Cookies() (res []*http.Cookie) {
-	res = c.cookies
+	res = c.cookieSnapshot()
 	return
 
 }
@@ -199,7 +224,7 @@ func (c *client) GetResponse(ctx context.Context, link string, download bool) (r
 	} else {
 		req.Header = c.header.Clone()
 	}
-	if res, err = c.tryHttp(ctx, req, c.flareOptions(c.cookies, false), download); err != nil {
+	if res, err = c.tryHttp(ctx, req, c.flareOptions(c.cookieSnapshot(), false), download); err != nil {
 		return
 	}
 	return
@@ -213,7 +238,17 @@ func (c *client) pageRequestURL(link string) string {
 	if active == "" {
 		return link
 	}
-	return tracker.ReplaceURLHost(link, active)
+	u, err := url.Parse(link)
+	if err != nil {
+		return link
+	}
+	// схема из старой ссылки торрента (http) не должна понижать запрос к трекеру
+	u.Scheme = "https"
+	if h, err := url.Parse(c.GetHost()); err == nil && h.Scheme != "" {
+		u.Scheme = h.Scheme
+	}
+	u.Host = active
+	return u.String()
 }
 
 func (c *client) setDefaultHeaders() {
@@ -247,7 +282,7 @@ func (c *client) syncFlarePageCookies(ctx context.Context, base []*http.Cookie) 
 		return base
 	}
 	if _, ok := c.flareSessionID(); !ok {
-		if _, ok := c.ITracker.(postLoginFetcher); !ok {
+		if f, ok := c.ITracker.(postLoginFetcher); !ok || f.PostLoginURL() == "" {
 			return base
 		}
 	}
@@ -260,7 +295,7 @@ func (c *client) syncFlarePageCookies(ctx context.Context, base []*http.Cookie) 
 }
 
 func (c *client) preflightFlareLogin(ctx context.Context) (err error) {
-	if c.GetProxyType() != proxyModel.TypeFlare || len(c.cookies) > 0 {
+	if c.GetProxyType() != proxyModel.TypeFlare || len(c.cookieSnapshot()) > 0 {
 		return nil
 	}
 	if _, ok := c.flareSessionID(); ok {
@@ -270,17 +305,17 @@ func (c *client) preflightFlareLogin(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("%s login preflight: %w", c.GetName(), err)
 	}
-	c.cookies = c.finalizeCookies(helper.MergeCookies(c.cookies, extra))
+	c.setCookies(c.finalizeCookies(helper.MergeCookies(c.cookieSnapshot(), extra)))
 	return nil
 }
 
 func (c *client) ensureFlareCookiesForDownload(ctx context.Context, link string) (err error) {
-	c.cookies = c.finalizeCookies(c.syncFlarePageCookies(ctx, c.cookies))
+	c.setCookies(c.finalizeCookies(c.syncFlarePageCookies(ctx, c.cookieSnapshot())))
 	var u *url.URL
 	if u, err = url.Parse(link); err != nil {
 		return
 	}
-	c.hc.Jar.SetCookies(u, c.cookies)
+	c.hc.Jar.SetCookies(u, c.cookieSnapshot())
 	return
 }
 
@@ -300,8 +335,8 @@ func (c *client) applyDownloadHeaders(req *http.Request) {
 			req.Header.Set(key, v)
 		}
 	}
-	if len(c.cookies) > 0 {
-		req.Header.Set("Cookie", helper.CookiesString(c.cookies))
+	if len(c.cookieSnapshot()) > 0 {
+		req.Header.Set("Cookie", helper.CookiesString(c.cookieSnapshot()))
 	}
 	req.Header.Set("Accept", "application/x-bittorrent,application/octet-stream,*/*;q=0.9")
 	req.Header.Set("Sec-Fetch-Dest", "empty")
@@ -327,12 +362,12 @@ func (c *client) flareOptions(cookies []*http.Cookie, onlyCookies bool) *proxyMo
 	return opts
 }
 
-func (c *client) resetFlareSession() {
+func (c *client) resetFlareSession(ctx context.Context) {
 	sessionID, ok := c.flareSessionID()
 	if !ok {
 		return
 	}
-	if err := c.px.DestroyFlareSession(sessionID); err != nil {
+	if err := c.px.DestroyFlareSession(ctx, sessionID); err != nil {
 		logger.Warn(fmt.Sprintf("%s: flare session reset: %s", c.GetName(), err))
 	}
 }
@@ -346,7 +381,7 @@ func (c *client) fetchPageCookies(ctx context.Context, pageURL string) (cookies 
 		return
 	}
 	req.Header = c.header.Clone()
-	if res, err = c.doHttp(ctx, req, c.flareOptions(c.cookies, true), false); err != nil {
+	if res, err = c.doHttp(ctx, req, c.flareOptions(c.cookieSnapshot(), true), false); err != nil {
 		return
 	}
 	defer func() { _ = res.Body.Close() }()
@@ -358,7 +393,7 @@ func (c *client) fetchPageCookies(ctx context.Context, pageURL string) (cookies 
 
 func (c *client) loginFromPage(ctx context.Context, req *http.Request) (res *http.Response, err error) {
 	onlyCookies := c.useFlareSessionLogin()
-	res, err = c.doHttp(ctx, req, c.flareOptions(c.cookies, onlyCookies), false)
+	res, err = c.doHttp(ctx, req, c.flareOptions(c.cookieSnapshot(), onlyCookies), false)
 
 	if err != nil {
 		err = fmt.Errorf("%s login error: %w", c.GetName(), err)
@@ -474,7 +509,7 @@ func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *prox
 		req.Body = body
 	}
 	logger.Warn(fmt.Sprintf("%s: flare challenge solve failed, resetting session and retrying request once: %s", c.GetName(), err))
-	c.resetFlareSession()
+	c.resetFlareSession(ctx)
 	res, err = c.px.Send(req, opts, proxyType)
 	if err != nil {
 		return
@@ -510,6 +545,12 @@ func NotFoundAnswer(ctx context.Context) bool {
 }
 
 func (c *client) checkResponse(req *http.Request, res *http.Response, download bool) (err error) {
+	// тело закрываем на любой ошибке: вызывающий при err ответ не получает
+	defer func() {
+		if err != nil && res.Body != nil {
+			_ = res.Body.Close()
+		}
+	}()
 	if !download && res.Request != nil && res.Request.URL.String() != req.URL.String() {
 		err = fmt.Errorf("unexpected response url: %s", res.Request.URL.String())
 		return
@@ -520,8 +561,6 @@ func (c *client) checkResponse(req *http.Request, res *http.Response, download b
 	}
 	if res.StatusCode >= http.StatusBadRequest {
 		b := new(bytes.Buffer)
-		defer func() { _ = res.Body.Close() }()
-
 		if err = ReadLimited(b, res.Body, maxErrorResponse); err != nil {
 			return
 		}
@@ -546,16 +585,22 @@ func (c *client) absorbFlareCookies(res *http.Response) {
 		return
 	}
 	if fresh := res.Cookies(); len(fresh) > 0 {
+		c.cm.Lock()
 		c.cookies = c.finalizeCookies(helper.MergeCookies(c.cookies, fresh))
+		c.cm.Unlock()
 	}
 }
 
-func New(hc *http.Client, downloadHC helper.HTTPDoer, t ITracker, px proxy.IClient, cb *helper.CircuitBreaker) IClient {
-	return &client{
+func New(hc *http.Client, downloadHC helper.HTTPDoer, t ITracker, px proxy.IClient, cb *helper.CircuitBreaker, opts ...Option) IClient {
+	c := &client{
 		hc:         hc,
 		downloadHC: downloadHC,
 		ITracker:   t,
 		px:         px,
 		cb:         cb,
 	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
 }

@@ -27,7 +27,7 @@ func TestAppPathPerKind(t *testing.T) {
 		{"tracker down", TrackerDownEvent("rutor", "x"), "#trackers"},
 		{"tracker up", TrackerUpEvent("rutor"), "#trackers"},
 		{"mirror switched", MirrorSwitchedEvent("rutor", "a", "b"), "#trackers"},
-		{"mirror digest", MirrorDigestEvent([]string{"x"}), "#trackers"},
+		{"mirror digest", MirrorDigestEvent([]MirrorDigestItem{{Tracker: "x", Kind: DigestConfirm, Host: "h"}}), "#trackers"},
 		{"mirror paused", MirrorPausedEvent("rutor", "h"), "#trackers"},
 	}
 	for _, tc := range cases {
@@ -103,7 +103,7 @@ func TestTelegramAppLinkLine(t *testing.T) {
 	t.Run("html", func(t *testing.T) {
 		ev := Event{Kind: KindUpdated, Text: "Обновлено:", Subject: "Релиз <1>", URL: "https://t/1", AppLink: link}
 		text, mode := telegramText(ev, maxMessage)
-		want := "Обновлено:\n" + `<a href="https://t/1">Релиз &lt;1&gt;</a>` + "\n" + `<a href="` + link + `">Открыть в Ripperr</a>`
+		want := "Обновлено:\n" + `<a href="https://t/1">Релиз &lt;1&gt;</a>` + "\n" + `<a href="` + link + `">Open in Ripperr</a>`
 		if mode != "HTML" || text != want {
 			t.Fatalf("mode %q text %q, want %q", mode, text, want)
 		}
@@ -118,7 +118,7 @@ func TestTelegramAppLinkLine(t *testing.T) {
 	t.Run("plain", func(t *testing.T) {
 		ev := Event{Kind: KindTrackerDown, Text: "Трекер лежит", AppLink: testAppURL + "/#trackers"}
 		text, mode := telegramText(ev, maxMessage)
-		if mode != "" || text != "Трекер лежит\nОткрыть в Ripperr: "+testAppURL+"/#trackers" {
+		if mode != "" || text != "Трекер лежит\nOpen in Ripperr: "+testAppURL+"/#trackers" {
 			t.Fatalf("mode %q text %q", mode, text)
 		}
 	})
@@ -132,7 +132,7 @@ func TestTelegramAppLinkLine(t *testing.T) {
 	t.Run("html limit keeps link", func(t *testing.T) {
 		ev := Event{Kind: KindUpdated, Text: "t", Subject: strings.Repeat("ж", 2000), URL: "https://t/1", AppLink: link}
 		text, _ := telegramText(ev, maxCaption)
-		if n := len([]rune(stripTags(text))); n > maxCaption || !strings.Contains(text, `">Открыть в Ripperr</a>`) {
+		if n := len([]rune(stripTags(text))); n > maxCaption || !strings.Contains(text, `">Open in Ripperr</a>`) {
 			t.Fatalf("visible runes %d", n)
 		}
 	})
@@ -159,7 +159,7 @@ func TestTelegramSendCarriesAppLink(t *testing.T) {
 	}
 	text, _ := body["text"].(string)
 	want := testAppURL + "/#dashboard?filter=ignored&amp;name=a+b"
-	if !strings.Contains(text, want) || !strings.Contains(text, "Открыть в Ripperr") {
+	if !strings.Contains(text, want) || !strings.Contains(text, "Open in Ripperr") {
 		t.Fatalf("text = %q, want link %q", text, want)
 	}
 }
@@ -180,7 +180,7 @@ func TestEmailBodyAppLink(t *testing.T) {
 		return string(b)
 	}
 	link := testAppURL + "/#dashboard?name=x"
-	if got := body(Event{Kind: KindUpdated, Text: "T", Subject: "S", URL: "https://t/1", AppLink: link}); !strings.HasSuffix(got, "\nОткрыть в Ripperr: "+link) {
+	if got := body(Event{Kind: KindUpdated, Text: "T", Subject: "S", URL: "https://t/1", AppLink: link}); !strings.HasSuffix(got, "\nOpen in Ripperr: "+link) {
 		t.Errorf("body = %q", got)
 	}
 	if got := body(Event{Kind: KindUpdated, Text: "T", Subject: "S", URL: "https://t/1"}); strings.Contains(got, "Ripperr") {
@@ -200,7 +200,7 @@ func TestPushoverAppLink(t *testing.T) {
 	if err := n.Send(context.Background(), TrackerDownEvent("rutor", "boom")); err != nil {
 		t.Fatal(err)
 	}
-	if form.Get("url") != testAppURL+"/#trackers" || form.Get("url_title") != "Открыть в Ripperr" {
+	if form.Get("url") != testAppURL+"/#trackers" || form.Get("url_title") != "Open in Ripperr" {
 		t.Errorf("url %q title %q", form.Get("url"), form.Get("url_title"))
 	}
 

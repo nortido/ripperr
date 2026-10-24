@@ -626,14 +626,14 @@ func redirectEnv(t *testing.T, confirmOn bool) (*env, *[]notify.Event) {
 }
 
 func TestRunOnceNotifiesNewOnly(t *testing.T) {
-	const mainLine = "kinozal: основной адрес kinozal.me вместо kinozal.tv"
+	const mainLine = "kinozal: main address kinozal.me instead of kinozal.tv"
 	check := func(t *testing.T, sent *[]notify.Event, want ...string) {
 		t.Helper()
 		if len(*sent) != len(want) {
 			t.Fatalf("digests = %d (%+v), want %d", len(*sent), *sent, len(want))
 		}
 		for i, ev := range *sent {
-			if ev.Kind != notify.KindMirrorSuggested || ev.Text != "Зеркала трекеров: "+want[i] {
+			if ev.Kind != notify.KindMirrorSuggested || ev.Text != "Tracker mirrors: "+want[i] {
 				t.Errorf("digest %d = %+v, want text %q", i, ev, want[i])
 			}
 		}
@@ -680,7 +680,7 @@ func TestRunOnceNotifiesNewOnly(t *testing.T) {
 			linksYAML("kinozal.tv", "kinozal.me", "kinozal.guru"), "kinozal.tv", "kinozal.me", "kinozal.guru")
 		runOnce(context.Background(), e.deps)
 		checkList(t, "unconfirmed", e.store.list(t, "kinozal", "unconfirmed"), "kinozal.guru")
-		check(t, sent, "kinozal: новое зеркало kinozal.guru ждет подтверждения")
+		check(t, sent, "kinozal: new mirror kinozal.guru awaits confirmation")
 	})
 	t.Run("mirrors off main suggestion is stored but silent", func(t *testing.T) {
 		item := kinozalItem("kinozal.me")
@@ -727,9 +727,9 @@ func TestRunOnceNotifiesNewOnly(t *testing.T) {
 			"mirror_sync": `{"fails":{"kinozal":{"kinozal.cc":2}}}`,
 		}, kinozalItem("kinozal.me", "kinozal.cc"), linksYAML("kinozal.tv", "kinozal.me"), "kinozal.tv", "kinozal.me")
 		runOnce(context.Background(), e.deps)
-		check(t, sent, "kinozal: убрать kinozal.cc (не отвечает)")
+		check(t, sent, "kinozal: remove kinozal.cc (not responding)")
 		runOnce(context.Background(), e.deps)
-		check(t, sent, "kinozal: убрать kinozal.cc (не отвечает)")
+		check(t, sent, "kinozal: remove kinozal.cc (not responding)")
 	})
 }
 

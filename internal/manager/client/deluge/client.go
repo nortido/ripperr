@@ -243,7 +243,7 @@ func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) er
 		return nil
 	}
 	logger.Info(fmt.Sprint("deleting torrent: ", opts.Name))
-	ok, err := c.remove(ctx, opts.Hash, c.DeletesFiles(ctx, opts))
+	ok, err := c.remove(ctx, opts.Hash, opts.DeleteFiles && c.DeletesFiles(ctx, opts))
 	if err != nil {
 		// на неизвестный id Deluge бросает исключение; как qbit и transmission
 		// считаем это удалением, но только когда демон сам ответил, что торрента нет
@@ -259,7 +259,9 @@ func (c *Client) Delete(ctx context.Context, opts model.ManagerDeleteOptions) er
 }
 
 func (c *Client) DeletesFiles(_ context.Context, opts model.ManagerDeleteOptions) bool {
-	return c.config.DeleteEnabled && c.config.DeleteFilesEnabled && slices.Contains(c.config.DeleteCategories, opts.Category)
+	// "tv," из env дает пустую категорию, она совпала бы с раздачами без категории
+	return c.config.DeleteEnabled && c.config.DeleteFilesEnabled && opts.Category != "" &&
+		slices.Contains(c.config.DeleteCategories, opts.Category)
 }
 
 func (c *Client) Discard(ctx context.Context, hash string) error {
@@ -401,6 +403,10 @@ func (c *Client) applyLabel(ctx context.Context, hash string, opts model.Manager
 	}
 	_, err = c.rpc.call(ctx, "label.set_torrent", hash, label)
 	return err
+}
+
+func (c *Client) ApplySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
+	return c.applySelection(ctx, hash, opts)
 }
 
 func (c *Client) applySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {

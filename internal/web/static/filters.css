@@ -959,6 +959,9 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   align-items: center;
   justify-content: flex-end;
   gap: var(--row-actions-gap);
+  border: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-muted) 20%, transparent);
 }
 
 .table-dash-releases {
@@ -1204,12 +1207,6 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 }
 
-@media (min-width: 901px) and (max-width: 1200px) {
-  .stat-card-next-run .stat-value {
-    padding-right: 29px; /* иконка: right 12 + ширина 30 = 42 от края, минус padding 20, плюс 7 зазора */
-  }
-}
-
 /* между 901 и 1080 размеры плавно растут до обычных, ступенька на 1080 давала
    скачок шрифта во всех четырех карточках. --stat-t идет от 0 до 1px, остальное
    ниже линейно от него */
@@ -1251,16 +1248,12 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 
   .stat-card-next-run .stat-icon {
-    top: calc(12px + 2 * var(--stat-t));
-    right: calc(10px + 2 * var(--stat-t));
-    width: calc(26px + 4 * var(--stat-t));
-    height: calc(26px + 4 * var(--stat-t));
+    top: calc(14px + 4 * var(--stat-t));
+    right: calc(12px + 8 * var(--stat-t));
   }
 
-  /* на 901px иконка 10 + 26 = 36 от края, минус padding 12, плюс 7 зазора = 31.
-     К 1080 выходит 29, как в правиле выше */
   .stat-card-next-run .stat-value {
-    --nr-pad: calc(31px - 2 * var(--stat-t));
+    --nr-pad: calc(38px + 10 * var(--stat-t));
     padding-right: var(--nr-pad);
   }
 }

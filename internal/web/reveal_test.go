@@ -27,7 +27,9 @@ var revealPlainSeeds = map[string]string{
 
 func postReveal(srv *Server, url, body string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	srv.srv.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, url, strings.NewReader(body)))
+	req := httptest.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	req.Header.Set("X-Ripperr", "1")
+	srv.srv.Handler.ServeHTTP(w, req)
 	return w
 }
 
@@ -145,6 +147,7 @@ func TestRevealRequiresAuth(t *testing.T) {
 	cookie := loginCookie(t, srv)
 	for _, rt := range routes {
 		req := httptest.NewRequest(http.MethodPost, rt.url, strings.NewReader(rt.body))
+		req.Header.Set("X-Ripperr", "1")
 		req.RemoteAddr = "192.168.1.10:1234"
 		req.Host = "192.168.1.5:6410"
 		w := httptest.NewRecorder()
@@ -154,6 +157,7 @@ func TestRevealRequiresAuth(t *testing.T) {
 		}
 
 		req = httptest.NewRequest(http.MethodPost, rt.url, strings.NewReader(rt.body))
+		req.Header.Set("X-Ripperr", "1")
 		req.RemoteAddr = "192.168.1.10:1234"
 		req.Host = "192.168.1.5:6410"
 		req.AddCookie(cookie)
@@ -164,6 +168,7 @@ func TestRevealRequiresAuth(t *testing.T) {
 		}
 
 		req = httptest.NewRequest(http.MethodPost, rt.url, strings.NewReader(rt.body))
+		req.Header.Set("X-Ripperr", "1")
 		req.RemoteAddr = "192.168.1.10:1234"
 		req.Host = "192.168.1.5:6410"
 		req.AddCookie(cookie)

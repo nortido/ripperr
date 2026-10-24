@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ripperr/internal/helper/fileselect"
 	"ripperr/internal/helper/torrentmeta"
 	"ripperr/internal/manager/blackhole"
 	"ripperr/internal/model"
@@ -33,10 +34,17 @@ type client interface {
 	Files(ctx context.Context, hash string) ([]model.TorrentFile, error)
 	SetComment(ctx context.Context, hash, comment string) error
 	ExportTorrent(ctx context.Context, hash string) ([]byte, error)
+	ApplySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error
 	DeleteEnabled() bool
 }
 
 const probeTimeout = 10 * time.Second // одна проба у локального клиента, дольше держать остановку незачем
+
+// в сумме меньше freshPairGrace подметальщика: он не должен застать пару, пока замена еще идет
+var (
+	replaceAddBudget   = blackhole.AddTimeout
+	replaceStartBudget = blackhole.CheckWaitBudget
+)
 
 type manager struct {
 	client client
@@ -50,7 +58,7 @@ func (m *manager) Submit(ctx context.Context, buf *bytes.Buffer, opts model.Mana
 	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	return m.replaceTorrent(ctx, buf, "", opts, func(opts model.ManagerAddFileOptions) error {
+	return m.replaceTorrent(ctx, buf, "", opts, func(ctx context.Context, opts model.ManagerAddFileOptions) error {
 		return m.client.AddFromBuffer(ctx, buf, opts)
 	})
 }
@@ -59,12 +67,12 @@ func (m *manager) SubmitMagnet(ctx context.Context, magnet string, opts model.Ma
 	if magnet == "" {
 		return
 	}
-	return m.replaceTorrent(ctx, nil, magnet, opts, func(opts model.ManagerAddFileOptions) error {
+	return m.replaceTorrent(ctx, nil, magnet, opts, func(ctx context.Context, opts model.ManagerAddFileOptions) error {
 		return m.client.AddFromMagnet(ctx, magnet, opts)
 	})
 }
 
-func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet string, opts model.ManagerAddFileOptions, add func(model.ManagerAddFileOptions) error) (err error) {
+func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet string, opts model.ManagerAddFileOptions, add func(context.Context, model.ManagerAddFileOptions) error) (err error) {
 	// имя и комментарий берем у текущего торрента до удаления, чтобы add получил готовые opts, а не сырые от вызывающего
 	if opts.Hash != "" {
 		if name, comment, detailErr := m.client.GetTorrentDetails(ctx, opts.Hash); detailErr == nil {
@@ -103,18 +111,27 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 			opts.FileSelection = files
 		}
 	}
+	if !known || !same {
+		// одно решение и для выбора пути, и для Delete: повторная проверка в клиенте
+		// (transmission спрашивает downloadDir) могла бы ответить иначе
+		delOpts.DeleteFiles = m.client.DeletesFiles(ctx, delOpts)
+	}
 	if known && !same {
 		// старый торрент уйдет вместе с файлами: новый добавляем остановленным
 		// и запускаем только после удаления старого, иначе общие файлы снесет
-		if hashKnown && m.client.DeletesFiles(ctx, delOpts) {
-			return m.replaceDeletingFirst(ctx, data, magnet, newHash, opts, del, add)
+		if hashKnown && delOpts.DeleteFiles {
+			return m.replaceDeletingFirst(ctx, data, magnet, newHash, opts, delOpts, add)
 		}
 	}
 	if known && same {
 		// байты те же, что уже раздаются. Если торрент правда в клиенте, delete+add даст только
-		// полную перепроверку файлов на диске, выходим. Если проверка не ответила точно,
-		// считаем что торрента нет и идем прежним защищенным путем
-		if exists, existsErr := m.client.Exists(ctx, opts.Hash); existsErr == nil && exists {
+		// полную перепроверку файлов на диске, выходим. Ошибка проверки ничего не трогает,
+		// повторит следующий прогон. Нет торрента: перезаливаем без удаления файлов, они общие
+		exists, existsErr := m.client.Exists(ctx, opts.Hash)
+		if existsErr != nil {
+			return fmt.Errorf("check presence of %s: %w", opts.Name, existsErr)
+		}
+		if exists {
 			// осознанный размен: свежие категория, путь, тег, лимиты и комментарий из opts
 			// до клиента не дойдут, обновить их без перезаливки нечем. Старые значения
 			// проживут до следующей смены инфохеша
@@ -126,10 +143,10 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 		if err = del(); err != nil {
 			return
 		}
-		if err = add(opts); err != nil {
+		if err = add(ctx, opts); err != nil {
 			return
 		}
-		// удаление с файлами из del() в qbit еще может снести только что добавленный торрент.
+		// асинхронное удаление из del() в qbit еще может снести только что добавленный торрент.
 		// Страховку снимаем, только если он пережил выжидание, иначе ее разберет подметальщик
 		if !m.client.ConfirmSettled(ctx, opts.Hash) {
 			return
@@ -137,10 +154,28 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 		m.client.RemoveBlackholePair(opts.Hash)
 		return
 	}
-	if err = add(opts); err != nil {
+	selected := len(opts.FileSelection) > 0 && hashKnown
+	if selected {
+		// откат ниже убирает новый по хешу: без этой пробы он снес бы торрент,
+		// который был в клиенте до этого вызова
+		present, existsErr := m.client.Exists(ctx, newHash)
+		if existsErr != nil {
+			return fmt.Errorf("check presence of new torrent for %s: %w", opts.Name, existsErr)
+		}
+		if present {
+			return m.convergeSelected(ctx, delOpts, newHash, opts, fmt.Errorf("%w: %s", model.ErrAlreadyAdded, opts.Name))
+		}
+	}
+	if err = add(ctx, opts); err != nil {
+		if errors.Is(err, model.ErrAlreadyAdded) {
+			if selected {
+				return m.convergeSelected(ctx, delOpts, newHash, opts, err)
+			}
+			return m.dropReplaced(ctx, delOpts, newHash, hashKnown, err)
+		}
 		// с выбором клиент добавляет остановленным: созданный при сбое новый
 		// иначе остался бы стоять, а следующий прогон получил бы ErrAlreadyAdded
-		if len(opts.FileSelection) > 0 && hashKnown && !errors.Is(err, model.ErrAlreadyAdded) {
+		if selected {
 			m.rollbackNew(ctx, newHash)
 		}
 		return
@@ -148,7 +183,63 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 	return del()
 }
 
-func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, magnet, newHash string, opts model.ManagerAddFileOptions, del func() error, add func(model.ManagerAddFileOptions) error) (err error) {
+func (m *manager) dropReplaced(ctx context.Context, delOpts model.ManagerDeleteOptions, newHash string, hashKnown bool, cause error) error {
+	// при неизвестном или том же хеше в клиенте может быть сам новый торрент
+	if !hashKnown || delOpts.Hash == "" || strings.EqualFold(newHash, delOpts.Hash) {
+		return cause
+	}
+	// новый уже в клиенте и может стоять на тех же путях, файлы старого не трогаем
+	delOpts.DeleteFiles = false
+	if err := m.client.Delete(ctx, delOpts); err != nil {
+		return fmt.Errorf("remove replaced torrent %s: %w", delOpts.Name, err)
+	}
+	return cause
+}
+
+func (m *manager) convergeSelected(ctx context.Context, delOpts model.ManagerDeleteOptions, newHash string, opts model.ManagerAddFileOptions, cause error) error {
+	if delOpts.Hash == "" || strings.EqualFold(newHash, delOpts.Hash) {
+		return cause
+	}
+	entries, err := m.client.List(ctx, model.FilterOptions{})
+	if err != nil && !errors.Is(err, model.ErrPartialList) {
+		return cause
+	}
+	i := slices.IndexFunc(entries, func(e *model.Entry) bool { return strings.EqualFold(e.Hash, newHash) })
+	// сбойный новый выбор не примет, старый не трогаем, он раздает дальше
+	if i < 0 || entries[i].Unhealthy {
+		return cause
+	}
+	if !entries[i].Stopped {
+		// запущенный новый с тем же выбором значит, что прошлый прогон применил выбор,
+		// но не удалил старый. Иной выбор: новый качает лишнее, старый оставляем
+		if !m.selectionApplied(ctx, newHash, opts.FileSelection) {
+			return cause
+		}
+		return m.dropReplaced(ctx, delOpts, newHash, true, cause)
+	}
+	if err = m.client.ApplySelection(ctx, newHash, opts); err != nil {
+		return fmt.Errorf("apply file selection to new torrent for %s: %w", opts.Name, err)
+	}
+	return m.dropReplaced(ctx, delOpts, newHash, true, cause)
+}
+
+func (m *manager) selectionApplied(ctx context.Context, newHash string, selection []model.TorrentFile) bool {
+	files, err := m.client.Files(ctx, newHash)
+	if err != nil || len(files) == 0 {
+		return false
+	}
+	paths := make([]string, len(files))
+	var unwanted []int
+	for i, f := range files {
+		paths[i] = f.Path
+		if !f.Wanted {
+			unwanted = append(unwanted, i)
+		}
+	}
+	return slices.Equal(unwanted, fileselect.Unwanted(selection, paths))
+}
+
+func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, magnet, newHash string, opts model.ManagerAddFileOptions, delOpts model.ManagerDeleteOptions, add func(context.Context, model.ManagerAddFileOptions) error) (err error) {
 	// новый торрент уже в клиенте: удаление старого с файлами снесло бы и его
 	// общие файлы, прежний путь add-first тут отдавал ErrAlreadyAdded без удаления
 	if present, existsErr := m.client.Exists(ctx, newHash); existsErr != nil {
@@ -166,6 +257,7 @@ func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, magnet,
 	if err = m.client.WriteBlackholePair(data, magnet, pairOpts); err != nil {
 		return
 	}
+	start := time.Now()
 	if err = ctx.Err(); err != nil {
 		m.client.RemoveBlackholePair(newHash)
 		return
@@ -174,7 +266,10 @@ func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, magnet,
 	// удаляем только когда новый уже точно в клиенте
 	addOpts := opts
 	addOpts.Stopped = true
-	if err = add(addOpts); err != nil {
+	addCtx, cancelAdd := context.WithDeadline(ctx, start.Add(replaceAddBudget))
+	err = add(addCtx, addOpts)
+	cancelAdd()
+	if err != nil {
 		if errors.Is(err, model.ErrAlreadyAdded) {
 			m.client.RemoveBlackholePair(newHash)
 			return
@@ -182,26 +277,34 @@ func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, magnet,
 		m.rollbackNew(ctx, newHash)
 		return
 	}
+	// клиент мог не заметить отмену и добавить позже срока: после freshPairGrace подметальщик
+	// откатит новый при живом старом, а мы бы в это время удаляли старый с файлами
+	if time.Since(start) >= replaceAddBudget {
+		m.rollbackNew(ctx, newHash)
+		return fmt.Errorf("add of new torrent for %s exceeded %s, old kept", opts.Name, replaceAddBudget)
+	}
 	if err = ctx.Err(); err != nil {
 		m.rollbackNew(ctx, newHash)
 		return
 	}
+	finishCtx, cancel := context.WithDeadline(ctx, start.Add(replaceAddBudget+replaceStartBudget))
+	defer cancel()
 	// дальше пара остается при любом сбое: старый мог уйти асинхронно, и
 	// решать, запустить новый или откатить его, будет подметальщик
-	if err = del(); err != nil {
+	if err = m.client.Delete(finishCtx, delOpts); err != nil {
 		return
 	}
-	absent, err := m.client.WaitAbsent(ctx, opts.Hash)
+	absent, err := m.client.WaitAbsent(finishCtx, opts.Hash)
 	if err != nil {
 		return
 	}
 	if !absent {
 		return fmt.Errorf("old torrent %s still present after delete", opts.Name)
 	}
-	if err = sleepCtx(ctx, blackhole.SettleDelay); err != nil {
+	if err = sleepCtx(finishCtx, blackhole.SettleDelay); err != nil {
 		return
 	}
-	if err = m.client.Resume(ctx, newHash); err != nil {
+	if err = m.client.Resume(finishCtx, newHash); err != nil {
 		return fmt.Errorf("start new torrent: %w", err)
 	}
 	if m.client.ConfirmSettled(ctx, newHash) {

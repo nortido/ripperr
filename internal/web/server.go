@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -44,12 +45,14 @@ type Server struct {
 	db          store
 	reload      func()
 	effective   func() config.App
+	strict      func() (config.App, error)
 	runnerState *runner.State
 	alerts      *breakeralerts.Registry
 	srv         *http.Server
 	authCache   authCache
 	authMu      sync.Mutex
 	loginFails  *loginThrottle
+	deviceFails *loginThrottle
 	hashSlots   chan struct{}
 	listen      string
 	lnMu        sync.Mutex
@@ -68,6 +71,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 		runnerState: runnerState,
 		alerts:      alerts,
 		loginFails:  newLoginThrottle(),
+		deviceFails: newLoginThrottle(),
 		hashSlots:   make(chan struct{}, pbkdf2Slots),
 		listen:      listen,
 		done:        make(chan struct{}),
@@ -117,13 +121,31 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("POST /api/integrations/secret", withMaxBody(s.handleRevealIntegrationSecret))
 	mux.HandleFunc("GET /api/web", s.handleGetWeb)
 	mux.HandleFunc("PUT /api/web", withMaxBody(s.handlePutWeb))
+	mux.HandleFunc("GET /api/push", s.handleGetPush)
+	mux.HandleFunc("POST /api/push/devices", withMaxBody(s.handlePostPushDevice))
+	mux.HandleFunc("DELETE /api/push/devices/{id}", s.handleDeletePushDevice)
+	// без ReadTimeout: net/http держит его и в обработчике и отменил бы r.Context()
+	// долгих запросов (проверка трекера, перекачка), поэтому срок ставим только на тело
 	s.srv = &http.Server{
 		Addr:              listen,
-		Handler:           withSecurityHeaders(s.withAuth(mux)),
+		Handler:           withBodyDeadline(withSecurityHeaders(s.withAuth(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	return s
+}
+
+func (s *Server) SetStrictEffective(f func() (config.App, error)) {
+	s.strict = f
+}
+
+const settingsUnreadableMsg = "stored settings are unreadable, try again later"
+
+func (s *Server) writableConfig() (config.App, error) {
+	if s.strict != nil {
+		return s.strict()
+	}
+	return s.effective(), nil
 }
 
 func withSecurityHeaders(next http.Handler) http.Handler {
@@ -210,6 +232,40 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 const maxRequestBody = 1 << 20
+
+var bodyReadTimeout = 30 * time.Second
+
+func withBodyDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body == nil || r.Body == http.NoBody {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rc := http.NewResponseController(w)
+		if err := rc.SetReadDeadline(time.Now().Add(bodyReadTimeout)); err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.Body = &deadlineBody{ReadCloser: r.Body, rc: rc}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type deadlineBody struct {
+	io.ReadCloser
+	rc  *http.ResponseController
+	eof bool
+}
+
+func (b *deadlineBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if errors.Is(err, io.EOF) && !b.eof {
+		b.eof = true
+		// после EOF сервер сам читает соединение в фоне, срок в нем отменил бы контекст обработчика
+		_ = b.rc.SetReadDeadline(time.Time{})
+	}
+	return n, err
+}
 
 func withMaxBody(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

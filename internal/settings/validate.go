@@ -14,7 +14,7 @@ import (
 	"ripperr/internal/notify"
 )
 
-var allowedRefreshPerDay = []int{1, 2, 3, 4, 6, 8, 12, 24}
+var allowedRefreshPerDay = config.AllowedRefreshPerDay
 
 type Schedule struct {
 	StartHour             int      `json:"start_hour"`
@@ -369,6 +369,7 @@ func IntegrationsPatchFromJSON(raw json.RawMessage) (integrationsOverlay, error)
 	dedupeEvents(o.Notifications.Webhook.Events)
 	dedupeEvents(o.Notifications.Email.Events)
 	dedupeEvents(o.Notifications.Pushover.Events)
+	dedupeEvents(o.Notifications.Browser.Events)
 	return o, nil
 }
 
@@ -399,6 +400,12 @@ func ValidateIntegrationsPatch(o integrationsOverlay) error {
 	}
 	if err := validateEvents("notifications.pushover.events", o.Notifications.Pushover.Events); err != nil {
 		return err
+	}
+	if err := validateEvents("notifications.browser.events", o.Notifications.Browser.Events); err != nil {
+		return err
+	}
+	if l := o.Notifications.Language; l != nil && *l != "" && *l != notify.LangEN && *l != notify.LangRU {
+		return fmt.Errorf("notifications.language must be en or ru")
 	}
 	return validateEmail(o)
 }

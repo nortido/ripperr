@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -423,6 +424,35 @@ func TestNextRun(t *testing.T) {
 	want := time.Date(2025, 1, 16, 7, 0, 0, 0, loc)
 	if got := h1.nextRun(now); !got.Equal(want) {
 		t.Errorf("nextRun(%v) with 1/day = %v, want %v", now, got, want)
+	}
+}
+
+func TestNextRunGrid(t *testing.T) {
+	loc := time.FixedZone("test", 0)
+	at := func(day, h, m int) time.Time { return time.Date(2025, 1, day, h, m, 0, 0, loc) }
+	cases := []struct {
+		name          string
+		perDay, start int
+		now, want     time.Time
+	}{
+		{"8/day before start hour", 8, 8, at(15, 2, 0), at(15, 5, 0)},
+		{"8/day at 05:00", 8, 8, at(15, 5, 0), at(15, 8, 0)},
+		{"8/day late evening", 8, 8, at(15, 23, 30), at(16, 2, 0)},
+		{"perDay 0 as 1/day", 0, 7, at(15, 10, 0), at(16, 7, 0)},
+		{"perDay 25 as 1/day", 25, 7, at(15, 10, 0), at(16, 7, 0)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := &handler{config: model.HandlerConfig{ListRefreshPerDay: c.perDay, StartHour: c.start, Location: loc}}
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("nextRun(%v) panicked: %v", c.now, r)
+				}
+			}()
+			if got := h.nextRun(c.now); !got.Equal(c.want) {
+				t.Errorf("nextRun(%v) = %v, want %v", c.now, got, c.want)
+			}
+		})
 	}
 }
 
@@ -2502,7 +2532,9 @@ func TestLogCheckErrorSendsCheckFailed(t *testing.T) {
 
 func TestLogCheckCountsMetric(t *testing.T) {
 	const ttid = 99001
-	registry.Register(registry.Def{ID: ttid, Key: "metrics_probe", New: func(tracker.Tracker) tracker.ITracker { return nil }})
+	if _, ok := registry.ByID(ttid); !ok {
+		registry.Register(registry.Def{ID: ttid, Key: "metrics_probe", New: func(tracker.Tracker) tracker.ITracker { return nil }})
+	}
 	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}
 	h := &handler{config: model.HandlerConfig{ErrorStreakThreshold: 100}, storage: &loggingStorage{}}
 
@@ -2613,5 +2645,308 @@ func TestWorkerReleaseTimeErrorWarns(t *testing.T) {
 	}
 	if len(store.saved) != 1 {
 		t.Fatalf("saved = %d, want 1", len(store.saved))
+	}
+}
+
+type fastTracker struct {
+	safeFakeTracker
+	calls atomic.Int32
+}
+
+func (f *fastTracker) GetHourLimit(int) int { return 3600000 }
+
+func (f *fastTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	f.calls.Add(1)
+	return nil, fmt.Errorf("test skip")
+}
+
+func newQueueHandler(url string) (*handler, *fastTracker, *State) {
+	state := NewState()
+	tr := &fastTracker{safeFakeTracker: safeFakeTracker{id: 1}}
+	h := &handler{
+		manager:        &fakeManager{all: []*model.Entry{{URL: url, Name: "x"}}},
+		storage:        &fakeStorage{},
+		trackerService: tr,
+		state:          state,
+		gen:            state.Reset(),
+	}
+	h.initTrackerChannels()
+	return h, tr, state
+}
+
+func runWorkerUntilIdle(t *testing.T, h *handler, state *State) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cherr := make(chan error, 8)
+	go h.trackerWorker(ctx, 1, cherr)
+	deadline := time.Now().Add(2 * time.Second)
+	for state.Running() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if state.Running() {
+		t.Fatal("queue did not drain")
+	}
+}
+
+func TestStaleTaskSkippedAfterForcedCheck(t *testing.T) {
+	const url = "https://example.com/t/1"
+	h, tr, state := newQueueHandler(url)
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	forced := map[string]struct{}{storagePkg.URLHash(url): {}}
+	if err := h.push(context.Background(), false, forced); err != nil {
+		t.Fatal(err)
+	}
+	runWorkerUntilIdle(t, h, state)
+	if got := tr.calls.Load(); got != 1 {
+		t.Fatalf("GetCachedClient calls = %d, want 1: the stale queued task must be skipped", got)
+	}
+}
+
+func TestForcedDoubleClickRunsOnce(t *testing.T) {
+	const url = "https://example.com/t/1"
+	h, tr, state := newQueueHandler(url)
+	forced := map[string]struct{}{storagePkg.URLHash(url): {}}
+	for range 2 {
+		if err := h.push(context.Background(), false, forced); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runWorkerUntilIdle(t, h, state)
+	if got := tr.calls.Load(); got != 1 {
+		t.Fatalf("GetCachedClient calls = %d, want 1", got)
+	}
+}
+
+type submitCountManager struct {
+	fakeManager
+	submits int
+}
+
+func (m *submitCountManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
+	m.submits++
+	return nil
+}
+
+func TestWorkerDefersUnhealthyTorrent(t *testing.T) {
+	page := bytes.NewBufferString(strings.Repeat("x", 60))
+	store := &loggingStorage{}
+	mgr := &submitCountManager{}
+	old := time.Now().Add(-48 * time.Hour)
+	h := &handler{
+		config:  model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage: store,
+		manager: mgr,
+		trackerService: &updatingPageTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
+		},
+		mx: helper.KeyedMutex{},
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc", Timestamp: &old, Unhealthy: true}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if mgr.submits != 0 {
+		t.Fatalf("Submit calls = %d, want 0 for a busy torrent", mgr.submits)
+	}
+	if len(store.saved) != 0 {
+		t.Fatalf("history saved %d times, want 0 so the next pass retries", len(store.saved))
+	}
+	if len(store.logs) != 1 {
+		t.Fatalf("logs = %d, want 1", len(store.logs))
+	}
+	l := store.logs[0]
+	if l.Status != "error" || !l.KeepStreak || !strings.Contains(l.Error, "update postponed") {
+		t.Fatalf("log = %+v, want error with KeepStreak and the busy text", l)
+	}
+}
+
+func TestSiblingTorrentsOfOneTopicBothRun(t *testing.T) {
+	const url = "https://example.com/t/1"
+	h, tr, state := newQueueHandler(url)
+	h.manager = &fakeManager{all: []*model.Entry{{URL: url, Name: "a", Hash: "ha"}, {URL: url, Name: "b", Hash: "hb"}}}
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	runWorkerUntilIdle(t, h, state)
+	if got := tr.calls.Load(); got != 2 {
+		t.Fatalf("GetCachedClient calls = %d, want 2: both sibling torrents of one topic must be checked", got)
+	}
+}
+
+func TestBusySiblingKeepsRetryWithoutFailCount(t *testing.T) {
+	const url = "https://example.com/t/1"
+	page := bytes.NewBufferString(strings.Repeat("x", 60))
+	urlHash := storagePkg.URLHash(url)
+	store := &loggingStorage{fakeStorage: fakeStorage{items: map[string]*runnerModel.HistoryItem{
+		url: {URLHash: urlHash, Exists: true},
+	}}}
+	h := &handler{
+		config:  model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1, ErrorStreakThreshold: 3},
+		storage: store,
+		manager: &submitCountManager{},
+		trackerService: &updatingPageTracker{
+			pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: page},
+		},
+		mx: helper.KeyedMutex{},
+	}
+	h.storeSiblings([]*model.Entry{{URL: url, Hash: "ha"}, {URL: url, Hash: "hb"}}, false)
+	old := time.Now().Add(-48 * time.Hour)
+	for pass := range 5 {
+		store.items[url].ForceCheck = false
+		e := &model.Entry{URL: url, Name: "a", Hash: "ha", URLHash: urlHash, Timestamp: &old, Unhealthy: true}
+		if err := h.worker(context.Background(), 1, e, nil); err != nil {
+			t.Fatal(err)
+		}
+		if !store.items[url].ForceCheck || !h.retryPending(urlHash) {
+			t.Fatalf("pass %d: force_check = %v, retryPending = %v, want both true so the busy torrent is retried", pass, store.items[url].ForceCheck, h.retryPending(urlHash))
+		}
+	}
+}
+
+type serverErrTracker struct {
+	pageTracker
+	code int
+}
+
+func (s *serverErrTracker) Response(context.Context, int, string, bool) (*bytes.Buffer, error) {
+	return nil, fmt.Errorf("get page error: %w", &client.StatusError{Code: s.code, Msg: "status"})
+}
+
+func TestTrackerServerErrorKeepsStreak(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	for _, tc := range []struct {
+		code       int
+		keepStreak bool
+	}{{503, true}, {500, true}, {403, false}, {404, false}} {
+		store := &loggingStorage{fakeStorage: fakeStorage{checkStreak: 5}}
+		h := &handler{
+			config:  model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1, ErrorStreakThreshold: 3},
+			storage: store,
+			manager: &fakeManager{},
+			trackerService: &serverErrTracker{
+				pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}},
+				code:        tc.code,
+			},
+		}
+		e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc", Timestamp: &old}
+		_ = h.worker(context.Background(), 1, e, nil)
+		if len(store.logs) != 1 || store.logs[0].Status != "error" || store.logs[0].KeepStreak != tc.keepStreak {
+			t.Fatalf("code %d: logs = %+v, want one error with KeepStreak=%v", tc.code, store.logs, tc.keepStreak)
+		}
+		if got := len(store.ignoreCalls) == 1; got == tc.keepStreak {
+			t.Fatalf("code %d: ignoreCalls = %v, auto-ignore must happen exactly when KeepStreak is false", tc.code, store.ignoreCalls)
+		}
+	}
+}
+
+type blockTracker struct {
+	fastTracker
+	in   chan struct{}
+	gate chan struct{}
+}
+
+func (b *blockTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	b.in <- struct{}{}
+	<-b.gate
+	return nil, fmt.Errorf("test skip")
+}
+
+func TestNormalRunningOnlyForNormalPass(t *testing.T) {
+	const url = "https://example.com/t/1"
+	forcedSet := map[string]struct{}{storagePkg.URLHash(url): {}}
+	for _, tc := range []struct {
+		name       string
+		dry        bool
+		forced     map[string]struct{}
+		wantNormal bool
+	}{
+		{"normal", false, nil, true},
+		{"forced", false, forcedSet, false},
+		{"dry", true, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, state := newQueueHandler(url)
+			bt := &blockTracker{in: make(chan struct{}, 4), gate: make(chan struct{})}
+			bt.id = 1
+			h.trackerService = bt
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := h.push(ctx, tc.dry, tc.forced); err != nil {
+				t.Fatal(err)
+			}
+			cherr := make(chan error, 8)
+			go h.trackerWorker(ctx, 1, cherr)
+			select {
+			case <-bt.in:
+			case <-time.After(2 * time.Second):
+				t.Fatal("worker did not start the task")
+			}
+			if !state.Running() {
+				t.Fatal("pass must be running while its task runs")
+			}
+			if got := state.NormalRunning(); got != tc.wantNormal {
+				t.Fatalf("NormalRunning = %v while the task runs, want %v", got, tc.wantNormal)
+			}
+			close(bt.gate)
+			deadline := time.Now().Add(2 * time.Second)
+			for state.Running() && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if state.Running() || state.NormalRunning() {
+				t.Fatalf("after the pass: Running = %v, NormalRunning = %v, want both false", state.Running(), state.NormalRunning())
+			}
+		})
+	}
+}
+
+type loginForcingTracker struct {
+	*pickTracker
+	forced []int
+}
+
+func (l *loginForcingTracker) ForceLoginNext(ttid int) { l.forced = append(l.forced, ttid) }
+
+func TestWorkerMissForcesLoginNext(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	d := time.Now().Add(-time.Hour)
+	cases := []struct {
+		name string
+		pick tracker.Pick
+		rep  *dryReport
+		want int
+	}{
+		{"pick miss", tracker.Pick{Miss: "no link for guests"}, nil, 1},
+		{"pick miss dry run", tracker.Pick{Miss: "no link for guests"}, &dryReport{}, 0},
+		{"date found", tracker.Pick{Date: &d}, nil, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, tr := newPickHandler(pickPageClient{pick: tc.pick})
+			rec := &loginForcingTracker{pickTracker: tr}
+			h.trackerService = rec
+			e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &old, Update: true}
+			if err := h.worker(context.Background(), 1, e, tc.rep); err != nil {
+				t.Fatal(err)
+			}
+			if len(rec.forced) != tc.want || (tc.want == 1 && rec.forced[0] != 1) {
+				t.Fatalf("forced = %v, want %d call(s) for tracker 1", rec.forced, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkerDateMissingForcesLoginNext(t *testing.T) {
+	h, _, tr := newPickHandler(pickPageClient{})
+	rec := &loginForcingTracker{pickTracker: tr}
+	h.trackerService = rec
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc"}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.forced) != 1 {
+		t.Fatalf("forced = %v, want one call when the page has no date", rec.forced)
 	}
 }

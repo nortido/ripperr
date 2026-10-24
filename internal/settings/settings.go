@@ -20,6 +20,9 @@ const settingWeb = "web"
 var (
 	warnedMu sync.Mutex
 	warned   map[string]struct{}
+
+	// GetSetting..SaveSetting у Merge* не атомарны: без замка параллельные сохранения теряют соседние поля
+	mergeMu sync.Mutex
 )
 
 // ApplyOverrides идет на каждый effective(), поэтому одинаковое предупреждение пишем один раз
@@ -55,6 +58,7 @@ type scheduleOverlay struct {
 	DeleteEnabled         *bool     `json:"delete_enabled,omitempty"`
 	DeleteFilesEnabled    *bool     `json:"delete_files_enabled,omitempty"`
 	MirrorConfirm         *bool     `json:"mirror_confirm,omitempty"`
+	RunOnStart            *bool     `json:"run_on_start,omitempty"`
 	MonitoredCategories   *[]string `json:"monitored_categories,omitempty"`
 	DeleteFilesCategories *[]string `json:"delete_files_categories,omitempty"`
 	WatchTags             *[]string `json:"watch_tags,omitempty"`
@@ -132,7 +136,12 @@ type integrationsOverlay struct {
 			UserKey  *string   `json:"user_key,omitempty"`
 			Events   *[]string `json:"events,omitempty"`
 		} `json:"pushover"`
-		Enabled *bool `json:"enabled,omitempty"`
+		Browser struct {
+			Enabled *bool     `json:"enabled,omitempty"`
+			Events  *[]string `json:"events,omitempty"`
+		} `json:"browser"`
+		Enabled  *bool   `json:"enabled,omitempty"`
+		Language *string `json:"language,omitempty"`
 	} `json:"notifications"`
 	Metrics struct {
 		Token *string `json:"token,omitempty"`
@@ -143,6 +152,12 @@ type integrationsOverlay struct {
 		Direct *bool   `json:"direct,omitempty"`
 	} `json:"mirror_source"`
 }
+
+type InvalidConfigError struct{ Err error }
+
+func (e *InvalidConfigError) Error() string { return e.Err.Error() }
+
+func (e *InvalidConfigError) Unwrap() error { return e.Err }
 
 func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 	// вызывающий передает копию App, но трекеры лежат в map. Без своей копии патч из БД
@@ -204,7 +219,7 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 		cfg.Web.AppURL = n
 	}
 	if err := NormalizeAppIntegrations(cfg); err != nil {
-		return err
+		return &InvalidConfigError{Err: err}
 	}
 	return nil
 }
@@ -250,6 +265,9 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	}
 	if o.MirrorConfirm != nil {
 		cfg.Runner.MirrorConfirm = *o.MirrorConfirm
+	}
+	if o.RunOnStart != nil {
+		cfg.Runner.RunOnStart = *o.RunOnStart
 	}
 	if o.DeleteFilesCategories != nil {
 		cfg.Manager.DeleteFilesCategories = *o.DeleteFilesCategories
@@ -335,6 +353,9 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if v := o.Notifications.Pushover.Enabled; v != nil {
 		cfg.Notify.PushoverDisabled = !*v
 	}
+	if v := o.Notifications.Browser.Enabled; v != nil {
+		cfg.Notify.BrowserDisabled = !*v
+	}
 	if o.Notifications.Telegram.BotToken != nil {
 		cfg.Notify.TelegramToken = *o.Notifications.Telegram.BotToken
 	}
@@ -383,8 +404,14 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if v := o.Notifications.Pushover.Events; v != nil {
 		cfg.Notify.PushoverEvents = slices.Clone(*v)
 	}
+	if v := o.Notifications.Browser.Events; v != nil {
+		cfg.Notify.BrowserEvents = slices.Clone(*v)
+	}
 	if o.Notifications.Enabled != nil {
 		cfg.Notify.Enabled = *o.Notifications.Enabled
+	}
+	if v := o.Notifications.Language; v != nil {
+		cfg.Notify.Language = *v
 	}
 	if o.Metrics.Token != nil {
 		cfg.Metrics.Token = *o.Metrics.Token
@@ -419,6 +446,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		DeleteEnabled         bool     `json:"delete_enabled"`
 		DeleteFilesEnabled    bool     `json:"delete_files_enabled"`
 		MirrorConfirm         bool     `json:"mirror_confirm"`
+		RunOnStart            bool     `json:"run_on_start"`
 		MonitoredCategories   []string `json:"monitored_categories"`
 		DeleteFilesCategories []string `json:"delete_files_categories"`
 		WatchTags             []string `json:"watch_tags"`
@@ -432,6 +460,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
 		MagnetTimeout:        cfg.Runner.MagnetTimeout,
 		MirrorConfirm:        cfg.Runner.MirrorConfirm,
+		RunOnStart:           cfg.Runner.RunOnStart,
 		MonitoredCategories:  cfg.Runner.AllowedCategories,
 		WatchTags:            cfg.Runner.WatchTags,
 		Timezone:             cfg.Runner.Timezone,
@@ -506,7 +535,12 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 				UserKey  string   `json:"user_key"`
 				Events   []string `json:"events"`
 			} `json:"pushover"`
-			Enabled bool `json:"enabled"`
+			Browser struct {
+				Enabled bool     `json:"enabled"`
+				Events  []string `json:"events"`
+			} `json:"browser"`
+			Enabled  bool   `json:"enabled"`
+			Language string `json:"language"`
 		} `json:"notifications"`
 		Metrics struct {
 			Token string `json:"token"`
@@ -549,7 +583,10 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s.Notifications.Pushover.AppToken = cfg.Notify.PushoverToken
 	s.Notifications.Pushover.UserKey = cfg.Notify.PushoverUser
 	s.Notifications.Pushover.Events = resolvedEvents(cfg.Notify.PushoverEvents)
+	s.Notifications.Browser.Enabled = !cfg.Notify.BrowserDisabled
+	s.Notifications.Browser.Events = resolvedEvents(cfg.Notify.BrowserEvents)
 	s.Notifications.Enabled = cfg.Notify.Enabled
+	s.Notifications.Language = notify.NormalizeLanguage(cfg.Notify.Language)
 	s.Metrics.Token = cfg.Metrics.Token
 	s.MirrorSource.Type = cfg.MirrorSource.Type
 	if s.MirrorSource.Type == "" {
@@ -616,6 +653,8 @@ func MergeSchedule(ctx context.Context, db interface {
 	if err != nil {
 		return err
 	}
+	mergeMu.Lock()
+	defer mergeMu.Unlock()
 	var existing scheduleOverlay
 	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingSchedule); err != nil {
 		return err
@@ -727,6 +766,8 @@ func MergeIntegrations(ctx context.Context, db interface {
 	if err != nil {
 		return err
 	}
+	mergeMu.Lock()
+	defer mergeMu.Unlock()
 	var existing integrationsOverlay
 	if raw, ok, err := db.GetSetting(ctx, sqlite.SettingIntegrations); err != nil {
 		return err
@@ -797,6 +838,8 @@ func MergeWeb(ctx context.Context, db interface {
 	if err != nil {
 		return err
 	}
+	mergeMu.Lock()
+	defer mergeMu.Unlock()
 	var existing webOverlay
 	if raw, ok, err := db.GetSetting(ctx, settingWeb); err != nil {
 		return err
