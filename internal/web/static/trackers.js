@@ -135,14 +135,14 @@ function trackerRow(inner, cls) {
   return html`<div class="form-row form-row-pair${cls ? ' ' + cls : ''}">${inner}</div>`;
 }
 
-function trackerFieldHtml(key, name, label, value, extraCls) {
-  return html`<div class="form-group"><label class="form-label" for="tr-${name}-${key}">${label}</label><input type="text" id="tr-${name}-${key}" class="input tr-${extraCls || name}" autocomplete="off" name="${randomFieldName('tr-' + name)}" value="${value || ''}"></div>`;
+function trackerFieldHtml(key, name, label, value, extraCls, groupCls) {
+  return html`<div class="form-group${groupCls ? ' ' + groupCls : ''}"><label class="form-label" for="tr-${name}-${key}">${label}</label><input type="text" id="tr-${name}-${key}" class="input tr-${extraCls || name}" autocomplete="off" name="${randomFieldName('tr-' + name)}" value="${value || ''}"></div>`;
 }
 
 function loginFieldsHtml(tracker, key) {
   // логин и пароль только для входа формой, nnm и teamhd пускают по кукам
   if (!tracker.supports_login) return '';
-  return trackerRow(html`<div class="form-group"><label class="form-label" for="tr-login-${key}">${t('trackers.login')}</label><input type="text" id="tr-login-${key}" class="input tr-login" autocomplete="off" name="${randomFieldName('tr-user')}" value="${tracker.login || ''}"></div><div class="form-group"><label class="form-label" for="tr-pass-${key}">${t('trackers.password')}</label><div class="input-password-wrap"><input id="tr-pass-${key}" data-field="password" data-reveal="/api/trackers/${encodeURIComponent(key)}/secret" data-reveal-field="password"${secureInputAttrs('tr-pass')} value="${tracker.password || ''}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showPassword')}"><span data-icon="eyeHidden"></span></button></div></div>`);
+  return trackerRow(html`<div class="form-group"><label class="form-label" for="tr-login-${key}">${t('trackers.login')}</label><input type="text" id="tr-login-${key}" class="input tr-login" autocomplete="off" name="${randomFieldName('tr-user')}" value="${tracker.login || ''}"></div><div class="form-group"><label class="form-label" for="tr-pass-${key}">${t('trackers.password')}</label><div class="input-password-wrap"><input id="tr-pass-${key}" data-field="password" data-reveal="/api/trackers/${encodeURIComponent(key)}/secret" data-reveal-field="password"${secureInputAttrs('tr-pass')} value="${tracker.password || ''}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showPassword')}"><span data-icon="eyeHidden"></span></button></div></div>`, 'tr-login-fields');
 }
 
 function trackerFormHtml(tracker, key, pub, mirrors) {
@@ -153,7 +153,7 @@ function trackerFormHtml(tracker, key, pub, mirrors) {
 
   const limits = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-hour-limit-${key}">${t('trackers.hourLimit')}</label><input type="number" id="tr-hour-limit-${key}" class="input tr-hour-limit" min="1" value="${tracker.hour_limit}"></div><div class="form-group"><label class="form-label" for="tr-proxy-type-${key}">${t('trackers.proxy')}</label><select id="tr-proxy-type-${key}" class="select tr-proxy-type"><option value="0"${tracker.proxy_type === 0 ? ' selected' : ''}>${t('trackers.proxyDirect')}</option><option value="1"${tracker.proxy_type === 1 ? ' selected' : ''}>${t('trackers.proxyFlare')}</option></select></div>`);
 
-  const access = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-publicity-${key}">${t('trackers.publicity')}</label><select id="tr-publicity-${key}" class="select tr-publicity"><option value="public"${pub === 'public' ? ' selected' : ''}>${t('trackers.public')}</option><option value="private"${pub === 'private' ? ' selected' : ''}>${t('trackers.private')}</option></select></div>${trackerFieldHtml(key, 'login-url', t('trackers.loginUrl'), tracker.login_url, 'login-url')}`, 'tracker-advanced');
+  const access = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-publicity-${key}">${t('trackers.publicity')}</label><select id="tr-publicity-${key}" class="select tr-publicity"><option value="public"${pub === 'public' ? ' selected' : ''}>${t('trackers.public')}</option><option value="private"${pub === 'private' ? ' selected' : ''}>${t('trackers.private')}</option></select></div>${trackerFieldHtml(key, 'login-url', t('trackers.loginUrl'), tracker.login_url, 'login-url', 'tr-login-fields')}`, 'tracker-advanced');
 
   const downloadURL = html`<div class="form-group form-group-full tracker-advanced"><label class="form-label" for="tr-download-url-${key}">${t('trackers.downloadUrl')}</label><input type="text" id="tr-download-url-${key}" class="input tr-download-url" autocomplete="off" name="${randomFieldName('tr-dl')}" value="${tracker.download_url}"></div>`;
 
@@ -167,10 +167,10 @@ function trackerFormHtml(tracker, key, pub, mirrors) {
     ? html`<input type="text" id="tr-cred-${key}" class="input" data-field="credentials" autocomplete="off" name="${randomFieldName('tr-cred')}" value="${tracker.credentials}">`
     : html`<div class="input-password-wrap"><input id="tr-cred-${key}" data-field="credentials" data-reveal="/api/trackers/${encodeURIComponent(key)}/secret" data-reveal-field="credentials"${secureInputAttrs('tr-cred')} value="${tracker.credentials}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eyeHidden"></span></button></div>`;
   const credHint = tracker.supports_login ? 'trackers.credentialsHintLogin' : (rawOnly ? 'trackers.credentialsHintRaw' : 'trackers.credentialsHint');
-  const raw = html`<div class="form-group form-group-full${rawCls}"><label class="form-label" for="tr-cred-${key}">${t('trackers.credentials')}</label>${credInput}<p class="form-hint">${t(credHint)}</p></div><div class="form-group form-group-full${rawCls}"><label class="form-label" for="tr-cookies-${key}">${t('trackers.cookies')}</label><input type="text" id="tr-cookies-${key}" class="input tr-cookies" autocomplete="off" name="${randomFieldName('tr-cookie')}" value="${tracker.cookies}"></div>`;
+  const raw = html`<div class="form-group form-group-full tr-login-fields${rawCls}"><label class="form-label" for="tr-cred-${key}">${t('trackers.credentials')}</label>${credInput}<p class="form-hint">${t(credHint)}</p></div><div class="form-group form-group-full tr-login-fields${rawCls}"><label class="form-label" for="tr-cookies-${key}">${t('trackers.cookies')}</label><input type="text" id="tr-cookies-${key}" class="input tr-cookies" autocomplete="off" name="${randomFieldName('tr-cookie')}" value="${tracker.cookies}"></div>`;
 
 
-  return html`<div class="tracker-form">${address}${mirrorsRow}${limits}${loginFieldsHtml(tracker, key)}${rawOnly ? raw : ''}${advancedToggleHtml()}${access}${downloadURL}${rawOnly ? '' : raw}</div>`;
+  return html`<div class="tracker-form${pub === 'public' ? ' tr-public' : ''}">${address}${mirrorsRow}${limits}${loginFieldsHtml(tracker, key)}${rawOnly ? raw : ''}${advancedToggleHtml()}${access}${downloadURL}${rawOnly ? '' : raw}</div>`;
 }
 
 
@@ -485,6 +485,11 @@ function bindAdvancedToggle(root) {
   // делегирование: в диалоге добавления форма с переключателем появляется после выбора типа
   root.addEventListener('click', function (e) {
     if (e.target.closest('.tr-advanced-toggle')) setAdvancedOpen(root, !root.classList.contains('tr-advanced-open'));
+  });
+  root.addEventListener('change', function (e) {
+    if (!e.target.classList.contains('tr-publicity')) return;
+    const form = e.target.closest('.tracker-form');
+    if (form) form.classList.toggle('tr-public', e.target.value === 'public');
   });
 }
 

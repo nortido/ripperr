@@ -1502,13 +1502,19 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
   display: none;
 }
 
+/* публичный трекер не входит (httpclient InitClient), логин, URL, строка входа и куки ему не нужны.
+   Значения остаются в DOM и сохраняются как были */
+.tracker-form.tr-public .tr-login-fields {
+  display: none;
+}
+
 .tr-advanced-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   align-self: stretch;
-  justify-content: flex-start;
-  text-align: left;
+  justify-content: center;
+  text-align: center;
   padding: 4px 0;
   font: inherit;
   font-size: 14px;
@@ -1517,6 +1523,22 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
   background: none;
   border: 0;
   cursor: pointer;
+}
+
+.tr-advanced-toggle::before,
+.tr-advanced-toggle::after {
+  content: "";
+  flex: 1 1 0;
+  min-width: 12px;
+  border-top: 1px dashed color-mix(in srgb, var(--text) 30%, transparent);
+}
+
+.tr-advanced-toggle::before {
+  margin-right: 6px;
+}
+
+.tr-advanced-toggle::after {
+  margin-left: 6px;
 }
 
 .tr-advanced-toggle svg {
