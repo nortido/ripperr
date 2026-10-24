@@ -33,6 +33,32 @@
   cursor: not-allowed;
 }
 
+/* на время сохранения текст прячем под спиннер, ширина кнопки не меняется. Прозрачность
+   обычной выключенной кнопки не берем: спиннер должен быть виден */
+.btn.is-saving {
+  position: relative;
+  color: transparent;
+  opacity: 1;
+  cursor: progress;
+}
+
+.btn.is-saving > * {
+  visibility: hidden;
+}
+
+.btn.is-saving::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 16px;
+  height: 16px;
+  margin: auto;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: refresh-spin 0.8s linear infinite;
+}
+
 .btn:focus {
   outline: none;
 }
@@ -679,7 +705,8 @@
 @media (prefers-reduced-motion: reduce) {
   .btn-refresh.is-spinning svg,
   .btn-test.is-spinning svg,
-  .btn-action-redownload.is-spinning svg {
+  .btn-action-redownload.is-spinning svg,
+  .btn.is-saving::after {
     animation-duration: 2.4s;
   }
 
@@ -1568,7 +1595,21 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
 /* у переключателя (i) сосед текста во flex-строке label: внутри span он уходил на вторую строку */
 .form-switch > .hint-toggle {
   flex: none;
+  align-self: flex-start;
+  margin-top: calc((var(--switch-row-h) - var(--hint-size)) / 2);
   margin-left: -4px;
+}
+
+/* поля добивают одну строку подписи до высоты ряда, тогда верх span совпадает с верхом ряда
+   при любом числе строк, и (i) с постоянным отступом стоит на первой строке */
+.form-switch {
+  --switch-row-h: var(--btn-h-xs);
+  --hint-size: 22px;
+}
+
+.form-switch > span:not(.sr-only) {
+  line-height: 1.55;
+  padding-block: calc((var(--switch-row-h) - 1.55em) / 2);
 }
 
 .form-submit-row > .hint-toggle {
@@ -1577,8 +1618,12 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
   margin-left: -6px;
 }
 
+html.mobile-layout .form-switch {
+  --hint-size: 32px;
+}
+
 html.mobile-layout .form-switch > .hint-toggle {
-  margin: -5px 0 -5px -4px;
+  margin: calc((var(--switch-row-h) - var(--hint-size)) / 2) 0 0 -4px;
 }
 
 html.mobile-layout .form-submit-row > .hint-toggle {
@@ -1733,6 +1778,7 @@ html.mobile-layout .form-submit-row > .hint-toggle {
 }
 
 .tr-use-mirrors-group .form-switch {
+  --switch-row-h: var(--btn-h-md);
   min-height: var(--btn-h-md);
 }
 
@@ -1743,4 +1789,9 @@ html.mobile-layout .form-submit-row > .hint-toggle {
 
 html.mobile-layout .tr-address-row {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* на мобильном переключатель во всю ширину, заданный для пары колонок перенос не нужен */
+html.mobile-layout .tr-use-mirrors-group .form-switch > span {
+  white-space: normal;
 }

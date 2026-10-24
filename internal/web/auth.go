@@ -336,6 +336,35 @@ func (t *loginThrottle) prune(now time.Time) {
 	}
 }
 
+func (t *loginThrottle) status(key string) (left int, wait time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	rec, ok := t.fails[key]
+	switch {
+	case !ok:
+		return maxLoginFails, 0
+	case now.Before(rec.until):
+		return 0, rec.until.Sub(now)
+	case !rec.until.IsZero() || !now.Before(rec.first.Add(loginLockWindow)):
+		return maxLoginFails, 0
+	}
+	return max(maxLoginFails-rec.count, 0), 0
+}
+
+func waitSeconds(wait time.Duration) int {
+	if wait <= 0 {
+		return 0
+	}
+	return int((wait + time.Second - 1) / time.Second)
+}
+
+func writeLoginLocked(w http.ResponseWriter, wait time.Duration) {
+	secs := max(waitSeconds(wait), 1)
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeJSON(w, http.StatusTooManyRequests, loginErrorResp{Error: "too many attempts, try later", RetryAfter: secs})
+}
+
 func (t *loginThrottle) success(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -601,7 +630,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 
 	// попытку учитываем до хеширования, иначе параллельные запросы проскочат лимит
 	if !s.loginFails.reserve(ipStr) {
-		writeError(w, http.StatusTooManyRequests, "too many attempts, try later")
+		_, wait := s.loginFails.status(ipStr)
+		writeLoginLocked(w, wait)
 		return
 	}
 
@@ -614,7 +644,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	usernameMatch := strings.EqualFold(req.Username, doc.Username)
 
 	if !usernameMatch || !passwordMatch {
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		left, wait := s.loginFails.status(ipStr)
+		writeJSON(w, http.StatusUnauthorized, loginErrorResp{Error: "invalid credentials", AttemptsLeft: &left, RetryAfter: waitSeconds(wait)})
 		return
 	}
 

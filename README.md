@@ -42,7 +42,7 @@ tags or file selection.
   hammered forever (the pause between checks of a failing topic grows up to 24 hours), and you can put
   any release on an ignore list.
 - Rechecks stay in the pass slot where they ran, so the check time does not creep through the day.
-  When a release keeps a regular release time, it is rechecked in the first slot after that time,
+  After two or more updates at a similar time of day, a release is rechecked in the first slot after that time,
   and up to two next slots if the usual time varies.
 - Tracker mirrors with automatic choice of a live domain and a switch to another mirror when the
   active one starts failing (you get a notification), FlareSolverr support for sites behind

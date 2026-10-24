@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -657,6 +658,41 @@ func TestLoginLocksAfterFiveFailures(t *testing.T) {
 	}
 	if w := loginFrom(srv, remote, rightLogin); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("right login during lock: code %d, want 429", w.Code)
+	}
+}
+
+func TestLoginReportsAttemptsLeft(t *testing.T) {
+	srv := newConfiguredAuthServer(t, config.Web{Listen: ":0", Enabled: true})
+	const remote = "198.51.100.8:1000"
+	for i := range maxLoginFails {
+		w := loginFrom(srv, remote, wrongLogin)
+		var resp struct {
+			Error        string `json:"error"`
+			AttemptsLeft *int   `json:"attempts_left"`
+			RetryAfter   int    `json:"retry_after"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || w.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong login %d: code %d body %s", i+1, w.Code, w.Body.String())
+		}
+		if want := maxLoginFails - i - 1; resp.AttemptsLeft == nil || *resp.AttemptsLeft != want {
+			t.Fatalf("wrong login %d: attempts_left %v, want %d", i+1, resp.AttemptsLeft, want)
+		}
+		if locked := i == maxLoginFails-1; (resp.RetryAfter > 0) != locked {
+			t.Fatalf("wrong login %d: retry_after %d, locked %v", i+1, resp.RetryAfter, locked)
+		}
+	}
+	w := loginFrom(srv, remote, wrongLogin)
+	var locked struct {
+		RetryAfter int `json:"retry_after"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &locked); err != nil || w.Code != http.StatusTooManyRequests {
+		t.Fatalf("locked login: code %d body %s", w.Code, w.Body.String())
+	}
+	if locked.RetryAfter < 1 || locked.RetryAfter > int(loginLockWindow.Seconds()) {
+		t.Fatalf("retry_after %d, want 1..%d", locked.RetryAfter, int(loginLockWindow.Seconds()))
+	}
+	if h := w.Header().Get("Retry-After"); h != strconv.Itoa(locked.RetryAfter) {
+		t.Fatalf("Retry-After header %q, want %d", h, locked.RetryAfter)
 	}
 }
 

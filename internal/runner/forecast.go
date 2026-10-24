@@ -8,8 +8,9 @@ import (
 const (
 	forecastSamples    = 8
 	forecastWindow     = 90 * 24 * time.Hour
-	forecastMinSamples = 3
+	forecastMinSamples = 2
 	forecastMaxArc     = 3 * time.Hour
+	forecastPairArc    = 2 * time.Hour
 	forecastMaxExtra   = 2
 )
 
@@ -41,7 +42,12 @@ func forecast(samples []time.Time, loc *time.Location) (mean, late time.Duration
 		maxOff = max(maxOff, off)
 	}
 	toMinutes := func(a float64) float64 { return a * 1440 / (2 * math.Pi) }
-	if math.Round(toMinutes(maxOff-minOff)) > forecastMaxArc.Minutes() {
+	// две даты совпадают по случайности чаще трех, поэтому окно для пары уже
+	limit := forecastMaxArc
+	if n == 2 {
+		limit = forecastPairArc
+	}
+	if math.Round(toMinutes(maxOff-minOff)) > limit.Minutes() {
 		return 0, 0, false
 	}
 	meanMin := math.Mod(math.Round(toMinutes(meanAngle))+1440, 1440)

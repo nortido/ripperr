@@ -1,5 +1,5 @@
 import { ensureQbitCategories, fetchJSON, qbitCategoriesCache, qbitCategoriesUnavailable, showToast } from './api.js';
-import { initChipInput, initHintToggles } from './components.js';
+import { initChipInput, initHintToggles, setSaving } from './components.js';
 import { confirmDialog } from './confirm.js';
 import { advancedEnabled, applyAdvanced, applyTheme, THEMES } from './layout.js';
 import { bindPasswordCard, passwordCardHtml } from './password.js';
@@ -132,11 +132,16 @@ export function renderSchedule(el, sch, suggestions, qbitDown, timezones, web) {
     };
     const mirrorConfirm = document.getElementById('mirror_confirm');
     if (mirrorConfirm) body.mirror_confirm = mirrorConfirm.checked;
+    const submitBtn = e.currentTarget.querySelector('button[type="submit"]');
+    if (submitBtn && submitBtn.disabled) return;
+    setSaving(submitBtn, true);
     try {
       await fetchJSON('/api/schedule', { method: 'PUT', body: JSON.stringify(body) });
       showToast(t('settings.saved'), 'success');
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      setSaving(submitBtn, false);
     }
   });
 
@@ -178,7 +183,7 @@ function bindWebCard(el, web) {
       showToast(t('settings.webSaved'), 'success');
       return;
     }
-    saveBtn.disabled = true;
+    setSaving(saveBtn, true);
     try {
       const res = await fetchJSON('/api/web', { method: 'PUT', body: JSON.stringify(body) });
       if (body.allowed_hosts) loadedHosts = body.allowed_hosts;
@@ -197,7 +202,7 @@ function bindWebCard(el, web) {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      saveBtn.disabled = false;
+      setSaving(saveBtn, false);
     }
   });
 }

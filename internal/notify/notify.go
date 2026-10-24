@@ -127,7 +127,7 @@ func (e Event) plain() string {
 func UpdatedEvent(name, url, imageURL string) Event {
 	return Event{
 		Kind:     KindUpdated,
-		Text:     "Раздача обновлена и перекачана в torrent-клиенте:",
+		Text:     "Раздача обновлена в torrent-клиенте:",
 		Subject:  name,
 		URL:      url,
 		ImageURL: imageURL,

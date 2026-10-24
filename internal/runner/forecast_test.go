@@ -39,7 +39,10 @@ func TestForecast(t *testing.T) {
 		checkLat bool
 	}{
 		{name: "none", samples: nil},
-		{name: "two samples", samples: mskSamples("20:00", "20:05")},
+		{name: "one sample", samples: mskSamples("20:00")},
+		{name: "two samples", samples: mskSamples("20:00", "20:05"), ok: true, mean: 20*time.Hour + 3*time.Minute, meanTol: time.Minute},
+		{name: "two samples arc 2 h", samples: mskSamples("19:00", "21:00"), ok: true, mean: 20 * time.Hour, late: time.Hour, checkLat: true},
+		{name: "two samples arc 2 h 1 min", samples: mskSamples("19:00", "21:01")},
 		{name: "evening", samples: mskSamples("19:40", "20:10", "19:55", "20:30", "20:05"), ok: true,
 			mean: 20*time.Hour + 4*time.Minute, meanTol: time.Minute, late: 26 * time.Minute, checkLat: true},
 		{name: "across midnight", samples: mskSamples("23:30", "00:15", "23:50"), ok: true,
@@ -96,7 +99,8 @@ func TestGetRecheckAtForecast(t *testing.T) {
 		want     time.Time
 	}{
 		{"no samples", 24, nil, msk(15, 21, 0), false, msk(16, 21, 0)},
-		{"two samples", 24, evening[:2], msk(15, 8, 0), false, msk(16, 8, 0)},
+		{"one sample", 24, evening[:1], msk(15, 8, 0), false, msk(16, 8, 0)},
+		{"two samples", 24, evening[:2], msk(15, 8, 0), false, msk(15, 20, 0)},
 		{"released at 21:00", 24, evening, msk(15, 21, 0), true, msk(16, 21, 0)},
 		{"transition 08:00", 24, evening, msk(15, 8, 0), false, msk(15, 21, 0)},
 		{"23:52 from 22:00", 12, midnight, msk(15, 22, 0), false, msk(16, 0, 0)},

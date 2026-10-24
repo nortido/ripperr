@@ -312,6 +312,13 @@ function hintLabel(hint) {
   return pick(group) || pick(hint.previousElementSibling) || (card && card.querySelector('.card-title'));
 }
 
+export function setSaving(btn, on) {
+  if (!btn) return;
+  btn.disabled = on;
+  btn.classList.toggle('is-saving', on);
+  btn.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+
 export function initHintToggles(root) {
   // пояснения под полями съедали по две-три строки, так что прячем их за кнопку (i).
   // Предупреждения и живые подсказки с id остаются на виду
@@ -357,7 +364,23 @@ export function initHintToggles(root) {
     // у переключателя и кнопки (i) встает соседом в той же flex-строке, внутри span она уехала бы на вторую строку
     if (label.matches('.form-switch > span, .form-submit-row > .btn')) label.after(btn);
     else label.appendChild(btn);
+    if (label.matches('.form-switch > span')) pinHintToFirstLine(label, btn);
   });
+}
+
+function pinHintToFirstLine(span, btn) {
+  // перенесенная подпись растягивает span на всю ширину, и (i) уезжала к правому краю.
+  // Сдвигаем ее к концу первой строки, ширину строки знает только раскладка браузера
+  const place = function () {
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const first = range.getClientRects()[0];
+    const box = span.getBoundingClientRect();
+    const shift = first && box.width ? first.right - box.right : 0;
+    btn.style.transform = shift < -0.5 ? 'translateX(' + shift + 'px)' : '';
+  };
+  if (typeof ResizeObserver === 'function') new ResizeObserver(place).observe(span);
+  place();
 }
 
 const maskedRoots = new WeakSet();

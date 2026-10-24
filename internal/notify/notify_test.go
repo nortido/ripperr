@@ -24,7 +24,7 @@ func TestEventTextsDistinguishTypesAndCarrySubject(t *testing.T) {
 		wantKw  string
 		wantSub string
 	}{
-		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1", ""), "перекачана", "Some.Release.2026"},
+		{"updated", UpdatedEvent("Some.Release.2026", "https://example.com/t1", ""), "Раздача обновлена в torrent-клиенте:", "Some.Release.2026"},
 		{"broken", BrokenEvent("Broken.Release", "https://example.com/t2", 5), "игнор", "Broken.Release"},
 		{"tracker down", TrackerDownEvent("rutracker", "connection refused"), "недоступен", "rutracker"},
 		{"tracker up", TrackerUpEvent("rutracker"), "возобновлены", "rutracker"},

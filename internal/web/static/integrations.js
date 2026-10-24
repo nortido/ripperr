@@ -1,5 +1,5 @@
 import { fetchJSON, showToast } from './api.js';
-import { cancelClose, closeAnimated, initHintToggles, initPasswordToggles, updateSegmentThumb } from './components.js';
+import { cancelClose, closeAnimated, initHintToggles, initPasswordToggles, setSaving, updateSegmentThumb } from './components.js';
 import { hydrateIcons } from './icons.js';
 import { initCustomSelects } from './select.js';
 import { abortTest, bindTestButton, forgetTest, paintTestButton, paintTestLine, resetTest, runTest } from './testbutton.js';
@@ -301,7 +301,9 @@ export function hasUnsavedIntegrations() {
 
 function updateIntSave() {
   const btn = document.getElementById('int-save');
-  if (btn) btn.disabled = intSaving || !hasUnsavedIntegrations();
+  if (!btn) return;
+  setSaving(btn, intSaving);
+  btn.disabled = intSaving || !hasUnsavedIntegrations();
 }
 
 function carryReveal(snap, masked, cur) {

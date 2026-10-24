@@ -1,6 +1,6 @@
 .toast-stack {
   position: fixed;
-  bottom: 20px;
+  top: calc(16px + env(safe-area-inset-top));
   right: 20px;
   z-index: 2000;
   display: flex;
@@ -19,20 +19,30 @@
   animation: toast-in 0.18s ease;
 }
 
+/* фон и рамка в цвет типа: на мобильном тост лежит поверх карточек того же цвета, что и его фон */
 .toast-success {
-  border-left: 4px solid var(--success);
+  --toast-hue: var(--success);
 }
 
 .toast-error {
-  border-left: 4px solid var(--danger);
+  --toast-hue: var(--danger);
 }
 
 .toast-info {
-  border-left: 4px solid var(--accent-from);
+  --toast-hue: var(--accent-from);
+}
+
+.toast-success,
+.toast-error,
+.toast-info {
+  background: color-mix(in srgb, var(--toast-hue) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--toast-hue) 60%, transparent);
+  border-left: 4px solid var(--toast-hue);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
 }
 
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(-10px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -63,10 +73,6 @@
 
 .offline-banner.visible {
   transform: translateY(0);
-}
-
-body:has(.offline-banner.visible) .toast-stack {
-  bottom: 64px;
 }
 
 /* иначе баннер глухо накрывает последнюю строку таблицы и пагинацию */
@@ -348,4 +354,15 @@ html.mobile-layout .modal.confirm-modal {
 
 html.mobile-layout .confirm-modal .modal-foot {
   padding-bottom: 12px;
+}
+
+/* на мобильном сверху фиксированная шапка 56px с логотипом, тост встает под нее */
+@media (max-width: 900px) {
+  .toast-stack {
+    top: calc(68px + env(safe-area-inset-top));
+    right: 12px;
+    left: 12px;
+    max-width: none;
+    align-items: flex-end;
+  }
 }

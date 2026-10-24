@@ -1,6 +1,6 @@
 import { fetchJSON, showToast } from './api.js';
 import { authState, gotoLogin } from './auth.js';
-import { initPasswordToggles } from './components.js';
+import { initPasswordToggles, setSaving } from './components.js';
 import { hydrateIcons } from './icons.js';
 import { html } from './util.js';
 
@@ -37,7 +37,7 @@ export function bindPasswordCard(el) {
       showToast(t('settings.passwordMismatch'), 'error');
       return;
     }
-    submit.disabled = true;
+    setSaving(submit, true);
     try {
       await fetchJSON('/api/auth/password', { method: 'POST', body: JSON.stringify({ current: current, new: next }) });
       form.reset();
@@ -49,7 +49,7 @@ export function bindPasswordCard(el) {
       }
       showToast(ERROR_KEYS[err.message] ? t(ERROR_KEYS[err.message]) : err.message, 'error');
     } finally {
-      submit.disabled = false;
+      setSaving(submit, false);
     }
   });
 }

@@ -37,6 +37,12 @@ type errorResp struct {
 	Error string `json:"error"`
 }
 
+type loginErrorResp struct {
+	Error        string `json:"error"`
+	AttemptsLeft *int   `json:"attempts_left,omitempty"`
+	RetryAfter   int    `json:"retry_after,omitempty"`
+}
+
 type alertResp struct {
 	Tracker string `json:"tracker"`
 	Since   string `json:"since"`

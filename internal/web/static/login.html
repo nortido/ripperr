@@ -45,6 +45,28 @@
       return text.replace(/[&<>"']/g, function (m) { return map[m]; });
     }
 
+    const AUTH_ERRORS = {
+      'invalid credentials': 'auth.errInvalid',
+      'too many attempts, try later': 'auth.errLocked',
+      'too many login attempts at once, try later': 'auth.errBusy',
+      'account setup is allowed only from a local address': 'auth.errSetupLocal',
+      'auth already configured': 'auth.errConfigured',
+      'auth not configured': 'auth.errNotConfigured',
+      'username must be 3..64 chars': 'auth.errUsername',
+      'password must be at least 8 chars': 'auth.errPasswordShort',
+      'auth error': 'auth.errServer',
+      'invalid body': 'auth.errServer',
+    };
+
+    function authErrorText(data, status) {
+      const key = data && AUTH_ERRORS[data.error];
+      if (!key) return (data && data.error) || 'HTTP ' + status;
+      let msg = t(key, {s: data.retry_after || 60});
+      if (data.retry_after && key === 'auth.errInvalid') msg += '. ' + t('auth.errLocked', {s: data.retry_after});
+      else if (typeof data.attempts_left === 'number') msg += '. ' + t('auth.errAttemptsLeft', {n: data.attempts_left});
+      return msg;
+    }
+
     function nextUrl() {
       const n = new URLSearchParams(location.search).get('next');
       // URLSearchParams декодирует %09 и %0a в управляющие символы, а браузер
@@ -107,12 +129,11 @@
             body: JSON.stringify({username: username, password: password}),
           });
           if (!res.ok) {
-            let msg = 'HTTP ' + res.status;
+            let data = null;
             try {
-              const data = await res.json();
-              if (data && data.error) msg = data.error;
+              data = await res.json();
             } catch (_) {}
-            errBox.textContent = msg;
+            errBox.textContent = authErrorText(data, res.status);
             errBox.classList.remove('hidden');
             btn.disabled = false;
             return;

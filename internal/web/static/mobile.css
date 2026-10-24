@@ -117,12 +117,14 @@ html.mobile-layout .table-dash-releases .col-actions {
 }
 
 html.mobile-layout .table-dash-releases .release-actions {
+  --btn-h-sm: 32px;
+  --btn-icon-sm: 17px;
   justify-content: center;
-  gap: 24px;
-  padding: 2px 12px;
-  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-muted) 40%, transparent);
+  gap: 14px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-muted) 20%, transparent);
 }
 
 html.mobile-layout .table-dash-releases td {

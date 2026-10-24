@@ -1,5 +1,5 @@
 import { fetchJSON, showToast } from './api.js';
-import { activeErrorPopover, cancelClose, closeAnimated, closePopovers, initChipInput, initHintToggles, initPasswordToggles } from './components.js';
+import { activeErrorPopover, cancelClose, closeAnimated, closePopovers, initChipInput, initHintToggles, initPasswordToggles, setSaving } from './components.js';
 import { confirmDialog } from './confirm.js';
 import { hydrateIcons, icon } from './icons.js';
 import { integrationsCache, setIntegrationsCache } from './integrations.js';
@@ -669,7 +669,7 @@ async function saveTrackerDialog(d) {
   const confirm = d.root.querySelector('.tr-use-mirrors').checked && tr && tr.confirm_on === true
     ? d.mirrors.getValues().filter(function (m) { return hostIn(tr.unconfirmed, m); })
     : [];
-  d.saveBtn.disabled = true;
+  setSaving(d.saveBtn, true);
   let res;
   try {
     res = await fetchJSON('/api/trackers/' + encodeURIComponent(d.key), {
@@ -679,7 +679,7 @@ async function saveTrackerDialog(d) {
     });
   } catch (err) {
     showToast(err.message, 'error');
-    d.saveBtn.disabled = false;
+    setSaving(d.saveBtn, false);
     return;
   }
   showToast(t('trackers.saved', { key: d.key }), 'success');
@@ -735,7 +735,7 @@ async function addTrackerFromDialog(d) {
   if (!d.key) return;
   const key = d.key;
   const body = gatherTrackerConfig(d.root, d.mirrors.getValues(), true);
-  d.saveBtn.disabled = true;
+  setSaving(d.saveBtn, true);
   try {
     await fetchJSON('/api/trackers/' + encodeURIComponent(key), {
       method: 'POST',
@@ -743,7 +743,7 @@ async function addTrackerFromDialog(d) {
     });
   } catch (err) {
     showToast(err.message, 'error');
-    d.saveBtn.disabled = false;
+    setSaving(d.saveBtn, false);
     return;
   }
   showToast(t('trackers.added', { key: key }), 'success');
