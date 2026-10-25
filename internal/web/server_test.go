@@ -1186,6 +1186,40 @@ func TestGetStatusRunning(t *testing.T) {
 	}
 }
 
+func TestGetStatusRedownloadByClient(t *testing.T) {
+	cases := []struct {
+		client string
+		want   bool
+	}{
+		{"", true},
+		{"qbit", true},
+		{" QBIT ", true},
+		{"transmission", false},
+		{"Deluge", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.client, func(t *testing.T) {
+			effective := func() config.App {
+				cfg := testEffective()
+				cfg.Manager.Client = tc.client
+				return cfg
+			}
+			srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+			w := httptest.NewRecorder()
+			srv.handleStatus(w, req)
+			var resp map[string]any
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := resp["redownload"].(bool)
+			if !ok || got != tc.want {
+				t.Fatalf("redownload = %v, want %v", resp["redownload"], tc.want)
+			}
+		})
+	}
+}
+
 func TestPutIntegrationsInvalidProxyScheme(t *testing.T) {
 	store := &fakeStore{}
 	srv := newTestServer(store)

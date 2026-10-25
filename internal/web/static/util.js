@@ -88,7 +88,10 @@ export function formatTableTime(iso) {
 
 export function formatLogTime(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleTimeString(localeTag(), {
+  // лимит в 200 строк захватывает несколько суток, без даты 00:15 после 23:28 не прочесть
+  const d = new Date(iso);
+  const tag = localeTag();
+  return d.toLocaleDateString(tag, { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString(tag, {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
 }
@@ -169,7 +172,7 @@ export function formatRunSlot(iso) {
   tomorrow.setDate(tomorrow.getDate() + 1);
   const slotDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const time = formatRunSlotTime(iso);
-  if (slotDay.getTime() === today.getTime()) return t('dash.today', { time: time });
+  if (slotDay.getTime() === today.getTime()) return time;
   if (slotDay.getTime() === tomorrow.getTime()) return t('dash.tomorrow', { time: time });
   return d.toLocaleString(localeTag(), {
     day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
@@ -235,8 +238,14 @@ export function isSafeLinkUrl(url) {
   }
 }
 
+// имена релизов без пробелов: <wbr> после точек и дефисов дает переносить по частям, а не посреди слова
+function breakableName(s) {
+  const parts = String(s).match(/[^._\-\/]*[._\-\/]?/g).filter(Boolean);
+  return parts.map(function (p, i) { return i ? html`<wbr>${p}` : html`${p}`; });
+}
+
 export function linkCell(name, url) {
-  const label = name || url || t('common.emDash');
+  const label = name ? breakableName(name) : (url || t('common.emDash'));
   const titleAttr = name ? html` title="${name}"` : '';
   if (url && isSafeLinkUrl(url)) {
     return html`<a class="release-link" href="${url}" target="_blank" rel="noopener"${titleAttr}>${label}</a>`;

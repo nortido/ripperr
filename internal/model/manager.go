@@ -27,6 +27,8 @@ type ManagerAddFileOptions struct {
 	ReplacesHash   string
 	// выбор файлов прежней раздачи, nil = качать все
 	FileSelection []TorrentFile
+	// имена файлов прежней раздачи по позиции, nil = переименований не было
+	FilePaths []string
 }
 
 type RedownloadOptions struct {

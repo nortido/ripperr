@@ -63,6 +63,12 @@ WHERE id IN (
 			`CREATE TABLE IF NOT EXISTS release_times (url_hash TEXT NOT NULL, released_at INTEGER NOT NULL, PRIMARY KEY (url_hash, released_at))`,
 		},
 	},
+	{
+		name: "events",
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, created_at INTEGER NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', app_path TEXT NOT NULL DEFAULT '')`,
+		},
+	},
 }
 
 func (c *Client) Bootstrap(ctx context.Context) error {

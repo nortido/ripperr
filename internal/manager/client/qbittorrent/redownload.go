@@ -84,6 +84,7 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string, ro mod
 	if slices.ContainsFunc(files, func(f model.TorrentFile) bool { return !f.Wanted }) {
 		opts.FileSelection = files
 	}
+	opts.FilePaths = renamedPaths(torrentData, files)
 
 	// пара ложится в blackhole до удаления: если qbit упадет или запрос отменят дальше,
 	// подметальщик сам доведет повторное добавление

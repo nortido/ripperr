@@ -1,7 +1,8 @@
 import { fetchJSON, showToast } from './api.js';
 import { bindErrorBadges } from './components.js';
 import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardFetchGen, setRunPending, updateRunStatusUI } from './dashboard.js';
-import { hydrateIcons } from './icons.js';
+import { confirmDialog } from './confirm.js';
+import { hydrateIcons, ICONS } from './icons.js';
 import { historyFiltered, historyState } from './state.js';
 import { formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, statusIcon, trackerBadgeHtml } from './util.js';
 
@@ -10,6 +11,11 @@ export let ignoreHashesCache = null;
 
 let checkingHashes = new Set();
 let queuedHashes = new Set();
+let redownloadEnabled = true;
+
+export function setRedownloadEnabled(on) {
+  redownloadEnabled = !!on;
+}
 
 export function setCheckProgress(checking, queued) {
   // подсветку дает опрос статуса, а таблица перерисовывается своим циклом,
@@ -108,7 +114,15 @@ export function syncPlanForceLocal(items) {
 
 export function redownloadButtonHtml(hash) {
   const btnTitle = t('dash.redownload');
-  return html`<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" title="${btnTitle}" aria-label="${btnTitle}" data-hash="${hash}"><span data-icon="rotateCw"></span></button>`;
+  return html`<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" title="${btnTitle}" aria-label="${btnTitle}" data-hash="${hash}"><span data-icon="download"></span></button>`;
+}
+
+// в покое стрелка вниз, чтобы не путать с 'Обновить'; на время запроса подобранный под вращение rotateCw
+function setRedownloadIcon(btn, name) {
+  const iconEl = btn.querySelector('[data-icon]');
+  if (!iconEl) return;
+  iconEl.setAttribute('data-icon', name);
+  iconEl.innerHTML = ICONS[name];
 }
 
 export function planForceButtonHtml(hash, forced) {
@@ -213,7 +227,7 @@ export function buildReleaseRows(histItems) {
     else if (queuedHashes.has(urlHash)) rowClsValue += ' release-row-queued';
     const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
-    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadButtonHtml(urlHash)}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
+    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadEnabled ? redownloadButtonHtml(urlHash) : ''}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
   });
   return html`${rows}`;
 }
@@ -287,13 +301,11 @@ export function bindDashboardReleaseRows(root) {
       try {
         if (ignored) {
           await fetchJSON('/api/ignore/' + encodeURIComponent(hash), { method: 'DELETE' });
-          showToast(t('ignore.deleted'), 'success');
         } else {
           await fetchJSON('/api/ignore', {
             method: 'POST',
             body: JSON.stringify({ url: url, name: name }),
           });
-          showToast(t('ignore.added'), 'success');
         }
         await refreshIgnoreState();
         if (historyState.ignored) {
@@ -343,8 +355,6 @@ export function bindDashboardReleaseRows(root) {
           setRunPending(false);
           updateRunStatusUI(effectiveRunning(dashboardServerRunning));
           showToast(t('dash.forceQueueFull'), 'info');
-        } else {
-          showToast(enable ? t('dash.forceEnabled') : t('dash.forceDisabled'), 'success');
         }
         updateReleaseRow(hash, !!(res && res.force));
       } catch (err) {
@@ -365,6 +375,14 @@ export function bindDashboardReleaseRows(root) {
       const hash = btn.getAttribute('data-hash');
       if (!hash) return;
       const row = btn.closest('tr');
+      const ignoreBtn = row && row.querySelector('[data-name]');
+      const name = (ignoreBtn && ignoreBtn.getAttribute('data-name')) || hash;
+      const ok = await confirmDialog({
+        text: t('dash.redownloadConfirm', { name: name }),
+        confirmLabel: t('dash.redownloadAction'),
+        danger: true,
+      });
+      if (!ok) return;
       const reEnable = [];
       if (row) {
         row.querySelectorAll('button').forEach(function (b) {
@@ -377,6 +395,7 @@ export function bindDashboardReleaseRows(root) {
       } else {
         btn.disabled = true;
       }
+      setRedownloadIcon(btn, 'rotateCw');
       btn.classList.add('is-spinning');
       try {
         await fetchJSON('/api/history/' + encodeURIComponent(hash) + '/redownload', {
@@ -387,6 +406,7 @@ export function bindDashboardReleaseRows(root) {
       } catch (err) {
         showToast(err.code === 'torrent_busy' ? t('dash.redownloadBusy') : err.message, 'error');
         btn.classList.remove('is-spinning');
+        setRedownloadIcon(btn, 'download');
         if (row) row.classList.remove('is-redownloading');
         reEnable.forEach(function (b) { b.disabled = false; });
         if (!row) btn.disabled = false;

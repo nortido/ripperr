@@ -75,15 +75,15 @@ func ancestors(p string) []string {
 }
 
 func stripRoots(a, b []string) ([]string, []string) {
-	ra, okA := commonRoot(a)
-	rb, okB := commonRoot(b)
+	ra, okA := CommonRoot(a)
+	rb, okB := CommonRoot(b)
 	if !okA || !okB {
 		return a, b
 	}
 	return trimAll(a, ra), trimAll(b, rb)
 }
 
-func commonRoot(paths []string) (string, bool) {
+func CommonRoot(paths []string) (string, bool) {
 	if len(paths) == 0 {
 		return "", false
 	}

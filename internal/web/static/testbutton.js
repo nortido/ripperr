@@ -113,7 +113,6 @@ export async function runTest(key, request, opts) {
   if (controller.stoppedByUser) {
     results.delete(key);
     opts.repaint();
-    if (opts.toast) showToast(t('trackers.testStopped'), 'info');
     return;
   }
   const label = res.ok ? t('trackers.testOk') : (res.error || t('trackers.testFail'));
@@ -121,5 +120,5 @@ export async function runTest(key, request, opts) {
   results.set(key, result);
   if (result.ok) expireOk(key, result, opts.repaint);
   opts.repaint();
-  if (opts.toast) showToast(label, res.ok ? 'success' : 'error');
+  if (opts.toast && !res.ok) showToast(label, 'error');
 }

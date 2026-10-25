@@ -554,9 +554,20 @@
   justify-content: flex-start;
   gap: 16px;
   flex-wrap: wrap;
+  align-items: flex-end;
 }
 
-.logs-feed {
+/* переключатель стоит в ряд с полями без подписи: по нижнему краю и в их высоту */
+.logs-card-header > .seg-ctrl {
+  min-height: var(--btn-h-md);
+}
+
+.logs-card-header > .form-group {
+  margin-bottom: 0;
+}
+
+.logs-feed,
+.events-feed {
   font-family: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   line-height: 1.5;
@@ -593,6 +604,115 @@
   color: var(--text-empty);
   padding: 24px 0;
   text-align: center;
+}
+
+.event-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 4px 0;
+  word-break: break-word;
+}
+
+.event-copy {
+  align-self: center;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.event-copy > [data-icon] {
+  display: grid;
+}
+
+.event-copy svg {
+  width: 16px;
+  height: 16px;
+}
+
+.event-copy.is-copied {
+  color: var(--success);
+}
+
+@media (hover: hover) {
+  .event-copy:hover {
+    color: var(--text);
+  }
+}
+
+/* событие, к которому перешли из уведомления: короткая подсветка, чтобы найти его глазами */
+.event-focus {
+  border-radius: var(--radius-sm);
+  animation: event-focus 2.5s ease-out;
+}
+
+@keyframes event-focus {
+  from {
+    background: color-mix(in srgb, var(--link) 25%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+/* иконка в такой же коробке, как кнопка копирования рядом, иначе центры расходились */
+.event-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+}
+
+.event-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.event-line > .log-time {
+  align-self: center;
+}
+
+.event-copy + .event-icon {
+  margin-left: -8px;
+}
+
+.event-success .event-icon {
+  color: var(--success);
+}
+
+.event-error .event-icon {
+  color: var(--danger);
+}
+
+.event-info .event-icon {
+  color: var(--link);
+}
+
+.event-subject {
+  color: var(--text-muted);
+}
+
+.event-source {
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.event-link {
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .logs-last-updated {

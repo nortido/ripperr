@@ -53,7 +53,7 @@ html.mobile-layout .table-dash-releases .col-name {
 
 html.mobile-layout .table-dash-releases .release-title-wrap {
   display: inline;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 html.mobile-layout .table-dash-releases .release-foot {
@@ -256,16 +256,22 @@ html.mobile-layout .page-size-select {
 }
 
 html.mobile-layout .content {
-  padding-top: 12px;
+  padding-top: 8px;
 }
 
+/* на телефоне вертикальные отступы съедали верх экрана: заголовок без лишнего интерлиньяжа, промежутки меньше */
 html.mobile-layout .page-title {
   font-size: 24px;
+  line-height: 1.2;
   margin-bottom: 4px;
 }
 
 html.mobile-layout .page-header {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+html.mobile-layout .stack {
+  gap: 14px;
 }
 
 html.mobile-layout .page-header > .page-title {
@@ -273,7 +279,7 @@ html.mobile-layout .page-header > .page-title {
 }
 
 html.mobile-layout .dash-page-header {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 html.mobile-layout .dash-page-header .page-header-row {
@@ -383,6 +389,29 @@ html.mobile-layout .tracker-page-header .input.tracker-filter {
 html.mobile-layout .logs-limit-group {
   flex: 1 1 0;
   min-width: 0;
+}
+
+/* в одной строке с двумя полями переключатель сжимал их до одной стрелки */
+html.mobile-layout .logs-card-header > .seg-ctrl {
+  flex: 1 1 100%;
+}
+
+/* шапка логов занимала треть экрана: поля и переключатель ниже, подписи ближе */
+html.mobile-layout .logs-card-header {
+  --btn-h-md: 36px;
+  --btn-h-sm: 36px;
+  gap: 8px 12px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+html.mobile-layout .logs-card-header .form-label {
+  margin-bottom: 4px;
+}
+
+html.mobile-layout .logs-card-header .custom-select-trigger {
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 
 html.mobile-layout .run-status {
@@ -601,6 +630,7 @@ html.mobile-layout .form-label,
 html.mobile-layout .form-hint,
 html.mobile-layout .chip,
 html.mobile-layout .logs-feed,
+html.mobile-layout .events-feed,
 html.mobile-layout .logs-last-updated,
 html.mobile-layout .test-result,
 html.mobile-layout .error-popover,
@@ -824,8 +854,19 @@ html.mobile-layout .tracker-form .form-row-pair:has(.tr-login-url) {
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* на телефоне у вкладок каналов узкие поля, чтобы имена влезли целиком */
+/* на телефоне пять каналов в одну строку слипались в сплошной текст: две строки по три */
+html.mobile-layout .notify-tabs.seg-ctrl {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  row-gap: 2px;
+}
+
 html.mobile-layout .notify-tabs .notify-tab {
-  padding-left: 2px;
-  padding-right: 2px;
+  min-height: 38px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+/* своя отметка нажатия вместо системной подсветки, она соблюдает слои */
+html.mobile-layout .btn-ghost:active:not(:disabled) {
+  background: var(--hover);
 }

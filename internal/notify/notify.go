@@ -23,6 +23,7 @@ import (
 
 	"ripperr/internal/helper"
 	"ripperr/internal/metrics"
+	"ripperr/internal/model/storage"
 	"ripperr/internal/system/logger"
 	"ripperr/internal/webpush"
 
@@ -248,6 +249,7 @@ type Notifier struct {
 	posterHC *http.Client
 	appURL   string
 	push     *webpush.Store
+	events   EventRecorder
 }
 
 func New(cfg Config, proxyURL string) *Notifier {
@@ -256,6 +258,15 @@ func New(cfg Config, proxyURL string) *Notifier {
 
 func (n *Notifier) WithAppURL(appURL string) *Notifier {
 	n.appURL = appURL
+	return n
+}
+
+type EventRecorder interface {
+	AddEvent(ctx context.Context, e storage.EventEntry) error
+}
+
+func (n *Notifier) WithEvents(r EventRecorder) *Notifier {
+	n.events = r
 	return n
 }
 
@@ -501,7 +512,12 @@ func (n *Notifier) wants() bool {
 func (n *Notifier) Notify(ev Event) {
 	// сюда приходят из воркера трекера и предохранителя, их держать нельзя. Каждый канал
 	// шлет в своей горутине, ошибки только в лог
-	if n == nil || !n.wants() {
+	if n == nil {
+		return
+	}
+	// пишем до проверки wants: выключенные уведомления и отсутствие каналов не должны терять историю
+	n.record(ev)
+	if !n.wants() {
 		return
 	}
 	// устройства читаются из БД один раз за вызов: Notify не должен надолго держать воркер
@@ -525,6 +541,27 @@ func (n *Notifier) Notify(ev Event) {
 	if browser {
 		n.deliver(n.browserSender(), ev, "browser")
 	}
+}
+
+func (n *Notifier) record(ev Event) {
+	if n.events == nil {
+		return
+	}
+	entry := storage.EventEntry{
+		At:      time.Now(),
+		Source:  "server",
+		Kind:    ev.Kind,
+		Text:    n.localize(ev).Text,
+		Subject: ev.Subject,
+		AppPath: ev.AppPath,
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := n.events.AddEvent(ctx, entry); err != nil {
+			logger.Warn("notify: event log: " + err.Error())
+		}
+	}()
 }
 
 func (n *Notifier) deliver(send func(context.Context, Event) error, ev Event, transport string) {

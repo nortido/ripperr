@@ -123,7 +123,7 @@ func main() {
 	// чтобы видеть настройки, сохраненные после старта
 	breakerAlerts.SetHook(func(open bool, tracker, errMsg string) {
 		ecfg := effective()
-		n := notify.New(notify.Config(ecfg.Notify), ecfg.Runner.DownloadProxy).WithAppURL(ecfg.Web.AppURL).WithPush(webpush.NewStore(db))
+		n := notify.New(notify.Config(ecfg.Notify), ecfg.Runner.DownloadProxy).WithAppURL(ecfg.Web.AppURL).WithPush(webpush.NewStore(db)).WithEvents(db)
 		if open {
 			n.Notify(notify.TrackerDownEvent(tracker, errMsg))
 		} else {
@@ -134,6 +134,7 @@ func main() {
 	var webSrv *webpkg.Server
 	if baseCfg.Web.Enabled {
 		webSrv = webpkg.New(db, reload, effective, baseCfg.Web.Listen, runnerState, breakerAlerts)
+		webSrv.SetEvents(db)
 		webSrv.SetStrictEffective(func() (config.App, error) {
 			cfg := baseCfg
 			var invalid *settings.InvalidConfigError

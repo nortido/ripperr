@@ -11,7 +11,7 @@
 }
 
 .toast {
-  padding: 14px 18px;
+  padding: 8px 8px 8px 14px;
   font-size: 15px;
   background: color-mix(in srgb, var(--surface) 90%, transparent);
   border: 1px solid var(--border);
@@ -40,6 +40,99 @@
   border-color: color-mix(in srgb, var(--toast-hue) 60%, transparent);
   border-left: 4px solid var(--toast-hue);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+/* текст сворачивается до двух строк рядом с кнопками в правом верхнем углу */
+.toast {
+  --toast-actions-w: 44px;
+  position: relative;
+  line-height: 1.35;
+}
+
+.toast.is-long {
+  --toast-actions-w: 92px;
+}
+
+.toast-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-height: 36px;
+  padding-top: 2px;
+  padding-right: var(--toast-actions-w);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.toast-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 12px;
+}
+
+.toast-expand,
+.toast-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.toast-expand svg,
+.toast-close svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* развернутый текст обтекает кнопки и не прокручивается внутри: длиннее 70% экрана
+   обрезается с затуханием, полностью его показывает «Подробнее» */
+.toast.is-expanded .toast-text {
+  display: block;
+  padding-right: 0;
+  max-height: calc(70vh - 56px);
+  max-height: calc(70dvh - 56px);
+}
+
+.toast.is-expanded .toast-text::before {
+  content: "";
+  float: right;
+  width: var(--toast-actions-w);
+  height: 36px;
+}
+
+.toast.is-expanded.has-details .toast-text {
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 40px), transparent);
+}
+
+.toast.is-expanded .toast-expand svg {
+  transform: rotate(180deg);
+}
+
+.toast .toast-more {
+  display: none;
+  margin: 2px 0 0 auto;
+  padding: 6px 4px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--link);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.toast.is-expanded.has-details .toast-more {
+  display: block;
+  width: fit-content;
 }
 
 @keyframes toast-in {
@@ -319,6 +412,7 @@ html.mobile-layout .modal-overlay.is-closing:not(.confirm-overlay) > .modal {
 }
 
 .confirm-text {
+  white-space: pre-line;
   flex: 1;
   min-height: 0;
   margin: 0;
@@ -357,13 +451,44 @@ html.mobile-layout .confirm-modal .modal-foot {
   padding-bottom: 12px;
 }
 
-/* на мобильном сверху фиксированная шапка 56px с логотипом, тост встает под нее */
+.toast-details-text {
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* тост ложится поверх шапки 56px; сам он не ловит нажатия, чтобы бургер под ним работал.
+   Кнопки раскрытия и закрытия включают нажатия обратно */
 @media (max-width: 900px) {
   .toast-stack {
-    top: calc(68px + env(safe-area-inset-top));
-    right: 12px;
-    left: 12px;
+    top: calc(3px + env(safe-area-inset-top));
+    right: 6px;
+    left: 6px;
     max-width: none;
-    align-items: flex-end;
+    align-items: stretch;
+    pointer-events: none;
+  }
+
+  .toast {
+    min-height: 48px;
+    padding: 6px 6px 6px 12px;
+    font-size: 14px;
+    line-height: 1.3;
+    background: color-mix(in srgb, var(--surface) 95%, transparent);
+    pointer-events: none;
+  }
+
+  .toast-success,
+  .toast-error,
+  .toast-info {
+    background: color-mix(in srgb, color-mix(in srgb, var(--toast-hue) 16%, var(--surface)) 95%, transparent);
+  }
+
+  .toast-actions,
+  .toast .toast-more,
+  .toast.is-expanded {
+    pointer-events: auto;
   }
 }

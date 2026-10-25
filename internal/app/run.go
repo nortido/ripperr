@@ -137,7 +137,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		}
 		alerts.Retain(names)
 	}
-	nt := notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy).WithAppURL(cfg.Web.AppURL).WithPush(webpush.NewStore(db))
+	nt := notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy).WithAppURL(cfg.Web.AppURL).WithPush(webpush.NewStore(db)).WithEvents(db)
 	tr.SetMirrorSwitchHook(func(name, from, to string) {
 		nt.Notify(notify.MirrorSwitchedEvent(name, from, to))
 	})

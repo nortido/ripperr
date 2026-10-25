@@ -59,6 +59,7 @@ type statusResp struct {
 	Queued      []string    `json:"queued"`
 	QueuedTotal int         `json:"queued_total"`
 	Alerts      []alertResp `json:"alerts"`
+	Redownload  bool        `json:"redownload"`
 }
 
 type logEntryResp struct {

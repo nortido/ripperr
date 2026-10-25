@@ -57,6 +57,11 @@ func (c *Client) setSelection(ctx context.Context, hash string, opts model.Manag
 	for i, f := range files {
 		paths[i] = f.Path
 	}
+	// у того же infohash позиции файлов совпадают, а выбор записан под прежними именами.
+	// Свежие имена после renameFile qbit может отдать с задержкой
+	if len(opts.FilePaths) == len(files) {
+		paths = opts.FilePaths
+	}
 	idx := fileselect.Unwanted(opts.FileSelection, paths)
 	if len(idx) > 0 {
 		ids := make([]string, len(idx))

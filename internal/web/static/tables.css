@@ -73,6 +73,10 @@
   padding-right: 14px;
 }
 
+.table-dash-releases.no-redownload {
+  --row-actions-w: calc((var(--btn-h-sm) * 2) + var(--row-actions-gap) + 2px);
+}
+
 .table .col-name {
   word-break: break-word;
   max-width: 14rem;

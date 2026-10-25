@@ -1,17 +1,21 @@
 package qbittorrent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
 	qbt "github.com/autobrr/go-qbittorrent"
 
 	"ripperr/internal/helper/torrentmeta"
@@ -39,6 +43,8 @@ type redownloadStubServer struct {
 	unsettleAfterAdd bool
 	vanishNext       bool
 	files            []qbt.TorrentFile
+	filesAfterAdd    []qbt.TorrentFile
+	renameCalls      []string
 	filesFail        bool
 	addCalls         int
 	addPaused        string
@@ -68,8 +74,20 @@ func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		if s.filesAfterAdd != nil && s.deleted {
+			_ = json.NewEncoder(w).Encode(s.filesAfterAdd)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(s.files)
 	})
+	for kind, p := range map[string]string{"file": "/api/v2/torrents/renameFile", "folder": "/api/v2/torrents/renameFolder"} {
+		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			s.mu.Lock()
+			s.renameCalls = append(s.renameCalls, kind+":"+r.FormValue("oldPath")+">"+r.FormValue("newPath"))
+			s.mu.Unlock()
+		})
+	}
 	mux.HandleFunc("/api/v2/torrents/filePrio", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		s.mu.Lock()
@@ -479,5 +497,127 @@ func TestForceRedownloadKeepsV1TorrentWithOddInfo(t *testing.T) {
 	stub.mu.Unlock()
 	if adds != 1 {
 		t.Errorf("add requests = %d, want 1", adds)
+	}
+}
+
+func buildMultiFileTestTorrent(t *testing.T, root string, names ...string) ([]byte, string) {
+	t.Helper()
+	info := metainfo.Info{PieceLength: 16384, Pieces: make([]byte, 20), Name: root}
+	for _, n := range names {
+		info.Files = append(info.Files, metainfo.FileInfo{Length: 1, Path: []string{n}})
+	}
+	infoBytes, err := bencode.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	mi := metainfo.MetaInfo{InfoBytes: infoBytes, Announce: "http://tracker.example/announce"}
+	var buf bytes.Buffer
+	if err := mi.Write(&buf); err != nil {
+		t.Fatalf("write metainfo: %v", err)
+	}
+	return buf.Bytes(), mi.HashInfoBytes().HexString()
+}
+
+func TestForceRedownloadRestoresRenamedFile(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data, hash := buildMultiFileTestTorrent(t, "Show", "e1.mkv", "e2.mkv")
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+	stub.files = []qbt.TorrentFile{{Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/Episode 2.mkv", Priority: 1}}
+	stub.filesAfterAdd = []qbt.TorrentFile{{Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/e2.mkv", Priority: 1}}
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err = c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v", err)
+	}
+
+	stub.mu.Lock()
+	addPaused, renames, starts, pairJSON := stub.addPaused, stub.renameCalls, stub.startCalls, stub.jsonAtDelete
+	stub.mu.Unlock()
+	var meta model.ManagerAddFileOptions
+	if err = json.Unmarshal(pairJSON, &meta); err != nil {
+		t.Fatalf("blackhole json: %v (%q)", err, pairJSON)
+	}
+	if want := []string{"Show/e1.mkv", "Show/Episode 2.mkv"}; !slices.Equal(meta.FilePaths, want) {
+		t.Errorf("blackhole pair FilePaths = %q, want %q", meta.FilePaths, want)
+	}
+	if want := []string{"file:Show/e2.mkv>Show/Episode 2.mkv"}; !slices.Equal(renames, want) {
+		t.Errorf("rename calls = %q, want %q", renames, want)
+	}
+	if strings.Contains(addPaused, "true") {
+		t.Errorf("re-add paused/stopped = %q, want the torrent added started", addPaused)
+	}
+	if starts != 0 {
+		t.Errorf("start calls = %d, want 0 for a torrent added started", starts)
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestForceRedownloadRenamedSelectionStaysPartial(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data, hash := buildMultiFileTestTorrent(t, "Show", "e1.mkv", "e2.mkv")
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+	stub.torrent.State = qbt.TorrentStatePausedDl
+	stub.files = []qbt.TorrentFile{{Name: "Show/Episode 1.mkv", Priority: 1}, {Index: 1, Name: "Show/e2.mkv", Priority: 0}}
+	stub.filesAfterAdd = []qbt.TorrentFile{{Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/e2.mkv", Priority: 1}}
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err = c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v", err)
+	}
+
+	stub.mu.Lock()
+	prio, renames, starts := stub.prioCalls, stub.renameCalls, stub.startCalls
+	stub.mu.Unlock()
+	if want := []string{"1=0"}; !slices.Equal(prio, want) {
+		t.Errorf("file priority calls = %v, want %v", prio, want)
+	}
+	if want := []string{"file:Show/e1.mkv>Show/Episode 1.mkv"}; !slices.Equal(renames, want) {
+		t.Errorf("rename calls = %q, want %q", renames, want)
+	}
+	if starts != 0 {
+		t.Errorf("start calls = %d, want 0 for a stopped torrent", starts)
+	}
+}
+
+func TestForceRedownloadWithoutRenamesAddsStarted(t *testing.T) {
+	withFastRedownloadTimings(t)
+
+	data, hash := buildTestTorrent(t)
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err = c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v", err)
+	}
+
+	stub.mu.Lock()
+	addPaused, renames, pairJSON := stub.addPaused, stub.renameCalls, stub.jsonAtDelete
+	stub.mu.Unlock()
+	var meta model.ManagerAddFileOptions
+	if err = json.Unmarshal(pairJSON, &meta); err != nil {
+		t.Fatalf("blackhole json: %v (%q)", err, pairJSON)
+	}
+	if meta.FilePaths != nil {
+		t.Errorf("blackhole pair FilePaths = %q, want nil", meta.FilePaths)
+	}
+	if strings.Contains(addPaused, "true") {
+		t.Errorf("re-add paused/stopped = %q, want the torrent added started", addPaused)
+	}
+	if len(renames) != 0 {
+		t.Errorf("rename calls = %q, want none", renames)
 	}
 }

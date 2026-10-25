@@ -186,6 +186,8 @@ html {
   font-size: 16px;
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
+  /* системная подсветка нажатия в iOS рисуется поверх всех слоев и просвечивала сквозь выезжающее меню */
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -203,6 +205,7 @@ body {
 .run-status,
 .dash-last-updated,
 .logs-feed,
+.events-feed,
 .logs-last-updated {
   font-variant-numeric: tabular-nums;
 }
@@ -288,7 +291,14 @@ body:has(.app.page-scaled) {
   letter-spacing: -0.02em;
   color: var(--brand-head);
   text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-brand-logo {
   display: block;
+  flex-shrink: 0;
 }
 
 .brand-tail {
@@ -420,7 +430,7 @@ body:has(.app.page-scaled) {
   }
 
   .app.sidebar-collapsed .sidebar.sidebar-overlay-open .sidebar-brand {
-    display: block;
+    display: flex;
   }
 }
 

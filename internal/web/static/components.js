@@ -248,7 +248,7 @@ export function buildSegmentControl(options, activeValue, ariaLabel) {
   });
   const btnsParts = options.map(function (opt, i) {
     const isActive = i === activeIdx;
-    return html`<button type="button" class="seg-ctrl-btn${isActive ? ' active' : ''}" data-value="${opt.value}"${opt.dataAttr || ''} title="${opt.title}" aria-label="${opt.title}" aria-pressed="${isActive ? 'true' : 'false'}">${opt.icon ? html`<span data-icon="${opt.icon}"></span>` : opt.label || ''}</button>`;
+    return html`<button type="button" class="seg-ctrl-btn${isActive ? ' active' : ''}" data-value="${opt.value}"${opt.dataAttr || ''}${opt.icon ? html` title="${opt.title}" aria-label="${opt.title}"` : ''} aria-pressed="${isActive ? 'true' : 'false'}">${opt.icon ? html`<span data-icon="${opt.icon}"></span>` : opt.label || ''}</button>`;
   });
   return html`<div class="seg-ctrl" role="group" aria-label="${ariaLabel}" data-active-index="${activeIdx}"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${btnsParts}</div>`;
 }
@@ -282,8 +282,11 @@ export function updateSegmentThumb(seg) {
     }
     fitSegmentText(seg);
     if (active.offsetWidth) {
+      // на телефоне вкладки уведомлений в две строки, бегунок двигаем и по вертикали
       thumb.style.width = active.offsetWidth + 'px';
-      thumb.style.transform = 'translateX(' + (active.offsetLeft - thumb.offsetLeft) + 'px)';
+      thumb.style.height = active.offsetHeight + 'px';
+      thumb.style.bottom = 'auto';
+      thumb.style.transform = 'translate(' + (active.offsetLeft - thumb.offsetLeft) + 'px, ' + (active.offsetTop - thumb.offsetTop) + 'px)';
       return;
     }
   }

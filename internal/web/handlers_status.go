@@ -8,6 +8,7 @@ import (
 
 	"ripperr/internal/config"
 	"ripperr/internal/helper/breakeralerts"
+	"ripperr/internal/manager"
 	"ripperr/internal/runner"
 	"ripperr/internal/system/logger"
 )
@@ -45,6 +46,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Queued:      emptyIfNil(queued),
 		QueuedTotal: queuedTotal,
 		Alerts:      statusAlerts(s.alerts),
+		Redownload:  redownloadSupported(cfg),
 	})
 }
 
@@ -151,4 +153,13 @@ func emptyIfNil(v []string) []string {
 		return []string{}
 	}
 	return v
+}
+
+func redownloadSupported(cfg config.App) bool {
+	// условие зеркалит отказы в handleRedownload: клиентам без перекачки кнопку не показываем
+	switch manager.NormalizeClient(cfg.Manager.Client) {
+	case manager.ClientTransmission, manager.ClientDeluge:
+		return false
+	}
+	return true
 }

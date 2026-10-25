@@ -1069,6 +1069,11 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
     white-space: nowrap;
     min-width: 15ch;
   }
+
+  /* Chrome переносит по <wbr> даже при nowrap: на десктопе имя в одну строку с многоточием */
+  html:not(.mobile-layout) .table-dash-releases .col-name wbr {
+    display: none;
+  }
 }
 
 /* до 1200px колонки времени и статуса узкие (110 и 84), без мелкого шрифта

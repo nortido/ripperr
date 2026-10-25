@@ -637,14 +637,14 @@ function renderMirrorSuggestions(d) {
   ms.main.forEach(function (s) {
     addItem(s.host, t('trackers.suggestMain', { host: s.host, from: s.from || tr.domain || '' }), mirrorReason(s.reason), 'main|' + mirrorHostKey(s.host), [
       { icon: 'check', label: t('trackers.suggestApply'), run: function () { applyMainSuggestion(d, s.host); } },
-      { icon: 'eyeHidden', label: t('trackers.suggestDismiss'), run: function (btn) { dismissMirrorSuggestion(d, s, btn); } },
+      { icon: 'x', label: t('trackers.suggestDismiss'), run: function (btn) { dismissMirrorSuggestion(d, s, btn); } },
     ]);
   });
   // при выключенных зеркалах поле с ними спрятано, убирать оттуда нечего
   if (useMirrors) ms.remove.forEach(function (s) {
     addItem(s.host, t('trackers.suggestRemove', { host: s.host }), mirrorReason(s.reason), 'remove|' + mirrorHostKey(s.host), [
       { icon: 'check', label: t('trackers.suggestApply'), run: function () { removeMirrorChip(d, s.host); } },
-      { icon: 'eyeHidden', label: t('trackers.suggestDismiss'), run: function (btn) { dismissMirrorSuggestion(d, s, btn); } },
+      { icon: 'x', label: t('trackers.suggestDismiss'), run: function (btn) { dismissMirrorSuggestion(d, s, btn); } },
     ]);
   });
   const parts = rows.length ? [html`<div class="tr-suggestion-block">${rows}</div>`] : [];
@@ -1110,10 +1110,6 @@ export function renderTrackers(el, trackers, types) {
           method: 'PUT',
           body: JSON.stringify({ enabled: enabled }),
         });
-        showToast(t('trackers.enabledSaved', {
-          key: key,
-          state: enabled ? t('trackers.enabledOn') : t('trackers.enabledOff'),
-        }), 'success');
         if (item._trackerSaved) item._trackerSaved.enabled = enabled;
       } catch (err) {
         checkbox.checked = prev;

@@ -4,9 +4,11 @@ import { hydrateIcons, icon } from './icons.js';
 import { createPoller } from './poller.js';
 import { currentView } from './router.js';
 import { initCustomSelects } from './select.js';
+import { buildSegmentControl, initSegmentControls } from './components.js';
+import { copyText } from './confirm.js';
 import { html, formatLogTime, updateRefreshedAt } from './util.js';
 
-export let logsState = { limit: 200, level: '', items: [] };
+export let logsState = { limit: 200, level: '', items: [], tab: 'log', events: [], eventsLoaded: false, eventsKey: '', focusText: '', focusUntil: 0 };
 export let logsFetchGen = 0;
 
 export const LOG_LEVELS = ['ERROR', 'WARN', 'INFO'];
@@ -44,6 +46,7 @@ export async function loadLogs() {
       renderLogs(el, data);
       updateRefreshedAt('logs-last-updated', 'logs.lastUpdated');
     }
+    if (logsState.tab === 'events') refreshEvents(false, true);
     ensureLogsPolling();
   } catch (err) {
     if (!hadContent) {
@@ -57,6 +60,7 @@ export async function refreshLogs(manual) {
   if (currentView !== 'logs' || document.visibilityState !== 'visible') return;
   const el = document.getElementById('view-logs');
   if (!el || !el.querySelector('.logs-feed')) return;
+  if (logsState.tab === 'events') return refreshEvents(manual, manual);
 
   if (manual) {
     const btn = document.getElementById('logs-refresh-btn');
@@ -76,6 +80,153 @@ export async function refreshLogs(manual) {
     const btn = document.getElementById('logs-refresh-btn');
     if (btn) btn.classList.remove('is-spinning');
   }
+}
+
+const EVENT_SUCCESS_KINDS = ['updated', 'tracker_up'];
+const EVENT_ERROR_KINDS = ['broken', 'tracker_down', 'check_failed', 'ui_error'];
+
+export function eventLevel(kind) {
+  if (EVENT_SUCCESS_KINDS.indexOf(kind) >= 0) return 'success';
+  if (EVENT_ERROR_KINDS.indexOf(kind) >= 0) return 'error';
+  return 'info';
+}
+
+export function renderEventLine(item, i) {
+  const level = eventLevel(item.kind);
+  const iconName = level === 'success' ? 'check' : level === 'error' ? 'warning' : 'info';
+  const subject = item.subject ? html`<span class="event-subject">${item.subject}</span>` : '';
+  const source = item.source === 'ui' ? html`<span class="event-source">${t('events.sourceUi')}</span>` : '';
+  // ссылка только на внутренний хеш: javascript: и внешние адреса отсекаем
+  const path = typeof item.app_path === 'string' ? item.app_path : '';
+  // ошибка, случившаяся на самой странице логов, вела бы сюда же и ничего не открывала
+  const route = path.slice(1).split('?')[0];
+  const link = path.startsWith('#') && route !== 'logs' ? html`<a class="event-link" href="${path}">${t('events.open')}</a>` : '';
+  return html`<div class="event-line event-${level}"><span class="log-time">${formatLogTime(item.time)}</span><button type="button" class="event-copy" data-i="${i}" title="${t('events.copy')}" aria-label="${t('events.copy')}"><span data-icon="copy"></span></button><span class="event-icon" data-icon="${iconName}"></span><span class="event-text">${item.text || ''}</span>${subject}${source}${link}</div>`;
+}
+
+export function renderEventsFeed(el, data) {
+  const feed = el.querySelector('.events-feed');
+  if (!feed) return;
+  // data === null при возврате на страницу: рисуем из кеша
+  if (data) {
+    logsState.events = data.items || [];
+    logsState.eventsLoaded = true;
+    // опрос раз в 10 с перерисовывал ленту и сбрасывал прокрутку к найденному событию
+    const key = logsState.events.map(function (item) { return item.id; }).join(',');
+    if (key === logsState.eventsKey && feed.querySelector('.event-line')) {
+      applyEventFocus(feed);
+      return;
+    }
+    logsState.eventsKey = key;
+  }
+  if (!logsState.eventsLoaded) return;
+  if (!logsState.events.length) {
+    feed.innerHTML = html`<div class="log-empty">${t('events.empty')}</div>`;
+    return;
+  }
+  const scroll = feed.scrollTop;
+  let parts = '';
+  logsState.events.forEach(function (item, i) { parts += renderEventLine(item, i); });
+  feed.innerHTML = parts;
+  feed.scrollTop = scroll;
+  hydrateIcons(feed);
+  applyEventFocus(feed);
+}
+
+// текст события на сервере обрезан до 1000 символов и без пробелов по краям, как в reportUIError
+export function openEventsAndFocus(text) {
+  logsState.focusText = String(text).slice(0, 1000).trim();
+  logsState.focusUntil = Date.now() + 30000;
+  const el = document.getElementById('view-logs');
+  const seg = currentView === 'logs' && el ? el.querySelector('.logs-card-header .seg-ctrl') : null;
+  if (!seg) {
+    logsState.tab = 'events';
+    location.hash = '#logs';
+    return;
+  }
+  if (logsState.tab === 'events') {
+    refreshEvents(false, true);
+    return;
+  }
+  const btn = seg.querySelector('.seg-ctrl-btn[data-value="events"]');
+  if (btn) btn.click();
+}
+
+function applyEventFocus(feed) {
+  if (!logsState.focusText) return;
+  // запись ошибки могла еще не дойти до сервера: ищем на следующих опросах, но недолго
+  if (Date.now() > logsState.focusUntil) {
+    logsState.focusText = '';
+    return;
+  }
+  const i = logsState.events.findIndex(function (item) {
+    return item.source === 'ui' && item.text === logsState.focusText;
+  });
+  if (i < 0) return;
+  logsState.focusText = '';
+  const line = feed.children[i];
+  if (!line) return;
+  line.classList.add('event-focus');
+  // длинная ошибка выше ленты: по центру ее начало уходило за верх, крутим к началу записи
+  feed.scrollTop += line.getBoundingClientRect().top - feed.getBoundingClientRect().top - 8;
+}
+
+async function copyEventText(btn) {
+  const item = logsState.events[parseInt(btn.getAttribute('data-i'), 10)];
+  if (!item) return;
+  try {
+    await copyText(item.text || '');
+  } catch (_) {
+    showToast(t('logs.copyFail'), 'error');
+    return;
+  }
+  const iconEl = btn.querySelector('[data-icon]');
+  iconEl.setAttribute('data-icon', 'check');
+  hydrateIcons(btn);
+  btn.classList.add('is-copied');
+  setTimeout(function () {
+    iconEl.setAttribute('data-icon', 'copy');
+    hydrateIcons(btn);
+    btn.classList.remove('is-copied');
+  }, 1500);
+}
+
+// loud: показать ошибку первой загрузки (переключение вкладки, ручное обновление),
+// фоновый опрос молчит
+export async function refreshEvents(manual, loud) {
+  if (currentView !== 'logs' || document.visibilityState !== 'visible') return;
+  const el = document.getElementById('view-logs');
+  if (!el || !el.querySelector('.events-feed')) return;
+
+  const btn = manual ? document.getElementById('logs-refresh-btn') : null;
+  if (btn) btn.classList.add('is-spinning');
+
+  const fetchGen = ++logsFetchGen;
+  try {
+    const data = await fetchJSON('/api/events?limit=500');
+    if (fetchGen !== logsFetchGen) return;
+    renderEventsFeed(el, data);
+    updateRefreshedAt('logs-last-updated', 'logs.lastUpdated');
+  } catch (err) {
+    if (loud && fetchGen === logsFetchGen) {
+      const feed = el.querySelector('.events-feed');
+      if (feed && !logsState.eventsLoaded) feed.innerHTML = html`<div class="log-empty">${err.message}</div>`;
+      showToast(err.message, 'error');
+    }
+  } finally {
+    if (btn) btn.classList.remove('is-spinning');
+    updateDryRunButtonState();
+  }
+}
+
+function applyLogsTab(el) {
+  const events = logsState.tab === 'events';
+  el.querySelector('.logs-feed').classList.toggle('hidden', events);
+  el.querySelector('.events-feed').classList.toggle('hidden', !events);
+  ['logs-level-group', 'logs-limit-group', 'logs-copy-btn', 'logs-download-btn'].forEach(function (id) {
+    const node = el.querySelector('#' + id);
+    if (node) node.classList.toggle('hidden', events);
+  });
 }
 
 export function renderLogLine(item) {
@@ -189,11 +340,41 @@ export function renderLogs(el, data) {
     return html`<option value="${lv}"${logsState.level === lv ? ' selected' : ''}>${label}</option>`;
   });
 
-  el.innerHTML = html`<div class="page-header logs-page-header"><div class="page-header-row"><h1 class="page-title">${t('logs.title')}</h1><div class="page-header-actions"><span class="text-muted logs-last-updated" id="logs-last-updated"></span><button type="button" class="btn btn-sm btn-ghost" id="logs-dryrun-btn" title="${t('logs.dryRunHint')}">${t('logs.dryRun')}</button><button type="button" class="btn btn-sm btn-ghost btn-icon" id="logs-copy-btn" title="${t('logs.copy')}" aria-label="${t('logs.copy')}"><span data-icon="copy"></span></button><button type="button" class="btn btn-sm btn-ghost btn-icon" id="logs-download-btn" title="${t('logs.download')}" aria-label="${t('logs.download')}"><span data-icon="download"></span></button><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="logs-refresh-btn" aria-label="${t('logs.refresh')}"><span data-icon="refresh"></span></button></div></div></div><div class="card logs-card"><div class="card-header logs-card-header"><div class="form-group logs-limit-group"><label class="form-label" for="logs-level">${t('logs.level')}</label><select class="select" id="logs-level">${levelParts}</select></div><div class="form-group logs-limit-group"><label class="form-label" for="logs-limit">${t('logs.limit')}</label><select class="select" id="logs-limit">${limitParts}</select></div></div><div class="logs-feed card-body-flush"></div></div>`;
+  const tabsControl = buildSegmentControl([
+    { value: 'log', label: t('logs.tabLog'), title: t('logs.tabLog') },
+    { value: 'events', label: t('logs.tabEvents'), title: t('logs.tabEvents') },
+  ], logsState.tab, t('logs.tabsLabel'));
+
+  el.innerHTML = html`<div class="page-header logs-page-header"><div class="page-header-row"><h1 class="page-title">${t('logs.title')}</h1><div class="page-header-actions"><span class="text-muted logs-last-updated" id="logs-last-updated"></span><button type="button" class="btn btn-sm btn-ghost" id="logs-dryrun-btn" title="${t('logs.dryRunHint')}">${t('logs.dryRun')}</button><button type="button" class="btn btn-sm btn-ghost btn-icon" id="logs-copy-btn" title="${t('logs.copy')}" aria-label="${t('logs.copy')}"><span data-icon="copy"></span></button><button type="button" class="btn btn-sm btn-ghost btn-icon" id="logs-download-btn" title="${t('logs.download')}" aria-label="${t('logs.download')}"><span data-icon="download"></span></button><button type="button" class="btn btn-sm btn-ghost btn-icon btn-refresh" id="logs-refresh-btn" aria-label="${t('logs.refresh')}"><span data-icon="refresh"></span></button></div></div></div><div class="card logs-card"><div class="card-header logs-card-header">${tabsControl}<div class="form-group logs-limit-group" id="logs-level-group"><label class="form-label" for="logs-level">${t('logs.level')}</label><select class="select" id="logs-level">${levelParts}</select></div><div class="form-group logs-limit-group" id="logs-limit-group"><label class="form-label" for="logs-limit">${t('logs.limit')}</label><select class="select" id="logs-limit">${limitParts}</select></div></div><div class="logs-feed card-body-flush"></div><div class="events-feed card-body-flush hidden"></div></div>`;
 
   renderLogsFeed(el, data);
+  renderEventsFeed(el, null);
+  applyLogsTab(el);
   hydrateIcons(el);
   initCustomSelects(el);
+  initSegmentControls(el);
+
+  const eventsFeed = el.querySelector('.events-feed');
+  if (eventsFeed) {
+    eventsFeed.addEventListener('click', function (e) {
+      const btn = e.target.closest('.event-copy');
+      if (btn) copyEventText(btn);
+    });
+  }
+
+  const tabsSeg = el.querySelector('.logs-card-header .seg-ctrl');
+  if (tabsSeg) {
+    tabsSeg.addEventListener('segchange', function (e) {
+      const tab = e.detail && e.detail.value === 'events' ? 'events' : 'log';
+      if (tab === logsState.tab) return;
+      logsState.tab = tab;
+      applyLogsTab(el);
+      // загрузка страницы могла быть отменена сменой вкладки до запуска опроса
+      ensureLogsPolling();
+      if (tab === 'events') refreshEvents(false, true);
+      else refreshLogs(false);
+    });
+  }
 
   const refreshBtn = el.querySelector('#logs-refresh-btn');
   if (refreshBtn) {

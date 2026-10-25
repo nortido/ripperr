@@ -152,7 +152,6 @@ async function enableHere(btn) {
     const dev = await fetchJSON('/api/push/devices', { method: 'POST', body: JSON.stringify(Object.assign(sub.toJSON(), { origin: location.origin })) });
     localStorage.setItem(DEVICE_KEY, JSON.stringify({ id: dev.id, endpoint: sub.endpoint }));
     await load();
-    showToast(t('integrations.notifyBrowserEnabled'), 'success');
   } catch (err) {
     showToast(err.message, 'error');
     render();

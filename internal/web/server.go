@@ -41,26 +41,35 @@ type store interface {
 	DeleteTracker(ctx context.Context, trackerID int) error
 }
 
+type eventStore interface {
+	AddEvent(ctx context.Context, e storage.EventEntry) error
+	ListEvents(ctx context.Context, limit int) ([]storage.EventEntry, error)
+}
+
 type Server struct {
-	db          store
-	reload      func()
-	effective   func() config.App
-	strict      func() (config.App, error)
-	runnerState *runner.State
-	alerts      *breakeralerts.Registry
-	srv         *http.Server
-	authCache   authCache
-	authMu      sync.Mutex
-	loginFails  *loginThrottle
-	deviceFails *loginThrottle
-	hashSlots   chan struct{}
-	listen      string
-	lnMu        sync.Mutex
-	ln          net.Listener
-	lnHost      string
-	closed      bool
-	done        chan struct{}
-	serveErr    chan error
+	db           store
+	events       eventStore
+	reload       func()
+	effective    func() config.App
+	strict       func() (config.App, error)
+	runnerState  *runner.State
+	alerts       *breakeralerts.Registry
+	srv          *http.Server
+	authCache    authCache
+	authMu       sync.Mutex
+	loginFails   *loginThrottle
+	deviceFails  *loginThrottle
+	hashSlots    chan struct{}
+	listen       string
+	lnMu         sync.Mutex
+	ln           net.Listener
+	lnHost       string
+	closed       bool
+	done         chan struct{}
+	serveErr     chan error
+	uiEventMu    sync.Mutex
+	uiEventStart time.Time
+	uiEventCount int
 }
 
 func New(db store, reload func(), effective func() config.App, listen string, runnerState *runner.State, alerts *breakeralerts.Registry) *Server {
@@ -93,6 +102,8 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("POST /api/auth/password", withMaxBody(s.handleAuthPassword))
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
+	mux.HandleFunc("GET /api/events", s.handleGetEvents)
+	mux.HandleFunc("POST /api/events", withMaxBody(s.handlePostEvent))
 	mux.HandleFunc("POST /api/run", withMaxBody(s.handleRun))
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/history/summary", s.handleHistorySummary)
@@ -133,6 +144,10 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 		IdleTimeout:       120 * time.Second,
 	}
 	return s
+}
+
+func (s *Server) SetEvents(e eventStore) {
+	s.events = e
 }
 
 func (s *Server) SetStrictEffective(f func() (config.App, error)) {

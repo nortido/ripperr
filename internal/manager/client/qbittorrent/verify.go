@@ -110,8 +110,14 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 	if err = c.client.AddTorrentFromMemoryCtx(ctx, data, addOptions(addOpts)); err != nil {
 		return err
 	}
-	if err = c.ensurePresentAfterAdd(ctx, hash); err != nil || len(opts.FileSelection) == 0 {
+	if err = c.ensurePresentAfterAdd(ctx, hash); err != nil {
 		return err
+	}
+	if len(opts.FilePaths) > 0 {
+		c.restorePaths(ctx, hash, opts)
+	}
+	if len(opts.FileSelection) == 0 {
+		return nil
 	}
 	return c.applySelection(ctx, hash, opts)
 }
