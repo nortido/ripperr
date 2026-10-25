@@ -160,7 +160,7 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 		c.setCookies(helper.MergeCookies(c.cookieSnapshot(), res.Cookies()))
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()
-		c.setCookies(c.syncFlarePageCookies(ctx, c.cookieSnapshot()))
+		c.syncFlarePageCookies(ctx)
 	}
 	c.setCookies(c.finalizeCookies(c.cookieSnapshot()))
 	if err = c.validateLoginAuth(); err != nil {
@@ -191,6 +191,13 @@ func (c *client) cookieSnapshot() []*http.Cookie {
 func (c *client) setCookies(v []*http.Cookie) {
 	c.cm.Lock()
 	c.cookies = v
+	c.cm.Unlock()
+}
+
+func (c *client) mergeCookies(extra []*http.Cookie) {
+	// слияние под одной блокировкой: параллельный запрос мог добавить куку, пока шла сеть
+	c.cm.Lock()
+	c.cookies = c.finalizeCookies(helper.MergeCookies(c.cookies, extra))
 	c.cm.Unlock()
 }
 
@@ -277,21 +284,21 @@ func (c *client) flarePageURL() string {
 	return c.GetHost()
 }
 
-func (c *client) syncFlarePageCookies(ctx context.Context, base []*http.Cookie) []*http.Cookie {
+func (c *client) syncFlarePageCookies(ctx context.Context) {
 	if c.GetProxyType() != proxyModel.TypeFlare {
-		return base
+		return
 	}
 	if _, ok := c.flareSessionID(); !ok {
 		if f, ok := c.ITracker.(postLoginFetcher); !ok || f.PostLoginURL() == "" {
-			return base
+			return
 		}
 	}
 	extra, err := c.fetchPageCookies(ctx, c.flarePageURL())
 	if err != nil {
 		logger.Warn(fmt.Sprintf("%s flare cookie sync failed: %s", c.GetName(), err))
-		return base
+		return
 	}
-	return helper.MergeCookies(base, extra)
+	c.mergeCookies(extra)
 }
 
 func (c *client) preflightFlareLogin(ctx context.Context) (err error) {
@@ -305,12 +312,13 @@ func (c *client) preflightFlareLogin(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("%s login preflight: %w", c.GetName(), err)
 	}
-	c.setCookies(c.finalizeCookies(helper.MergeCookies(c.cookieSnapshot(), extra)))
+	c.mergeCookies(extra)
 	return nil
 }
 
 func (c *client) ensureFlareCookiesForDownload(ctx context.Context, link string) (err error) {
-	c.setCookies(c.finalizeCookies(c.syncFlarePageCookies(ctx, c.cookieSnapshot())))
+	c.syncFlarePageCookies(ctx)
+	c.mergeCookies(nil)
 	var u *url.URL
 	if u, err = url.Parse(link); err != nil {
 		return
@@ -585,9 +593,7 @@ func (c *client) absorbFlareCookies(res *http.Response) {
 		return
 	}
 	if fresh := res.Cookies(); len(fresh) > 0 {
-		c.cm.Lock()
-		c.cookies = c.finalizeCookies(helper.MergeCookies(c.cookies, fresh))
-		c.cm.Unlock()
+		c.mergeCookies(fresh)
 	}
 }
 

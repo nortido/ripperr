@@ -916,7 +916,7 @@ func TestSubmit_FilesKeptCarriesOldFileSelection(t *testing.T) {
 	if _, err := submitDeleteFirst(t, stub); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertCalls(t, stub, "details", "incoming", "exists", "add", "delete")
+	assertCalls(t, stub, "details", "incoming", "exists", "blackhole-write", "add", "blackhole-remove", "delete")
 	if !equalStrings(stub.filesHashes, []string{"oldhash"}) || !slices.Equal(stub.addOpts.FileSelection, stub.files) {
 		t.Errorf("files read %v, add selection %v, want [oldhash] and %v", stub.filesHashes, stub.addOpts.FileSelection, stub.files)
 	}
@@ -987,7 +987,7 @@ func TestSubmit_FilesKeptAddErrorWithSelectionDiscardsNew(t *testing.T) {
 		discard   bool
 		newSeq    []existsAnswer
 	}{
-		{"selection", partialSelection(), fmt.Errorf("add failed"), []string{"details", "incoming", "exists", "add", "exists", "discard", "blackhole-remove"}, true, []existsAnswer{{present: false}, {present: true}}},
+		{"selection", partialSelection(), fmt.Errorf("add failed"), []string{"details", "incoming", "exists", "blackhole-write", "add", "exists", "discard", "blackhole-remove"}, true, []existsAnswer{{present: false}, {present: true}}},
 		{"no selection", nil, fmt.Errorf("add failed"), []string{"details", "incoming", "add"}, false, nil},
 		{"selection already added", partialSelection(), model.ErrAlreadyAdded, []string{"details", "incoming", "exists"}, false, nil},
 	}
@@ -1097,7 +1097,7 @@ func TestSubmit_SelectionAlreadyAddedOnAddKeepsOld(t *testing.T) {
 	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
 		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
 	}
-	assertCalls(t, stub, "details", "incoming", "exists", "add")
+	assertCalls(t, stub, "details", "incoming", "exists", "blackhole-write", "add", "blackhole-remove")
 	assertNoDiscardNoResume(t, stub)
 }
 
@@ -1140,6 +1140,48 @@ func TestSubmit_DeleteFirstSlowAddKeepsOld(t *testing.T) {
 	assertCalls(t, stub, afterStoppedAdd("exists", "discard", "blackhole-remove")...)
 	if len(stub.deleteOpts) != 0 || !equalStrings(stub.discardHashes, []string{newHash}) {
 		t.Errorf("delete %+v, discard %v, want no delete and discard of new %s", stub.deleteOpts, stub.discardHashes, newHash)
+	}
+}
+
+func TestSubmit_SelectionLateAddLeavesReplacePair(t *testing.T) {
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.files = partialSelection()
+	stub.addErr = fmt.Errorf("torrent add failed (not present after add)")
+	newHash, err := submitDeleteFirst(t, stub)
+	if !errors.Is(err, stub.addErr) {
+		t.Fatalf("err = %v, want %v", err, stub.addErr)
+	}
+	assertCalls(t, stub, afterStoppedAdd("exists")...)
+	o := stub.blackholeOpts
+	if o.Hash != newHash || o.ReplacesHash != "oldhash" || o.Stopped || !slices.Equal(o.FileSelection, partialSelection()) {
+		t.Errorf("pair opts %+v, want hash %s replacing oldhash, not stopped, old selection", o, newHash)
+	}
+	if len(stub.deleteOpts) != 0 {
+		t.Errorf("delete %+v, want none", stub.deleteOpts)
+	}
+	assertNoDiscardNoResume(t, stub)
+}
+
+func TestSubmit_SelectionAddOverBudgetRollsBack(t *testing.T) {
+	withReplaceBudgets(t, 50*time.Millisecond, time.Minute)
+	stub := deleteFirstStub()
+	stub.deletesFiles = false
+	stub.files = partialSelection()
+	stub.addDelay = 100 * time.Millisecond
+	_, newHash := buildTestTorrent(t)
+	stub.existsSeq[newHash] = []existsAnswer{{present: false}, {present: true}}
+	before := time.Now()
+	_, err := submitDeleteFirst(t, stub)
+	if err == nil || !strings.Contains(err.Error(), "exceeded 50ms") {
+		t.Fatalf("err = %v, want budget error", err)
+	}
+	assertCalls(t, stub, afterStoppedAdd("exists", "discard", "blackhole-remove")...)
+	if len(stub.deleteOpts) != 0 || !equalStrings(stub.discardHashes, []string{newHash}) {
+		t.Errorf("delete %+v, discard %v, want no delete and discard of new %s", stub.deleteOpts, stub.discardHashes, newHash)
+	}
+	if !stub.addHasDeadline || stub.addDeadline.After(before.Add(50*time.Millisecond+10*time.Millisecond)) {
+		t.Errorf("add deadline %v (set %v), want at most 50ms after %v", stub.addDeadline, stub.addHasDeadline, before)
 	}
 }
 
@@ -1205,7 +1247,7 @@ func TestSubmit_SelectionAlreadyAddedOnAddConverges(t *testing.T) {
 	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
 		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
 	}
-	assertCalls(t, stub, "details", "incoming", "exists", "add", "apply", "delete")
+	assertCalls(t, stub, "details", "incoming", "exists", "blackhole-write", "add", "blackhole-remove", "apply", "delete")
 	assertConverged(t, stub, newHash)
 }
 
@@ -1239,7 +1281,7 @@ func TestSubmit_SelectionConvergeGuards(t *testing.T) {
 				want := []string{"details", "incoming", "exists"}
 				if onAdd {
 					stub.addErr = fmt.Errorf("%w: race", model.ErrAlreadyAdded)
-					want = append(want, "add")
+					want = append(want, "blackhole-write", "add", "blackhole-remove")
 				} else {
 					stub.existsByHash[newHash] = true
 				}

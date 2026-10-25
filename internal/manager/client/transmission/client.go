@@ -514,6 +514,43 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 
 const selectionCleanupTimeout = 10 * time.Second
 
+func (c *Client) ConvergeAdded(ctx context.Context, hash string, _ []byte, opts model.ManagerAddFileOptions) error {
+	if len(opts.FileSelection) == 0 {
+		return nil
+	}
+	t, err := c.torrentByHash(ctx, hash, []string{"hashString", "status"})
+	if err != nil {
+		return err
+	}
+	if t == nil {
+		return fmt.Errorf("torrent %s not found", hash)
+	}
+	if t.Status == 1 || t.Status == 2 {
+		return fmt.Errorf("converge %s: torrent %s is checking, not settled yet", opts.Name, hash)
+	}
+	// запущенный торрент мог запустить пользователь, выбор на ходу не навязываем
+	if t.Status != 0 {
+		logger.Info(fmt.Sprintf("transmission: converge %s: torrent %s is not stopped, left as is", opts.Name, hash))
+		return nil
+	}
+	files, err := c.Files(ctx, hash)
+	if err != nil {
+		return err
+	}
+	// хоть один снятый файл значит выбор уже ставили мы или пользователь
+	for _, f := range files {
+		if !f.Wanted {
+			return nil
+		}
+	}
+	// без discard: тот же хеш мог добавить сам пользователь, торрент остается,
+	// вызывающий держит пару и повторит
+	if err = c.applySelection(ctx, hash, opts); err != nil {
+		return fmt.Errorf("converge %s: apply file selection to %s: %w", opts.Name, hash, err)
+	}
+	return nil
+}
+
 func (c *Client) ApplySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
 	return c.applySelection(ctx, hash, opts)
 }

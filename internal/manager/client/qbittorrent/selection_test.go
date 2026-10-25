@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
@@ -23,6 +24,19 @@ type selectionRecorder struct {
 	forms     map[string]map[string]string
 	// 0 значит 200
 	renameStatus int
+	// nil значит статичный список files, иначе живые пути с проверками как в qbit
+	paths   []string
+	lag     int
+	queued  []queuedRename
+	failOld string
+	// непустое: торрент уже есть в qbit в этом состоянии, как после позднего добавления
+	state qbt.TorrentState
+}
+
+type queuedRename struct {
+	idx  int
+	to   string
+	left int
 }
 
 func (r *selectionRecorder) log() []string {
@@ -70,6 +84,10 @@ func newSelectionServer(t *testing.T, hash string, files qbt.TorrentFiles, prioS
 		}
 		switch name {
 		case "info":
+			if rec.state != "" {
+				_ = json.NewEncoder(w).Encode([]qbt.Torrent{{Hash: hash, Name: "new", State: rec.state}})
+				return
+			}
 			if added {
 				_ = json.NewEncoder(w).Encode([]qbt.Torrent{{Hash: hash, Name: "new"}})
 				return
@@ -79,12 +97,20 @@ func newSelectionServer(t *testing.T, hash string, files qbt.TorrentFiles, prioS
 		case "add":
 			added = true
 		case "files":
+			if rec.paths != nil {
+				_ = json.NewEncoder(w).Encode(rec.serveLive())
+				return
+			}
 			_ = json.NewEncoder(w).Encode(files)
 			return
 		case "filePrio":
 			w.WriteHeader(prioStatus)
 			return
 		case "renameFile", "renameFolder":
+			if name == "renameFile" && rec.paths != nil {
+				w.WriteHeader(rec.renameLive(r.FormValue("oldPath"), r.FormValue("newPath")))
+				return
+			}
 			if rec.renameStatus != 0 {
 				w.WriteHeader(rec.renameStatus)
 				return
@@ -377,5 +403,134 @@ func TestAddFromBuffer_FilePathsOnlyAddsStarted(t *testing.T) {
 	}
 	if slices.Contains(log, "start") || slices.Contains(log, "resume") {
 		t.Fatalf("started add needs no start call, log %v", log)
+	}
+}
+
+func (r *selectionRecorder) serveLive() qbt.TorrentFiles {
+	rest := r.queued[:0]
+	for _, q := range r.queued {
+		q.left--
+		if q.left <= 0 {
+			r.paths[q.idx] = q.to
+			continue
+		}
+		rest = append(rest, q)
+	}
+	r.queued = rest
+	return filesOf(r.paths...)
+}
+
+func (r *selectionRecorder) renameLive(oldPath, newPath string) int {
+	idx := slices.Index(r.paths, oldPath)
+	if idx < 0 || oldPath == r.failOld || slices.Contains(r.paths, newPath) {
+		return http.StatusConflict
+	}
+	for _, q := range r.queued {
+		if q.idx == idx || q.to == newPath {
+			return http.StatusConflict
+		}
+	}
+	if r.lag == 0 {
+		r.paths[idx] = newPath
+	} else {
+		r.queued = append(r.queued, queuedRename{idx: idx, to: newPath, left: r.lag})
+	}
+	return http.StatusOK
+}
+
+func newLiveRenameServer(t *testing.T, lag int, failOld string, paths ...string) (*Client, *selectionRecorder, []byte) {
+	t.Helper()
+	origPoll, origVisible := renamePoll, renameVisibleTimeout
+	renamePoll, renameVisibleTimeout = time.Millisecond, 2*time.Second
+	t.Cleanup(func() { renamePoll, renameVisibleTimeout = origPoll, origVisible })
+	data, hash := buildTestTorrent(t)
+	c, rec := newSelectionServer(t, hash, nil, http.StatusOK)
+	rec.mu.Lock()
+	rec.paths, rec.lag, rec.failOld = slices.Clone(paths), lag, failOld
+	rec.mu.Unlock()
+	return c, rec, data
+}
+
+func liveRestore(t *testing.T, c *Client, rec *selectionRecorder, data []byte, want ...string) []string {
+	t.Helper()
+	opts := model.ManagerAddFileOptions{Name: "n", FilePaths: want}
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts); err != nil {
+		t.Fatalf("AddFromBuffer: %v", err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	for _, q := range rec.queued {
+		rec.paths[q.idx] = q.to
+	}
+	if slices.Contains(rec.endpoints, "delete") {
+		t.Fatalf("unexpected delete, log %v", rec.endpoints)
+	}
+	return slices.Clone(rec.paths)
+}
+
+func TestAddFromBuffer_FilePathsRenameChain(t *testing.T) {
+	c, rec, data := newLiveRenameServer(t, 0, "", "R/e1.mkv", "R/e2.mkv")
+	got := liveRestore(t, c, rec, data, "R/e2.mkv", "R/e3.mkv")
+	if want := []string{"R/e2.mkv", "R/e3.mkv"}; !slices.Equal(got, want) {
+		t.Fatalf("paths = %v, want %v, log %v", got, want, rec.log())
+	}
+	if n := countOf(rec.log(), "renameFile"); n != 2 {
+		t.Fatalf("renameFile calls = %d, want 2", n)
+	}
+}
+
+func TestAddFromBuffer_FilePathsRenameSwap(t *testing.T) {
+	c, rec, data := newLiveRenameServer(t, 0, "", "R/a.mkv", "R/b.mkv")
+	got := liveRestore(t, c, rec, data, "R/b.mkv", "R/a.mkv")
+	if want := []string{"R/b.mkv", "R/a.mkv"}; !slices.Equal(got, want) {
+		t.Fatalf("paths = %v, want %v, log %v", got, want, rec.log())
+	}
+}
+
+func TestAddFromBuffer_FilePathsRenameChainLagged(t *testing.T) {
+	c, rec, data := newLiveRenameServer(t, 2, "", "R/e1.mkv", "R/e2.mkv")
+	got := liveRestore(t, c, rec, data, "R/e2.mkv", "R/e3.mkv")
+	if want := []string{"R/e2.mkv", "R/e3.mkv"}; !slices.Equal(got, want) {
+		t.Fatalf("paths = %v, want %v, log %v", got, want, rec.log())
+	}
+	if n := countOf(rec.log(), "renameFile"); n != 2 {
+		t.Fatalf("renameFile calls = %d, want 2, log %v", n, rec.log())
+	}
+}
+
+func TestAddFromBuffer_FilePathsRenameCycleOfThree(t *testing.T) {
+	c, rec, data := newLiveRenameServer(t, 1, "", "R/a", "R/b", "R/c")
+	got := liveRestore(t, c, rec, data, "R/b", "R/c", "R/a")
+	if want := []string{"R/b", "R/c", "R/a"}; !slices.Equal(got, want) {
+		t.Fatalf("paths = %v, want %v, log %v", got, want, rec.log())
+	}
+	if n := countOf(rec.log(), "renameFile"); n != 4 {
+		t.Fatalf("renameFile calls = %d, want 4, log %v", n, rec.log())
+	}
+}
+
+func TestAddFromBuffer_FilePathsRenameFailureDropsDependent(t *testing.T) {
+	c, rec, data := newLiveRenameServer(t, 0, "R/e2.mkv", "R/e1.mkv", "R/e2.mkv")
+	got := liveRestore(t, c, rec, data, "R/e2.mkv", "R/e3.mkv")
+	if want := []string{"R/e1.mkv", "R/e2.mkv"}; !slices.Equal(got, want) {
+		t.Fatalf("paths = %v, want %v, log %v", got, want, rec.log())
+	}
+	if n := countOf(rec.log(), "renameFile"); n != 1 {
+		t.Fatalf("renameFile calls = %d, want 1, log %v", n, rec.log())
+	}
+}
+
+func TestAddFromBuffer_FilePathsIndependentRenamesNoExtraRead(t *testing.T) {
+	c, rec, data := newLiveRenameServer(t, 0, "", "R/e1.mkv", "R/e2.mkv")
+	got := liveRestore(t, c, rec, data, "R/x1.mkv", "R/x2.mkv")
+	if want := []string{"R/x1.mkv", "R/x2.mkv"}; !slices.Equal(got, want) {
+		t.Fatalf("paths = %v, want %v", got, want)
+	}
+	log := rec.log()
+	if n := countOf(log, "renameFile"); n != 2 {
+		t.Fatalf("renameFile calls = %d, want 2, log %v", n, log)
+	}
+	if n := countOf(log, "files"); n != 1 {
+		t.Fatalf("files reads = %d, want 1, log %v", n, log)
 	}
 }

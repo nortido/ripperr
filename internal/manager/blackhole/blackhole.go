@@ -45,6 +45,7 @@ type client interface {
 	Reachable(ctx context.Context) bool
 	Discard(ctx context.Context, hash string) error
 	Resume(ctx context.Context, hash string) error
+	ConvergeAdded(ctx context.Context, hash string, data []byte, opts model.ManagerAddFileOptions) error
 }
 
 type Store struct {
@@ -384,6 +385,10 @@ func (s *Store) SweepOnce(ctx context.Context) {
 			}
 		case errors.Is(addErr, model.ErrAlreadyAdded):
 			if s.Settled(ctx, p.hash) {
+				if err := s.converge(ctx, p); err != nil {
+					logger.Warn(fmt.Sprintf("blackhole sweep: converge %s (%s) failed: %v, keeping pair", p.opts.Name, p.hash, err))
+					continue
+				}
 				logger.Info(fmt.Sprintf("blackhole sweep: %s (%s) already added", p.opts.Name, p.hash))
 				removeBlackholePair(s.dir, p.hash)
 			}
@@ -406,6 +411,15 @@ func (s *Store) readd(ctx context.Context, p blackholePair) error {
 		return s.client.AddFromBuffer(addCtx, bytes.NewBuffer(p.torrent), opts)
 	}
 	return s.client.AddFromMagnet(addCtx, p.magnet, opts)
+}
+
+func (s *Store) converge(ctx context.Context, p blackholePair) error {
+	if len(p.opts.FileSelection) == 0 && len(p.opts.FilePaths) == 0 {
+		return nil
+	}
+	convCtx, cancel := context.WithTimeout(ctx, AddTimeout)
+	defer cancel()
+	return s.client.ConvergeAdded(convCtx, p.hash, p.torrent, p.opts)
 }
 
 func (s *Store) finishReplace(ctx context.Context, p blackholePair, prevAbsent map[string]time.Time) {

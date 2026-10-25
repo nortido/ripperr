@@ -51,6 +51,9 @@ type redownloadStubServer struct {
 	prioCalls        []string
 	startCalls       int
 	server           *httptest.Server
+	// после add торрент столько раз не виден в info: ensurePresentAfterAdd сдается, а он уже есть
+	hideAfterAdd  int
+	stateAfterAdd qbt.TorrentState
 }
 
 func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string) *redownloadStubServer {
@@ -116,8 +119,17 @@ func newRedownloadStubServer(t *testing.T, dir string, data []byte, hash string)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		var list []qbt.Torrent
+		if s.deleted && s.present && s.hideAfterAdd > 0 {
+			s.hideAfterAdd--
+			_ = json.NewEncoder(w).Encode(list)
+			return
+		}
 		if s.present {
-			list = append(list, s.torrent)
+			tor := s.torrent
+			if s.deleted && s.stateAfterAdd != "" {
+				tor.State = s.stateAfterAdd
+			}
+			list = append(list, tor)
 			if s.vanishNext {
 				s.vanishNext = false
 				s.present = false
@@ -620,4 +632,88 @@ func TestForceRedownloadWithoutRenamesAddsStarted(t *testing.T) {
 	if len(renames) != 0 {
 		t.Errorf("rename calls = %q, want none", renames)
 	}
+}
+
+func newLateAddStub(t *testing.T, root string, names ...string) (*Client, *redownloadStubServer, string) {
+	t.Helper()
+	withFastRedownloadTimings(t)
+	orig := presencePoll
+	presencePoll = time.Millisecond
+	t.Cleanup(func() { presencePoll = orig })
+	data, hash := buildMultiFileTestTorrent(t, root, names...)
+	dir := t.TempDir()
+	stub := newRedownloadStubServer(t, dir, data, hash)
+	stub.torrent.State = qbt.TorrentStateDownloading
+	stub.hideAfterAdd = 5
+	c, err := New(model.ManagerConfig{Host: stub.server.URL, DeleteEnabled: true, BlackholeDir: dir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c, stub, hash
+}
+
+func TestForceRedownloadLateAddAppliesSelection(t *testing.T) {
+	c, stub, hash := newLateAddStub(t, "Show", "a.mkv", "b.mkv")
+	stub.stateAfterAdd = qbt.TorrentStateStoppedDl
+	stub.files = []qbt.TorrentFile{{Name: "Show/a.mkv", Priority: 1}, {Index: 1, Name: "Show/b.mkv", Priority: 0}}
+	stub.filesAfterAdd = []qbt.TorrentFile{{Name: "Show/a.mkv", Priority: 1}, {Index: 1, Name: "Show/b.mkv", Priority: 1}}
+
+	if err := c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v", err)
+	}
+	stub.mu.Lock()
+	adds, prio, starts, deleted := stub.addCalls, stub.prioCalls, stub.startCalls, stub.deleted
+	stub.mu.Unlock()
+	if adds != 1 {
+		t.Fatalf("add requests = %d, want 1 (the second attempt must meet the late torrent)", adds)
+	}
+	if want := []string{"1=0"}; !slices.Equal(prio, want) {
+		t.Errorf("file priority calls = %v, want %v", prio, want)
+	}
+	if starts != 1 {
+		t.Errorf("start calls = %d, want 1", starts)
+	}
+	if !deleted {
+		t.Error("expected the redownload delete")
+	}
+}
+
+func TestForceRedownloadLateAddRestoresNames(t *testing.T) {
+	c, stub, hash := newLateAddStub(t, "Show", "e1.mkv", "e2.mkv")
+	stub.files = []qbt.TorrentFile{{Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/Episode 2.mkv", Priority: 1}}
+	stub.filesAfterAdd = []qbt.TorrentFile{{Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/e2.mkv", Priority: 1}}
+
+	if err := c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v", err)
+	}
+	stub.mu.Lock()
+	adds, renames, prio, starts := stub.addCalls, stub.renameCalls, stub.prioCalls, stub.startCalls
+	stub.mu.Unlock()
+	if adds != 1 {
+		t.Fatalf("add requests = %d, want 1", adds)
+	}
+	if want := []string{"file:Show/e2.mkv>Show/Episode 2.mkv"}; !slices.Equal(renames, want) {
+		t.Errorf("rename calls = %q, want %q", renames, want)
+	}
+	if len(prio) != 0 || starts != 0 {
+		t.Errorf("file priority calls = %v, start calls = %d, want none for a torrent added started", prio, starts)
+	}
+}
+
+func TestForceRedownloadLateAddConvergeFailureKeepsPair(t *testing.T) {
+	c, stub, hash := newLateAddStub(t, "Show", "a.mkv", "b.mkv")
+	stub.stateAfterAdd = qbt.TorrentStateCheckingResumeData
+	stub.files = []qbt.TorrentFile{{Name: "Show/a.mkv", Priority: 1}, {Index: 1, Name: "Show/b.mkv", Priority: 0}}
+	stub.filesAfterAdd = []qbt.TorrentFile{{Name: "Show/a.mkv", Priority: 1}, {Index: 1, Name: "Show/b.mkv", Priority: 1}}
+
+	if err := c.ForceRedownload(context.Background(), hash, model.RedownloadOptions{}); err != nil {
+		t.Fatalf("ForceRedownload: %v, want nil: the torrent is back, the sweeper finishes it", err)
+	}
+	stub.mu.Lock()
+	adds, prio, starts := stub.addCalls, stub.prioCalls, stub.startCalls
+	stub.mu.Unlock()
+	if adds != 1 || len(prio) != 0 || starts != 0 {
+		t.Errorf("add requests = %d, file priority calls = %v, start calls = %d, want 1, none, 0", adds, prio, starts)
+	}
+	assertPairRemains(t, stub.dir, hash)
 }

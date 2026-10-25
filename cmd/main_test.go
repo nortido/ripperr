@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -211,5 +212,45 @@ func TestReloadMarksRestartDuringPass(t *testing.T) {
 				t.Fatal("reload signal not sent")
 			}
 		})
+	}
+}
+
+func effectiveCfg(magnet int64, proxy string) config.App {
+	cfg := config.DefaultApp()
+	cfg.Runner.ListRefreshPerDay = 1
+	cfg.Runner.MagnetTimeout = magnet
+	cfg.Runner.DownloadProxy = proxy
+	return cfg
+}
+
+func TestValidateEffectiveStoredOverridesBadEnv(t *testing.T) {
+	if err := validateEffective(effectiveCfg(1, ""), effectiveCfg(60, "")); err != nil {
+		t.Fatalf("stored magnet timeout overrides bad env, got %v", err)
+	}
+}
+
+func TestValidateEffectiveStoredProxyOverridesBadEnv(t *testing.T) {
+	if err := validateEffective(effectiveCfg(60, "proxy.lan:3128"), effectiveCfg(60, "http://db-proxy:3128")); err != nil {
+		t.Fatalf("stored proxy overrides bad env, got %v", err)
+	}
+}
+
+func TestValidateEffectiveStopsOnBadEnvInEffect(t *testing.T) {
+	err := validateEffective(effectiveCfg(1, ""), effectiveCfg(1, ""))
+	if err == nil || !strings.Contains(err.Error(), "RUNNER_MAGNET_TIMEOUT") {
+		t.Fatalf("bad env magnet timeout in effect must fail, got %v", err)
+	}
+	err = validateEffective(effectiveCfg(60, "proxy.lan:3128"), effectiveCfg(60, "proxy.lan:3128"))
+	if err == nil || !strings.HasPrefix(err.Error(), "RUNNER_DOWNLOAD_PROXY: ") {
+		t.Fatalf("bad env proxy in effect must fail with prefix, got %v", err)
+	}
+}
+
+func TestValidateEffectiveChecksSchedule(t *testing.T) {
+	cfg := effectiveCfg(60, "")
+	cfg.Runner.ListRefreshPerDay = 5
+	err := validateEffective(effectiveCfg(60, ""), cfg)
+	if err == nil || !strings.Contains(err.Error(), "RUNNER_LIST_REFRESH_PER_DAY") {
+		t.Fatalf("bad refresh per day must fail, got %v", err)
 	}
 }

@@ -1,6 +1,9 @@
 package sqlite
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -172,5 +175,132 @@ func TestCheckFailedDoesNotShrinkOtherCap(t *testing.T) {
 	}
 	if updated != 500 || failed != 5 {
 		t.Fatalf("updated %d check_failed %d, want 500 and 5", updated, failed)
+	}
+}
+
+func holdConn(t *testing.T, c *Client) *sql.Tx {
+	t.Helper()
+	tx, err := c.db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+	return tx
+}
+
+func TestRecordEventFlushWaitsForPending(t *testing.T) {
+	c := newTestClient(t)
+	hold := holdConn(t, c)
+	base := time.Now().Add(-time.Hour)
+	for i := range 150 {
+		c.RecordEvent(storage.EventEntry{At: base.Add(time.Duration(i) * time.Second), Source: "server", Kind: "check_failed", Text: fmt.Sprintf("f%d", i)})
+		if i%50 == 0 {
+			c.RecordEvent(storage.EventEntry{At: base.Add(time.Duration(i)*time.Second + 500*time.Millisecond), Source: "server", Kind: "updated", Text: fmt.Sprintf("u%d", i)})
+		}
+	}
+	short, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := c.FlushEvents(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("flush while connection held = %v, want DeadlineExceeded", err)
+	}
+	if err := hold.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	long, cancelLong := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelLong()
+	if err := c.FlushEvents(long); err != nil {
+		t.Fatalf("flush after release: %v", err)
+	}
+	got, err := c.ListEvents(t.Context(), 1000)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var failed, updated int
+	for i, e := range got {
+		if e.Kind == "check_failed" {
+			failed++
+		} else {
+			updated++
+		}
+		if i > 0 && e.ID >= got[i-1].ID {
+			t.Fatalf("ids not in record order at %d: %d after %d", i, e.ID, got[i-1].ID)
+		}
+	}
+	if failed != 100 || updated != 3 {
+		t.Fatalf("check_failed %d updated %d, want 100 and 3", failed, updated)
+	}
+	if got[0].Text != "f149" {
+		t.Fatalf("newest = %q, want f149", got[0].Text)
+	}
+}
+
+func TestRecordEventOverflowDropsBeyondCap(t *testing.T) {
+	c := newTestClient(t)
+	old := eventsQueueMax
+	eventsQueueMax = 5
+	t.Cleanup(func() { eventsQueueMax = old })
+	hold := holdConn(t, c)
+	base := time.Now().Add(-time.Hour)
+	started := time.Now()
+	var accepted []bool
+	for i := range 8 {
+		accepted = append(accepted, c.RecordEvent(storage.EventEntry{At: base.Add(time.Duration(i) * time.Second), Source: "server", Kind: "updated", Text: fmt.Sprintf("e%d", i)}))
+	}
+	if d := time.Since(started); d > 50*time.Millisecond {
+		t.Fatalf("8 RecordEvent calls took %v, want under 50ms", d)
+	}
+	if want := []bool{true, true, true, true, true, false, false, false}; !slices.Equal(accepted, want) {
+		t.Fatalf("accepted = %v, want %v", accepted, want)
+	}
+	if err := hold.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := c.FlushEvents(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	got, err := c.ListEvents(t.Context(), 100)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 5 || got[0].Text != "e4" || got[4].Text != "e0" {
+		t.Fatalf("rows = %+v, want e4..e0", got)
+	}
+}
+
+func TestFlushEventsIdleReturnsAtOnce(t *testing.T) {
+	c := newTestClient(t)
+	done := make(chan error, 1)
+	go func() { done <- c.FlushEvents(t.Context()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("flush idle: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("idle FlushEvents blocked")
+	}
+}
+
+func TestRecordEventSecondBatchAfterFlusherExit(t *testing.T) {
+	c := newTestClient(t)
+	for round, text := range []string{"first", "second"} {
+		if !c.RecordEvent(storage.EventEntry{At: time.Now(), Source: "server", Kind: "updated", Text: text}) {
+			t.Fatalf("round %d: record refused", round)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		err := c.FlushEvents(ctx)
+		cancel()
+		if err != nil {
+			t.Fatalf("round %d flush: %v", round, err)
+		}
+		got, err := c.ListEvents(t.Context(), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != round+1 || got[0].Text != text {
+			t.Fatalf("round %d rows = %+v", round, got)
+		}
 	}
 }

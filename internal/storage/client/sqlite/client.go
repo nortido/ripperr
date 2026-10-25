@@ -22,8 +22,9 @@ const (
 )
 
 type Client struct {
-	db  *sql.DB
-	box *secrets.Box
+	db     *sql.DB
+	box    *secrets.Box
+	events eventQueue
 }
 
 func (c *Client) GetTracker(ctx context.Context, trackerID int) (res *storage.Tracker, err error) {
@@ -330,8 +331,17 @@ func (c *Client) DeleteItem(ctx context.Context, urlHash string) error {
 	return err
 }
 
-func (c *Client) PurgeDuplicateNames(ctx context.Context, winners map[string]string) error {
-	if len(winners) == 0 {
+func (c *Client) PurgeDuplicateNames(ctx context.Context, live map[string][]string) error {
+	liveHashes := make(map[string]struct{})
+	for name, hashes := range live {
+		if name == "" {
+			continue
+		}
+		for _, h := range hashes {
+			liveHashes[h] = struct{}{}
+		}
+	}
+	if len(liveHashes) == 0 {
 		return nil
 	}
 	tx, err := c.db.BeginTx(ctx, nil)
@@ -340,14 +350,49 @@ func (c *Client) PurgeDuplicateNames(ctx context.Context, winners map[string]str
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	for name, hash := range winners {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`, name, hash); err != nil {
+	// имя сворачиваем в Go: SQL LOWER знает только ASCII, а кириллица в именах обычное дело
+	stale := func(table string) ([]string, error) {
+		rows, err := tx.QueryContext(ctx, `SELECT url_hash, COALESCE(item_name, '') FROM `+table)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		var out []string
+		for rows.Next() {
+			var hash, name string
+			if err := rows.Scan(&hash, &name); err != nil {
+				return nil, err
+			}
+			folded := storage.FoldName(name)
+			if _, ok := live[folded]; !ok || folded == "" {
+				continue
+			}
+			if _, ok := liveHashes[hash]; ok {
+				continue
+			}
+			out = append(out, hash)
+		}
+		return out, rows.Err()
+	}
+	staleLog, err := stale("check_log")
+	if err != nil {
+		return err
+	}
+	staleHistory, err := stale("history")
+	if err != nil {
+		return err
+	}
+
+	for _, h := range staleLog {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM check_log WHERE url_hash = ?`, h); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM release_times WHERE url_hash IN (SELECT url_hash FROM history WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?)`, name, hash); err != nil {
+	}
+	for _, h := range staleHistory {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM release_times WHERE url_hash = ?`, h); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`, name, hash); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history WHERE url_hash = ?`, h); err != nil {
 			return err
 		}
 	}

@@ -64,7 +64,7 @@ type storage interface {
 	AllItems(ctx context.Context) (map[string]*runnerModel.HistoryItem, error)
 	GetIgnoreSet(ctx context.Context) (map[string]struct{}, error)
 	DeleteItem(ctx context.Context, urlHash string) error
-	PurgeDuplicateNames(ctx context.Context, winners map[string]string) error
+	PurgeDuplicateNames(ctx context.Context, live map[string][]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 	ErrorMarks(ctx context.Context) (map[string]storageModel.ErrorMark, error)
 	AddReleaseTime(ctx context.Context, urlHash string, at time.Time, keep int) error
@@ -342,7 +342,11 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 	h.storeSiblings(rawEntries, partial)
 
 	if !dry && forced == nil {
-		h.purgeDuplicateNames(ctx, entries)
+		if partial {
+			logger.Warn("duplicate names purge skipped: partial torrent list")
+		} else {
+			h.purgeDuplicateNames(ctx, entries)
+		}
 	}
 
 	items, err := h.storage.AllItems(ctx)
@@ -544,14 +548,21 @@ func (h *handler) attachComment(ctx context.Context, e *model.Entry) {
 }
 
 func (h *handler) purgeDuplicateNames(ctx context.Context, entries []*model.Entry) {
-	winners := make(map[string]string)
+	live := make(map[string][]string)
 	for _, e := range entries {
 		if e.URL == "" {
 			continue
 		}
-		winners[strings.TrimSpace(e.Name)] = storagePkg.URLHash(e.URL)
+		k := storageModel.FoldName(e.Name)
+		if k == "" {
+			continue
+		}
+		hash := storagePkg.URLHash(e.URL)
+		if !slices.Contains(live[k], hash) {
+			live[k] = append(live[k], hash)
+		}
 	}
-	if err := h.storage.PurgeDuplicateNames(ctx, winners); err != nil {
+	if err := h.storage.PurgeDuplicateNames(ctx, live); err != nil {
 		logger.Warn(fmt.Sprintf("purge duplicate names: %v", err))
 	}
 }
@@ -730,8 +741,14 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			logger.Info("processing interrupted")
 			return nil
 		}
+		if rep == nil && serverError(err) {
+			h.state.PageServerError(ttid, e.URLHash, time.Now())
+		}
 		h.logCheckStreak(ctx, e, ttid, "error", err.Error(), isTrackerWide(err), rep)
 		return
+	}
+	if rep == nil {
+		h.state.PageOK(ttid, e.URLHash)
 	}
 	if pc.dateMissing {
 		if rep == nil {

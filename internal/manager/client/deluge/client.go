@@ -366,11 +366,16 @@ func (c *Client) addTorrentVerified(ctx context.Context, data []byte, opts model
 	return c.finishAdd(ctx, hash, opts)
 }
 
-func (c *Client) finishAdd(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
+func (c *Client) setUp(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
 	err := c.applyLabel(ctx, hash, opts)
 	if err == nil && len(opts.FileSelection) > 0 {
 		err = c.applySelection(ctx, hash, opts)
 	}
+	return err
+}
+
+func (c *Client) finishAdd(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {
+	err := c.setUp(ctx, hash, opts)
 	if err == nil {
 		return nil
 	}
@@ -382,6 +387,39 @@ func (c *Client) finishAdd(ctx context.Context, hash string, opts model.ManagerA
 		logger.Warn(fmt.Sprintf("deluge: discard %s after failed setup: %v", hash, derr))
 	}
 	return fmt.Errorf("set up new torrent %s: %w", opts.Name, err)
+}
+
+func (c *Client) ConvergeAdded(ctx context.Context, hash string, _ []byte, opts model.ManagerAddFileOptions) error {
+	if len(opts.FileSelection) == 0 {
+		return nil
+	}
+	hash = strings.ToLower(hash)
+	state, err := c.state(ctx, hash)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case stateChecking, stateMoving, stateAllocating:
+		return fmt.Errorf("deluge: torrent %s is %s, not settled yet", hash, state)
+	case statePaused:
+	default:
+		logger.Info(fmt.Sprintf("deluge: converge %s skipped: state %s", opts.Name, state))
+		return nil
+	}
+	files, err := c.Files(ctx, hash)
+	if err != nil {
+		return err
+	}
+	// снятый файл значит, что выбор уже ставили мы или сам пользователь: не трогаем
+	if slices.ContainsFunc(files, func(f model.TorrentFile) bool { return !f.Wanted }) {
+		return nil
+	}
+	logger.Info(fmt.Sprintf("deluge: converge %s: applying label and file selection", opts.Name))
+	// торрент с тем же хешем может быть чужим, живой загрузкой: при сбое не удаляем, пара останется для повтора
+	if err = c.setUp(ctx, hash, opts); err != nil {
+		return fmt.Errorf("converge %s: %w", opts.Name, err)
+	}
+	return nil
 }
 
 func (c *Client) applyLabel(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error {

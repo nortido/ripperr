@@ -59,17 +59,7 @@ func main() {
 		logger.Error(err.Error())
 		return
 	}
-	if err := baseCfg.Runner.Validate(); err != nil {
-		logger.Error(err.Error())
-		return
-	}
 	baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
-	// адрес из БД проверен еще при сохранении, а из env приходит как есть.
-	// Без схемы ProxyTransport молча пошел бы напрямую
-	if err := settings.ValidateDownloadProxy(baseCfg.Runner.DownloadProxy); err != nil {
-		logger.Error("RUNNER_DOWNLOAD_PROXY: " + err.Error())
-		return
-	}
 	if err := settings.ValidateMirrorSource(baseCfg.MirrorSource); err != nil {
 		logger.Error("MIRROR_SOURCE: " + err.Error())
 		return
@@ -88,6 +78,15 @@ func main() {
 		logger.Error(err.Error())
 		return
 	}
+	// defer-ы идут в обратном порядке: сначала остановится web, потом сброс очереди событий, потом закроется БД
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := db.FlushEvents(flushCtx); err != nil {
+			logger.Warn("events: flush at exit: " + err.Error())
+		}
+	}()
+
 	logger.Info("secrets key: " + openInfo.KeySource)
 	if openInfo.KeyCheckResealed {
 		logger.Info("secrets: key check re-sealed, older builds can no longer open this database")
@@ -162,8 +161,8 @@ func main() {
 			logger.Info("goodbye")
 			return
 		}
-		// расписание проверяем после наложения БД: битый env не мешает, если его перекрывает сохраненное
-		if err := cfg.Runner.ValidateSchedule(); err != nil {
+		// env проверяем после наложения БД: битый env не мешает, если его перекрывает сохраненное
+		if err := validateEffective(baseCfg, cfg); err != nil {
 			logger.Error(err.Error())
 			return
 		}
@@ -370,4 +369,21 @@ func newReload(state *runner.State, ch chan<- struct{}) func() {
 		default:
 		}
 	}
+}
+
+func validateEffective(base, cfg config.App) error {
+	if err := cfg.Runner.ValidateSchedule(); err != nil {
+		return err
+	}
+	if err := cfg.Runner.Validate(); err != nil {
+		return err
+	}
+	// адрес из БД проверен при сохранении, из env приходит как есть: без схемы
+	// ProxyTransport молча пошел бы напрямую. Битый сохраненный руками не трогаем, как раньше
+	if cfg.Runner.DownloadProxy == base.Runner.DownloadProxy {
+		if err := settings.ValidateDownloadProxy(cfg.Runner.DownloadProxy); err != nil {
+			return errors.New("RUNNER_DOWNLOAD_PROXY: " + err.Error())
+		}
+	}
+	return nil
 }

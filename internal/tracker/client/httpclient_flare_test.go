@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"net/http"
+	"net/http/cookiejar"
+	"strings"
 	"testing"
 
 	"ripperr/internal/helper"
@@ -119,10 +121,12 @@ func TestEmptyFlareHelpersMeanAbsent(t *testing.T) {
 		px:       px,
 		header:   &http.Header{},
 	}
-	base := []*http.Cookie{{Name: "a", Value: "1"}}
-	if got := c.syncFlarePageCookies(t.Context(), base); len(got) != 1 || px.sends != 0 {
+	c.cookies = []*http.Cookie{{Name: "a", Value: "1"}}
+	c.syncFlarePageCookies(t.Context())
+	if got := c.cookieSnapshot(); len(got) != 1 || px.sends != 0 {
 		t.Fatalf("sync fetched a page: sends=%d cookies=%+v", px.sends, got)
 	}
+	c.setCookies(nil)
 	if err := c.preflightFlareLogin(t.Context()); err != nil || px.sends != 1 {
 		t.Fatalf("preflight skipped: sends=%d err=%v", px.sends, err)
 	}
@@ -145,5 +149,51 @@ func TestPageRequestURLUsesTrackerScheme(t *testing.T) {
 	plain := &client{ITracker: &httpOnlyHost{Tracker: tracker.Tracker{Domain: "lan.example"}}}
 	if got := plain.pageRequestURL("http://lan.example/viewtopic.php?t=1"); got != "http://lan.example/viewtopic.php?t=1" {
 		t.Fatalf("http tracker downgraded or changed: %q", got)
+	}
+}
+
+type blockingFlareProxy struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingFlareProxy) Send(r *http.Request, _ *proxyModel.Options, _ proxyModel.ProxyType) (*http.Response, error) {
+	close(p.entered)
+	<-p.release
+	h := http.Header{}
+	h.Add("Set-Cookie", "cf=2")
+	return &http.Response{StatusCode: http.StatusOK, Header: h, Body: http.NoBody, Request: r}, nil
+}
+
+func (p *blockingFlareProxy) DestroyFlareSession(context.Context, string) error { return nil }
+
+func TestDownloadFlareSyncKeepsConcurrentCookie(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	px := &blockingFlareProxy{entered: make(chan struct{}), release: make(chan struct{})}
+	c := &client{
+		ITracker: &flareOptsTracker{
+			Tracker: tracker.Tracker{Name: "flare", Domain: "flare.example", ProxyType: proxyModel.TypeFlare},
+			session: "s",
+		},
+		hc:     &http.Client{Jar: jar},
+		px:     px,
+		header: &http.Header{},
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.ensureFlareCookiesForDownload(t.Context(), "https://flare.example/dl?t=1") }()
+	<-px.entered
+	res := &http.Response{Header: http.Header{}}
+	res.Header.Add("Set-Cookie", "fresh=1")
+	c.absorbFlareCookies(res)
+	close(px.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	got := helper.CookiesString(c.cookieSnapshot())
+	if !strings.Contains(got, "fresh=1") || !strings.Contains(got, "cf=2") {
+		t.Fatalf("cookies = %q, want fresh=1 and cf=2", got)
 	}
 }

@@ -166,9 +166,34 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 			return m.convergeSelected(ctx, delOpts, newHash, opts, fmt.Errorf("%w: %s", model.ErrAlreadyAdded, opts.Name))
 		}
 	}
-	if err = add(ctx, opts); err != nil {
+	// пара замены живет только вокруг add: если клиент добавит новый позже ошибки,
+	// подметальщик откатит его при живом старом, даже когда запись больше не проверяют
+	paired := selected && opts.Hash != "" && !strings.EqualFold(newHash, opts.Hash)
+	addCtx := ctx
+	var start time.Time
+	if paired {
+		pairOpts := opts
+		pairOpts.Hash = newHash
+		pairOpts.ReplacesHash = opts.Hash
+		pairOpts.Stopped = false
+		if err = m.client.WriteBlackholePair(data, magnet, pairOpts); err != nil {
+			return
+		}
+		start = time.Now()
+		if err = ctx.Err(); err != nil {
+			m.client.RemoveBlackholePair(newHash)
+			return
+		}
+		var cancelAdd context.CancelFunc
+		addCtx, cancelAdd = context.WithDeadline(ctx, start.Add(replaceAddBudget))
+		defer cancelAdd()
+	}
+	if err = add(addCtx, opts); err != nil {
 		if errors.Is(err, model.ErrAlreadyAdded) {
 			if selected {
+				if paired {
+					m.client.RemoveBlackholePair(newHash)
+				}
 				return m.convergeSelected(ctx, delOpts, newHash, opts, err)
 			}
 			return m.dropReplaced(ctx, delOpts, newHash, hashKnown, err)
@@ -179,6 +204,14 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 			m.rollbackNew(ctx, newHash)
 		}
 		return
+	}
+	if paired {
+		// добавленный позже срока новый подметальщик уже может откатывать
+		if time.Since(start) >= replaceAddBudget {
+			m.rollbackNew(ctx, newHash)
+			return fmt.Errorf("add of new torrent for %s exceeded %s, old kept", opts.Name, replaceAddBudget)
+		}
+		m.client.RemoveBlackholePair(newHash)
 	}
 	return del()
 }

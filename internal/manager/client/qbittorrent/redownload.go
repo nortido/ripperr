@@ -128,8 +128,14 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string, ro mod
 			break
 		}
 		if errors.Is(addErr, model.ErrAlreadyAdded) {
-			// прошлая попытка все-таки дошла, просто позже проверки
-			logger.Info(fmt.Sprintf("force redownload: torrent %s is already back", torrentHash))
+			// прошлая попытка все-таки дошла, просто позже проверки. Выбор файлов, запуск и имена
+			// после нее не ставились: доводим
+			logger.Info(fmt.Sprintf("force redownload: torrent %s is already back, converging", torrentHash))
+			if cerr := c.ConvergeAdded(ctx, torrentHash, torrentData, opts); cerr != nil {
+				// торрент уже снова в qbit, перекачка удалась. Пару не убираем, выбор и имена доведет подметальщик
+				logger.Warn(fmt.Sprintf("force redownload: converge %s (%s) failed: %v, leaving blackhole pair for the sweeper", name, torrentHash, cerr))
+				return nil
+			}
 			addErr = nil
 			break
 		}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,7 @@ import (
 	"ripperr/internal/model/tracker"
 	"ripperr/internal/notify"
 	storagePkg "ripperr/internal/storage"
+	"ripperr/internal/system/logger"
 	"ripperr/internal/tracker/client"
 	"ripperr/internal/tracker/registry"
 )
@@ -46,6 +48,7 @@ type fakeStorage struct {
 	recent      []time.Time
 	recentErr   error
 	recentCalls []recentCall
+	purges      []map[string][]string
 }
 
 type recentCall struct {
@@ -98,7 +101,10 @@ func (f *fakeStorage) DeleteItem(_ context.Context, urlHash string) error {
 	return nil
 }
 
-func (f *fakeStorage) PurgeDuplicateNames(context.Context, map[string]string) error { return nil }
+func (f *fakeStorage) PurgeDuplicateNames(_ context.Context, live map[string][]string) error {
+	f.purges = append(f.purges, live)
+	return nil
+}
 
 func (f *fakeStorage) SetForceCheck(_ context.Context, urlHash string, force bool) (bool, error) {
 	if f.items == nil {
@@ -2225,6 +2231,99 @@ func TestAdoptDefinitiveMissKeepsPurge(t *testing.T) {
 	}
 }
 
+func TestPurgeDuplicateNamesFoldsLiveSet(t *testing.T) {
+	const u1, u2, u3, u4 = "https://x/t/1", "https://x/t/2", "https://x/t/3", "https://x/t/4"
+	store := &fakeStorage{}
+	h := &handler{storage: store}
+	h.purgeDuplicateNames(context.Background(), []*model.Entry{
+		{Name: "Foo", URL: u1},
+		{Name: " foo", URL: u2},
+		{Name: "Сериал", URL: u3},
+		{Name: "сериал", URL: u4},
+		{Name: "FOO", URL: u1},
+		{Name: "no url"},
+	})
+	if len(store.purges) != 1 {
+		t.Fatalf("PurgeDuplicateNames calls = %d, want 1", len(store.purges))
+	}
+	want := map[string][]string{
+		"foo":    {storagePkg.URLHash(u1), storagePkg.URLHash(u2)},
+		"сериал": {storagePkg.URLHash(u3), storagePkg.URLHash(u4)},
+	}
+	got := store.purges[0]
+	if len(got) != len(want) {
+		t.Fatalf("live = %v, want keys %v", got, want)
+	}
+	for k, w := range want {
+		g := append([]string(nil), got[k]...)
+		slices.Sort(g)
+		slices.Sort(w)
+		if !slices.Equal(g, w) {
+			t.Errorf("live[%q] = %v, want %v", k, g, w)
+		}
+	}
+}
+
+func warnCount(msg string) int {
+	n := 0
+	for _, e := range logger.Snapshot(1000) {
+		if e.Level == "WARN" && e.Message == msg {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPurgeDuplicateNamesSkippedOnPartialList(t *testing.T) {
+	const msg = "duplicate names purge skipped: partial torrent list"
+	alive := &model.Entry{URL: "https://rutracker.org/forum/viewtopic.php?t=2", Name: "alive"}
+	cases := []struct {
+		name string
+		mgr  *fakeManager
+		tr   *adoptTracker
+	}{
+		{"list", &fakeManager{all: []*model.Entry{alive}, partialList: true}, &adoptTracker{fakeTracker: fakeTracker{id: 1}}},
+		{"adopt", &fakeManager{all: []*model.Entry{alive, {Name: "X - AniLiberty [WEB-DL]", Hash: "h1"}}}, &adoptTracker{fakeTracker: fakeTracker{id: 1}, err: errors.New("api down")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStorage{}
+			h := &handler{manager: tc.mgr, storage: store, trackerService: tc.tr}
+			h.initTrackerChannels()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			before := warnCount(msg)
+			if err := h.push(ctx, false, nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(store.purges) != 0 {
+				t.Fatalf("PurgeDuplicateNames called %d times on a partial list", len(store.purges))
+			}
+			if got := warnCount(msg) - before; got != 1 {
+				t.Fatalf("Warn %q count = %d, want 1", msg, got)
+			}
+		})
+	}
+}
+
+func TestPurgeDuplicateNamesRunsOnFullList(t *testing.T) {
+	store := &fakeStorage{}
+	h := &handler{
+		manager:        &fakeManager{all: []*model.Entry{{URL: "https://rutracker.org/forum/viewtopic.php?t=2", Name: "alive"}}},
+		storage:        store,
+		trackerService: &fakeTracker{id: 1},
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.push(ctx, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.purges) != 1 {
+		t.Fatalf("PurgeDuplicateNames calls = %d, want 1", len(store.purges))
+	}
+}
+
 func TestWorkerPickDateWinsOverStoredID(t *testing.T) {
 	old := time.Now().Add(-48 * time.Hour)
 	same := old
@@ -2839,6 +2938,237 @@ func TestTrackerServerErrorKeepsStreak(t *testing.T) {
 		if got := len(store.ignoreCalls) == 1; got == tc.keepStreak {
 			t.Fatalf("code %d: ignoreCalls = %v, auto-ignore must happen exactly when KeepStreak is false", tc.code, store.ignoreCalls)
 		}
+	}
+}
+
+type byURLTracker struct {
+	pageTracker
+	codes map[string]int
+}
+
+func (b *byURLTracker) Response(_ context.Context, _ int, link string, _ bool) (*bytes.Buffer, error) {
+	if code := b.codes[link]; code != 0 {
+		return nil, fmt.Errorf("get page error: %w", &client.StatusError{Code: code, Msg: "status"})
+	}
+	return b.page, nil
+}
+
+type streakStorage struct {
+	loggingStorage
+	streaks map[string]int
+}
+
+func (s *streakStorage) AddCheckLog(_ context.Context, e *storageModel.CheckLogEntry) (int, error) {
+	s.logs = append(s.logs, *e)
+	switch {
+	case e.Status != "error":
+		s.streaks[e.URLHash] = 0
+	case !e.KeepStreak:
+		s.streaks[e.URLHash]++
+	}
+	return s.streaks[e.URLHash], nil
+}
+
+func serverErrHandler(threshold int) (*handler, *byURLTracker, *streakStorage) {
+	tr := &byURLTracker{
+		pageTracker: pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: bytes.NewBufferString(strings.Repeat("x", 60))},
+		codes:       map[string]int{},
+	}
+	store := &streakStorage{streaks: map[string]int{}}
+	h := &handler{
+		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1, ErrorStreakThreshold: threshold, ListRefreshPerDay: 2},
+		storage:        store,
+		manager:        &fakeManager{},
+		trackerService: tr,
+		mx:             helper.KeyedMutex{},
+		state:          NewState(),
+	}
+	return h, tr, store
+}
+
+func releaseEntry(name string) *model.Entry {
+	return &model.Entry{URL: "https://example.com/" + name, Name: name, URLHash: name}
+}
+
+func checkRelease(t *testing.T, h *handler, tr *byURLTracker, name string, code int, rep *dryReport) {
+	t.Helper()
+	e := releaseEntry(name)
+	tr.codes[e.URL] = code
+	if err := h.worker(context.Background(), 1, e, rep); err != nil && code == 0 {
+		t.Fatal(err)
+	}
+}
+
+func TestIsolatedServerErrorPausesRelease(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	tr.codes[releaseEntry("B").URL] = 503
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	p := &pushPass{}
+	if !h.backedOff(p, releaseEntry("B")) {
+		t.Fatal("B answered 503 twice while the tracker served A, want a one slot pause")
+	}
+	if h.backedOff(p, releaseEntry("A")) {
+		t.Fatal("A answers fine, must not be backed off")
+	}
+}
+
+func TestServerErrorRunThenOtherErrorNoIgnore(t *testing.T) {
+	h, tr, store := serverErrHandler(2)
+	n, hits := notifyProbe(t)
+	h.notifier = n
+	for range 3 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	for _, l := range store.logs {
+		if l.URLHash == "B" && (l.Status != "error" || !l.KeepStreak) {
+			t.Fatalf("503 log = %+v, want an error with KeepStreak", l)
+		}
+	}
+	select {
+	case <-hits:
+		t.Fatal("CheckFailed sent for a 503")
+	case <-time.After(150 * time.Millisecond):
+	}
+	checkRelease(t, h, tr, "B", 403, nil)
+	if store.streaks["B"] != 1 || len(store.ignoreCalls) != 0 {
+		t.Fatalf("streak = %d, ignoreCalls = %v, want 1 and none: 503s must not count", store.streaks["B"], store.ignoreCalls)
+	}
+	checkRelease(t, h, tr, "B", 403, nil)
+	if len(store.ignoreCalls) != 1 || store.ignoreCalls[0] != "B" {
+		t.Fatalf("ignoreCalls = %v, want [B] after the second 403", store.ignoreCalls)
+	}
+}
+
+func TestServerErrorOutagePausesNothing(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	checkRelease(t, h, tr, "A", 0, nil)
+	for _, name := range []string{"B", "C", "D"} {
+		checkRelease(t, h, tr, name, 503, nil)
+	}
+	for name, want := range map[string]bool{"B": true, "C": false, "D": false} {
+		m, ok := h.state.ServerErrorMark(name)
+		if ok != want || (ok && m.Streak != 1) {
+			t.Fatalf("%s: mark = %+v ok = %v, want counted = %v with count 1", name, m, ok, want)
+		}
+	}
+	for _, name := range []string{"B", "C", "D"} {
+		if h.backedOff(&pushPass{}, releaseEntry(name)) {
+			t.Fatalf("%s paused by an outage", name)
+		}
+	}
+}
+
+func TestServerErrorPauseClearedByPageSuccess(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	checkRelease(t, h, tr, "B", 0, nil)
+	if _, ok := h.state.ServerErrorMark("B"); ok || h.backedOff(&pushPass{}, releaseEntry("B")) {
+		t.Fatal("B page success must clear its pause")
+	}
+}
+
+func TestServerErrorForcedItemNotBackedOff(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	p := &pushPass{items: map[string]*runnerModel.HistoryItem{"B": {ForceCheck: true}}}
+	if h.backedOff(p, releaseEntry("B")) {
+		t.Fatal("a forced item must bypass the 5xx pause")
+	}
+	if !h.backedOff(&pushPass{}, releaseEntry("B")) {
+		t.Fatal("without the force flag B stays paused")
+	}
+}
+
+func TestServerErrorNilStateNoPanic(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	h.state = nil
+	checkRelease(t, h, tr, "A", 0, nil)
+	checkRelease(t, h, tr, "B", 503, nil)
+	if h.backedOff(&pushPass{}, releaseEntry("B")) {
+		t.Fatal("no state, no pause")
+	}
+}
+
+func TestDryRunServerErrorLeavesStateUntouched(t *testing.T) {
+	for _, realFirst := range []bool{false, true} {
+		h, tr, store := serverErrHandler(3)
+		first := &dryReport{}
+		if realFirst {
+			first = nil
+		}
+		checkRelease(t, h, tr, "A", 0, first)
+		checkRelease(t, h, tr, "B", 503, &dryReport{})
+		if _, ok := h.state.ServerErrorMark("B"); ok {
+			t.Fatalf("realFirst=%v: dry-run 503 counted", realFirst)
+		}
+		if len(store.logs) > 1 {
+			t.Fatalf("realFirst=%v: dry-run wrote check logs: %+v", realFirst, store.logs)
+		}
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+		if m, ok := h.state.ServerErrorMark("B"); !ok || m.Streak != 1 {
+			t.Fatalf("realFirst=%v: mark = %+v ok = %v, want count 1 from the real worker only", realFirst, m, ok)
+		}
+		if h.backedOff(&pushPass{}, releaseEntry("B")) {
+			t.Fatalf("realFirst=%v: B backed off after a single counted 5xx", realFirst)
+		}
+	}
+}
+
+func TestDryRunPageSuccessDoesNotMarkTrackerAnswered(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	checkRelease(t, h, tr, "A", 0, &dryReport{})
+	checkRelease(t, h, tr, "B", 503, nil)
+	if _, ok := h.state.ServerErrorMark("B"); ok {
+		t.Fatal("a dry-run page success must not make the next 5xx isolated")
+	}
+}
+
+func TestServerErrorOnlyReleaseBackedOffWithoutMark(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	p := &pushPass{marks: map[string]storageModel.ErrorMark{}}
+	if !h.backedOff(p, releaseEntry("B")) {
+		t.Fatal("B has count 2 and no error mark, want backed off")
+	}
+}
+
+func TestServerError403AfterSuccessStillIgnores(t *testing.T) {
+	h, tr, store := serverErrHandler(2)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 403, nil)
+	}
+	if len(store.ignoreCalls) != 1 || store.ignoreCalls[0] != "B" {
+		t.Fatalf("ignoreCalls = %v, want [B]", store.ignoreCalls)
+	}
+}
+
+func TestServerErrorPauseIgnoredByDryAndForcedPass(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	if h.backedOff(&pushPass{dry: true}, releaseEntry("B")) {
+		t.Fatal("a dry-run pass must not skip a release for the 5xx pause")
+	}
+	forced := &pushPass{forced: map[string]struct{}{"B": {}}, items: map[string]*runnerModel.HistoryItem{"B": {}}}
+	if h.backedOff(forced, releaseEntry("B")) {
+		t.Fatal("a forced pass must not skip a release for the 5xx pause")
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 	"ripperr/internal/model"
 )
 
+var presencePoll = time.Second
+
 func (c *Client) IncomingHashSameAs(buf *bytes.Buffer, magnet string, existing string) (same bool, known bool) {
 	var data []byte
 	if buf != nil {
@@ -56,7 +58,7 @@ func (c *Client) waitUntilAbsent(ctx context.Context, hash string) (bool, error)
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
-		case <-time.After(time.Second):
+		case <-time.After(presencePoll):
 		}
 	}
 	return false, nil
@@ -88,7 +90,7 @@ func (c *Client) ensurePresentAfterAdd(ctx context.Context, hash string) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Second):
+		case <-time.After(presencePoll):
 		}
 	}
 	return fmt.Errorf("torrent add failed (not present after add), qbittorrent rejected it (possibly duplicate or invalid)")

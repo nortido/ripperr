@@ -50,13 +50,15 @@ type fakeClient struct {
 	addFail     bool
 	unreachable bool
 	// следующий Exists, увидевший этот хеш, сразу убирает его из present
-	vanishHash string
-	calls      []string
-	existsSeq  map[string][]bool
-	existsErr  map[string]error
-	discardErr error
-	resumeErr  error
-	addOpts    []model.ManagerAddFileOptions
+	vanishHash  string
+	calls       []string
+	existsSeq   map[string][]bool
+	existsErr   map[string]error
+	discardErr  error
+	resumeErr   error
+	addOpts     []model.ManagerAddFileOptions
+	convergeErr error
+	converges   []convergeCall
 }
 
 func newFakeClient() *fakeClient {
@@ -166,6 +168,20 @@ func (f *fakeClient) Resume(_ context.Context, hash string) error {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "resume:"+strings.ToLower(hash))
 	return f.resumeErr
+}
+
+type convergeCall struct {
+	hash string
+	data []byte
+	opts model.ManagerAddFileOptions
+}
+
+func (f *fakeClient) ConvergeAdded(_ context.Context, hash string, data []byte, opts model.ManagerAddFileOptions) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "converge:"+strings.ToLower(hash))
+	f.converges = append(f.converges, convergeCall{hash: hash, data: data, opts: opts})
+	return f.convergeErr
 }
 
 func (f *fakeClient) callsOf(prefix string) []string {
@@ -1458,4 +1474,128 @@ func assertNoTmp(t *testing.T, dir string) {
 	if left, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(left) != 0 {
 		t.Errorf("expected no leftover .tmp file, got %v", left)
 	}
+}
+
+func TestSweepAlreadyAddedConvergesSelectionPair(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "conv-sel.txt")
+	fc.markPresent(hash)
+	sel := []model.TorrentFile{{Path: "C/a", Wanted: true}, {Path: "C/b"}}
+	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "conv-sel", Stopped: true, FileSelection: sel})
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.converges) != 1 {
+		t.Fatalf("converge calls = %d, want 1", len(fc.converges))
+	}
+	c := fc.converges[0]
+	if !strings.EqualFold(c.hash, hash) {
+		t.Errorf("converge hash = %s, want %s", c.hash, hash)
+	}
+	if !bytes.Equal(c.data, data) {
+		t.Error("converge got other torrent bytes than the pair")
+	}
+	if !reflect.DeepEqual(c.opts.FileSelection, sel) || !c.opts.Stopped {
+		t.Errorf("converge opts = %+v, want the pair opts", c.opts)
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepAlreadyAddedConvergesNamesPair(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "conv-names.txt")
+	fc.markPresent(hash)
+	paths := []string{"N/renamed.txt"}
+	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "conv-names", FilePaths: paths})
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.converges) != 1 || !reflect.DeepEqual(fc.converges[0].opts.FilePaths, paths) {
+		t.Fatalf("converge calls = %+v, want one with FilePaths %v", fc.converges, paths)
+	}
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepAlreadyAddedConvergeErrorKeepsPair(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	fc.convergeErr = fmt.Errorf("not settled yet")
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "conv-err.txt")
+	fc.markPresent(hash)
+	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "conv-err", Stopped: true, FileSelection: []model.TorrentFile{{Path: "E/a", Wanted: true}}})
+
+	s.SweepOnce(context.Background())
+
+	if len(fc.converges) != 1 {
+		t.Fatalf("converge calls = %d, want 1", len(fc.converges))
+	}
+	assertNoCalls(t, fc, "discard:")
+	if !fc.isPresent(hash) {
+		t.Error("torrent must stay in the client")
+	}
+	assertPairRemains(t, dir, hash)
+}
+
+func TestSweepAlreadyAddedPlainPairNoConverge(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "conv-plain.txt")
+	fc.markPresent(hash)
+	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "conv-plain"})
+
+	s.SweepOnce(context.Background())
+
+	assertNoCalls(t, fc, "converge:")
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepFreshAddSelectionPairNoConverge(t *testing.T) {
+	withFastSettle(t)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "conv-fresh.txt")
+	writePair(t, dir, data, model.ManagerAddFileOptions{Hash: hash, Name: "conv-fresh", Stopped: true, FileSelection: []model.TorrentFile{{Path: "F/a", Wanted: true}}, FilePaths: []string{"F/a"}})
+
+	s.SweepOnce(context.Background())
+
+	if !fc.isPresent(hash) {
+		t.Error("pair was not re-added")
+	}
+	assertNoCalls(t, fc, "converge:")
+	assertPairGone(t, dir, hash)
+}
+
+func TestSweepReplaceSelectionPairNoConverge(t *testing.T) {
+	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
+	dir := t.TempDir()
+	fc := newFakeClient()
+	s := New(dir, fc)
+	data, hash := buildNamedTestTorrent(t, "conv-rp.txt")
+	opts := model.ManagerAddFileOptions{Hash: hash, Name: "conv-rp", ReplacesHash: "old", Stopped: true, FileSelection: []model.TorrentFile{{Path: "R/a", Wanted: true}}}
+	if err := s.Write(data, "", opts); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	ageJSON(t, dir, hash, freshPairGrace+time.Minute)
+	fc.markPresent(hash)
+
+	s.SweepOnce(context.Background())
+	s.SweepOnce(context.Background())
+
+	assertNoCalls(t, fc, "converge:")
+	if got := fc.callsOf("resume:"); len(got) != 1 {
+		t.Errorf("resume calls = %v, want one", got)
+	}
+	assertPairGone(t, dir, hash)
 }

@@ -315,7 +315,7 @@ func TestPurgeDuplicateNames(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.PurgeDuplicateNames(ctx, map[string]string{"same release": "winner"}); err != nil {
+	if err := c.PurgeDuplicateNames(ctx, map[string][]string{"same release": {"winner"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -353,7 +353,7 @@ func TestPurgeDuplicateNamesCyrillic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.PurgeDuplicateNames(ctx, map[string]string{"Сериал": "w"}); err != nil {
+	if err := c.PurgeDuplicateNames(ctx, map[string][]string{"сериал": {"w"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -365,8 +365,8 @@ func TestPurgeDuplicateNamesCyrillic(t *testing.T) {
 	for _, it := range items {
 		got[it.URLHash] = true
 	}
-	if got["l"] || !got["w"] || !got["variant"] {
-		t.Fatalf("history rows = %v, want w and variant only", got)
+	if got["l"] || !got["w"] || got["variant"] {
+		t.Fatalf("history rows = %v, want only w", got)
 	}
 	if rt := releaseUnix(t, c, "l"); len(rt) != 0 {
 		t.Fatalf("loser release_times = %v, want none", rt)
@@ -380,24 +380,112 @@ func TestPurgeDuplicateNamesCyrillic(t *testing.T) {
 	}
 }
 
-func TestPurgeDuplicateNamesKeepsAsciiLookalike(t *testing.T) {
+func TestPurgeDuplicateNamesFoldsKelvinSign(t *testing.T) {
 	c := newTestClient(t)
 	ctx := t.Context()
-	// знак Кельвина Go сворачивает в "k", а SQL LOWER нет: чужой релиз "Kino" трогать нельзя
+	// знак Кельвина Go сворачивает в "k", так что "Kino" с ним это вариант регистра того же имени
 	for _, s := range []struct{ hash, name string }{{"w", "Kino"}, {"other", "Kino"}} {
 		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Name: s.name}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := c.PurgeDuplicateNames(ctx, map[string]string{"Kino": "w"}); err != nil {
+	if err := c.PurgeDuplicateNames(ctx, map[string][]string{storage.FoldName("Kino"): {"w"}}); err != nil {
 		t.Fatal(err)
 	}
 	items, err := c.ListItems(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 {
-		t.Fatalf("history rows = %+v, want both kept", items)
+	if len(items) != 1 || items[0].URLHash != "w" {
+		t.Fatalf("history rows = %+v, want only w", items)
+	}
+}
+
+func TestPurgeDuplicateNamesKeepsLiveCaseVariants(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Date(2026, 3, 1, 20, 0, 0, 0, time.UTC)
+	for _, s := range []struct{ hash, name string }{{"a", "Foo"}, {"b", "foo"}, {"c", "FOO"}} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Name: s.name}); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.AddReleaseTime(ctx, s.hash, at, 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.db.ExecContext(ctx, `INSERT INTO check_log (url_hash, item_name, status) VALUES ('c', 'FOO', 'updated')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.PurgeDuplicateNames(ctx, map[string][]string{"foo": {"a", "b"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := c.ListItems(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.URLHash] = true
+	}
+	if !got["a"] || !got["b"] || got["c"] {
+		t.Fatalf("history rows = %v, want a and b only", got)
+	}
+	for _, h := range []string{"a", "b"} {
+		if rt := releaseUnix(t, c, h); len(rt) != 1 {
+			t.Fatalf("%s release_times = %v, want one row", h, rt)
+		}
+	}
+	if rt := releaseUnix(t, c, "c"); len(rt) != 0 {
+		t.Fatalf("c release_times = %v, want none", rt)
+	}
+	var n int
+	if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_log WHERE url_hash = 'c'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("c check_log rows = %d, want 0", n)
+	}
+}
+
+func TestPurgeDuplicateNamesKeepsHashLiveUnderOtherName(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	for _, s := range []struct{ hash, name string }{{"x", "foo"}, {"y", "foo"}} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Name: s.name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.PurgeDuplicateNames(ctx, map[string][]string{"foo": {"a"}, "bar": {"x"}}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := c.ListItems(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].URLHash != "x" {
+		t.Fatalf("history rows = %+v, want only x", items)
+	}
+}
+
+func TestPurgeDuplicateNamesEmptyNameNeverPurges(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	for _, s := range []struct{ hash, name string }{{"n1", ""}, {"n2", "  "}, {"live", "Foo"}} {
+		if err := c.AddItem(ctx, &storage.Item{URLHash: s.hash, Name: s.name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.PurgeDuplicateNames(ctx, map[string][]string{"": {"live"}, "foo": {"live"}}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := c.ListItems(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("history rows = %+v, want all three kept", items)
 	}
 }
 
@@ -826,7 +914,7 @@ func TestPurgeDuplicateNamesDropsReleaseTimes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := c.PurgeDuplicateNames(ctx, map[string]string{"same release": "winner"}); err != nil {
+	if err := c.PurgeDuplicateNames(ctx, map[string][]string{"same release": {"winner"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := releaseUnix(t, c, "loser"); len(got) != 0 {

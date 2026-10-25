@@ -1325,3 +1325,71 @@ func TestPosterClientSocksTriesNextAnswer(t *testing.T) {
 		t.Errorf("CONNECT requests = %+v (GET err %v), want the first answer refused, then the second tried", got, err)
 	}
 }
+
+type recordingForward struct {
+	mu    sync.Mutex
+	addrs []string
+}
+
+func (f *recordingForward) Dial(network, addr string) (net.Conn, error) {
+	return f.DialContext(context.Background(), network, addr)
+}
+
+func (f *recordingForward) DialContext(_ context.Context, _, addr string) (net.Conn, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.addrs = append(f.addrs, addr)
+	return nil, errors.New("forward dialer: not dialing")
+}
+
+func (f *recordingForward) calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.addrs)
+}
+
+func TestSocksPosterDialerRefusesProxyOwnIP(t *testing.T) {
+	cases := []struct {
+		name   string
+		proxy  string
+		lookup map[string]string
+		want   string
+	}{
+		{"proxy literal", "socks5://93.184.216.34:1080", map[string]string{"poster.example.invalid": "93.184.216.34"}, "poster is on the proxy address"},
+		{"proxy name", "socks5://proxy.example.invalid:1080", map[string]string{"poster.example.invalid": "93.184.216.34", "proxy.example.invalid": "93.184.216.34"}, "poster is on the proxy address"},
+		{"proxy name does not resolve", "socks5://proxy.example.invalid:1080", map[string]string{"poster.example.invalid": "93.184.216.34"}, "no such host proxy.example.invalid"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fakePosterLookup(t, c.lookup)
+			fwd := &recordingForward{}
+			dial := socksPosterDialer(c.proxy, fwd)
+			if dial == nil {
+				t.Fatal("socksPosterDialer returned nil")
+			}
+			conn, err := dial(context.Background(), "tcp", "poster.example.invalid:8080")
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want it to contain %q", err, c.want)
+			}
+			if got := fwd.calls(); len(got) != 0 {
+				t.Errorf("forward dialer got %v, want no calls before a refusal", got)
+			}
+		})
+	}
+}
+
+func TestSocksPosterDialerAllowsOtherPublicIP(t *testing.T) {
+	fakePosterLookup(t, map[string]string{"poster.example.invalid": "93.184.216.35", "proxy.example.invalid": "93.184.216.34"})
+	fwd := &recordingForward{}
+	dial := socksPosterDialer("socks5://proxy.example.invalid:1080", fwd)
+	if dial == nil {
+		t.Fatal("socksPosterDialer returned nil")
+	}
+	_, _ = dial(context.Background(), "tcp", "poster.example.invalid:8080")
+	if got := fwd.calls(); len(got) != 1 {
+		t.Errorf("forward dialer got %v, want exactly one call to the proxy", got)
+	}
+}

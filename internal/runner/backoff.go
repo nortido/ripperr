@@ -34,11 +34,18 @@ func (h *handler) slotInterval() time.Duration {
 }
 
 func (h *handler) backedOff(p *pushPass, e *model.Entry) bool {
-	m, ok := p.marks[e.URLHash]
-	if !ok {
+	if it := p.items[e.URLHash]; it != nil && it.ForceCheck {
 		return false
 	}
-	if it := p.items[e.URLHash]; it != nil && it.ForceCheck {
+	// как отметки ошибок: пробный и форсированный проходы паузу не применяют
+	// у релиза только с 5xx нет отметки ошибки, поэтому проверка раньше возврата без отметки
+	if !p.dry && p.forced == nil {
+		if sm, ok := h.state.ServerErrorMark(e.URLHash); ok && inBackoff(time.Now(), sm, h.slotInterval()) {
+			return true
+		}
+	}
+	m, ok := p.marks[e.URLHash]
+	if !ok {
 		return false
 	}
 	return inBackoff(time.Now(), m, h.slotInterval())

@@ -228,11 +228,20 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 }
 
 func applySchedule(cfg *config.App, o scheduleOverlay) {
+	// битое значение из БД иначе дошло бы до ValidateSchedule в main и остановило процесс вместе с веб-интерфейсом
 	if o.StartHour != nil {
-		cfg.Runner.StartHour = *o.StartHour
+		if *o.StartHour < 0 || *o.StartHour > 23 {
+			warnOnce(fmt.Sprintf("settings schedule: start_hour=%d out of range, kept %d", *o.StartHour, cfg.Runner.StartHour))
+		} else {
+			cfg.Runner.StartHour = *o.StartHour
+		}
 	}
 	if o.ListRefreshPerDay != nil {
-		cfg.Runner.ListRefreshPerDay = *o.ListRefreshPerDay
+		if !slices.Contains(config.AllowedRefreshPerDay, *o.ListRefreshPerDay) {
+			warnOnce(fmt.Sprintf("settings schedule: list_refresh_per_day=%d out of range, kept %d", *o.ListRefreshPerDay, cfg.Runner.ListRefreshPerDay))
+		} else {
+			cfg.Runner.ListRefreshPerDay = *o.ListRefreshPerDay
+		}
 	}
 	if o.ThresholdMonth != nil {
 		cfg.Runner.MonthThresholdDays = *o.ThresholdMonth
@@ -247,7 +256,11 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 		cfg.Runner.ErrorStreakThreshold = *o.ErrorStreakThreshold
 	}
 	if o.MagnetTimeout != nil {
-		cfg.Runner.MagnetTimeout = *o.MagnetTimeout
+		if t := *o.MagnetTimeout; t != 0 && (t < 5 || t > 600) {
+			warnOnce(fmt.Sprintf("settings schedule: magnet_timeout=%d out of range, kept %d", t, cfg.Runner.MagnetTimeout))
+		} else {
+			cfg.Runner.MagnetTimeout = t
+		}
 	}
 	if o.MonitoredCategories != nil {
 		cfg.Runner.AllowedCategories = *o.MonitoredCategories

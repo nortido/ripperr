@@ -1518,3 +1518,55 @@ func TestWarnDerivedWatchModeBothLists(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyOverridesSkipsOutOfRangeSchedule(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored string
+	}{
+		{"all high", `{"start_hour":25,"list_refresh_per_day":5,"magnet_timeout":1}`},
+		{"negative hour", `{"start_hour":-1}`},
+		{"timeout above max", `{"magnet_timeout":601}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.App{
+				Log:          config.Log{Level: "info"},
+				Runner:       config.Runner{StartHour: 7, ListRefreshPerDay: 2, MagnetTimeout: 60},
+				Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+			}
+			db := &fakeSettingsDB{data: map[string]json.RawMessage{"schedule": json.RawMessage(tc.stored)}}
+			if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Runner.StartHour != 7 || cfg.Runner.ListRefreshPerDay != 2 || cfg.Runner.MagnetTimeout != 60 {
+				t.Errorf("got start_hour=%d list_refresh_per_day=%d magnet_timeout=%d, want 7 2 60",
+					cfg.Runner.StartHour, cfg.Runner.ListRefreshPerDay, cfg.Runner.MagnetTimeout)
+			}
+			if err := cfg.Runner.ValidateSchedule(); err != nil {
+				t.Errorf("ValidateSchedule after overlay: %v", err)
+			}
+			if err := cfg.Runner.Validate(); err != nil {
+				t.Errorf("Validate after overlay: %v", err)
+			}
+		})
+	}
+}
+
+func TestApplyOverridesAppliesScheduleBounds(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7, ListRefreshPerDay: 2, MagnetTimeout: 60},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"schedule": json.RawMessage(`{"start_hour":0,"list_refresh_per_day":24,"magnet_timeout":0}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.StartHour != 0 || cfg.Runner.ListRefreshPerDay != 24 || cfg.Runner.MagnetTimeout != 0 {
+		t.Errorf("got start_hour=%d list_refresh_per_day=%d magnet_timeout=%d, want 0 24 0",
+			cfg.Runner.StartHour, cfg.Runner.ListRefreshPerDay, cfg.Runner.MagnetTimeout)
+	}
+}

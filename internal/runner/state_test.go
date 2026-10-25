@@ -503,3 +503,34 @@ func TestStateTorrentLockLeavesNoEntries(t *testing.T) {
 		t.Fatalf("%d lock entries left after all unlocks", n)
 	}
 }
+
+func TestStateServerErrorsNilSafe(t *testing.T) {
+	var s *State
+	s.PageServerError(1, "h", time.Now())
+	s.PageOK(1, "h")
+	if _, ok := s.ServerErrorMark("h"); ok {
+		t.Fatal("nil state must hold no marks")
+	}
+}
+
+func TestStateServerErrorIsolation(t *testing.T) {
+	s := NewState()
+	now := time.Now()
+	s.PageServerError(1, "a", now)
+	if _, ok := s.ServerErrorMark("a"); ok {
+		t.Fatal("5xx with unknown tracker state must not count")
+	}
+	s.PageOK(1, "x")
+	s.PageServerError(1, "a", now)
+	s.PageServerError(1, "b", now)
+	if m, ok := s.ServerErrorMark("a"); !ok || m.Streak != 1 || !m.CheckedAt.Equal(now) {
+		t.Fatalf("a = %+v ok = %v, want count 1 at now", m, ok)
+	}
+	if _, ok := s.ServerErrorMark("b"); ok {
+		t.Fatal("second 5xx without a success in between must not count")
+	}
+	s.PageOK(1, "a")
+	if _, ok := s.ServerErrorMark("a"); ok {
+		t.Fatal("page success must clear the mark")
+	}
+}

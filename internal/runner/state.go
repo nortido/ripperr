@@ -5,7 +5,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	storageModel "ripperr/internal/model/storage"
 	"ripperr/internal/system/logger"
 )
 
@@ -24,6 +26,9 @@ type State struct {
 	itemsMu         sync.Mutex
 	queued          map[string]struct{}
 	current         map[int]string
+	pageMu          sync.Mutex
+	pageOK          map[int]bool
+	serverErrs      map[string]serverErrMark
 }
 
 func NewState() *State {
@@ -381,4 +386,52 @@ func (s *State) TryLockTorrent(hash string) (unlock func(), ok bool) {
 		s.torrents.release(key, g)
 		return nil, false
 	}
+}
+
+type serverErrMark struct {
+	count int
+	at    time.Time
+}
+
+func (s *State) PageServerError(ttid int, urlHash string, now time.Time) {
+	if s == nil || urlHash == "" {
+		return
+	}
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+	// считаем 5xx только после успешной страницы этого трекера: при сбое всего трекера пауза не растет ни у кого
+	if s.pageOK[ttid] {
+		if s.serverErrs == nil {
+			s.serverErrs = make(map[string]serverErrMark)
+		}
+		m := s.serverErrs[urlHash]
+		s.serverErrs[urlHash] = serverErrMark{count: m.count + 1, at: now}
+	}
+	if s.pageOK == nil {
+		s.pageOK = make(map[int]bool)
+	}
+	s.pageOK[ttid] = false
+}
+
+func (s *State) PageOK(ttid int, urlHash string) {
+	if s == nil {
+		return
+	}
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+	if s.pageOK == nil {
+		s.pageOK = make(map[int]bool)
+	}
+	s.pageOK[ttid] = true
+	delete(s.serverErrs, urlHash)
+}
+
+func (s *State) ServerErrorMark(urlHash string) (storageModel.ErrorMark, bool) {
+	if s == nil {
+		return storageModel.ErrorMark{}, false
+	}
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+	m, ok := s.serverErrs[urlHash]
+	return storageModel.ErrorMark{Streak: m.count, CheckedAt: m.at}, ok
 }

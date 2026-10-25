@@ -1,7 +1,6 @@
 package notify
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -12,9 +11,9 @@ type fakeRecorder struct {
 	got chan storage.EventEntry
 }
 
-func (r *fakeRecorder) AddEvent(_ context.Context, e storage.EventEntry) error {
+func (r *fakeRecorder) RecordEvent(e storage.EventEntry) bool {
 	r.got <- e
-	return nil
+	return true
 }
 
 func TestNotifyRecordsEvent(t *testing.T) {

@@ -291,7 +291,7 @@ func (n *Notifier) WithAppURL(appURL string) *Notifier {
 }
 
 type EventRecorder interface {
-	AddEvent(ctx context.Context, e storage.EventEntry) error
+	RecordEvent(e storage.EventEntry) bool
 }
 
 func (n *Notifier) WithEvents(r EventRecorder) *Notifier {
@@ -382,6 +382,7 @@ func socksPosterDialer(raw string, forward proxy.Dialer) func(context.Context, s
 		pass, _ := u.User.Password()
 		auth = &proxy.Auth{User: u.User.Username(), Password: pass}
 	}
+	proxyHost := u.Hostname()
 	d, err := proxy.SOCKS5("tcp", proxyDialAddr(raw), auth, forward)
 	if err != nil {
 		return nil
@@ -399,6 +400,16 @@ func socksPosterDialer(raw string, forward proxy.Dialer) func(context.Context, s
 		if err != nil {
 			return nil, err
 		}
+		// прокси сам может ходить на свой IP (hairpin): адрес постера не должен совпадать с адресом прокси
+		proxyIPs, err := resolveProxyHost(ctx, proxyHost)
+		if err != nil {
+			return nil, err
+		}
+		for _, ip := range ips {
+			if slices.Contains(proxyIPs, ip.Unmap()) {
+				return nil, errors.New("poster is on the proxy address")
+			}
+		}
 		var lastErr error
 		for _, ip := range ips {
 			conn, err := cd.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
@@ -412,6 +423,23 @@ func socksPosterDialer(raw string, forward proxy.Dialer) func(context.Context, s
 		}
 		return nil, lastErr
 	}
+}
+
+func resolveProxyHost(ctx context.Context, host string) ([]netip.Addr, error) {
+	var ips []netip.Addr
+	if ip, err := netip.ParseAddr(host); err == nil {
+		ips = []netip.Addr{ip}
+	} else {
+		var lerr error
+		if ips, lerr = lookupPosterHost(ctx, host); lerr != nil {
+			return nil, fmt.Errorf("socks proxy host %s: %w", host, lerr)
+		}
+	}
+	out := make([]netip.Addr, len(ips))
+	for i, ip := range ips {
+		out[i] = ip.Unmap()
+	}
+	return out, nil
 }
 
 func resolvePosterHost(ctx context.Context, host string) ([]netip.Addr, error) {
@@ -584,13 +612,7 @@ func (n *Notifier) record(ev Event) {
 		Subject: ev.Subject,
 		AppPath: ev.AppPath,
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := n.events.AddEvent(ctx, entry); err != nil {
-			logger.Warn("notify: event log: " + err.Error())
-		}
-	}()
+	n.events.RecordEvent(entry)
 }
 
 func (n *Notifier) deliver(send func(context.Context, Event) error, ev Event, transport string) {
