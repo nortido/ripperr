@@ -70,6 +70,7 @@ type Server struct {
 	uiEventMu    sync.Mutex
 	uiEventStart time.Time
 	uiEventCount int
+	clientProbe  clientProbeCache
 }
 
 func New(db store, reload func(), effective func() config.App, listen string, runnerState *runner.State, alerts *breakeralerts.Registry) *Server {
@@ -132,6 +133,8 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("POST /api/integrations/secret", withMaxBody(s.handleRevealIntegrationSecret))
 	mux.HandleFunc("GET /api/web", s.handleGetWeb)
 	mux.HandleFunc("PUT /api/web", withMaxBody(s.handlePutWeb))
+	mux.HandleFunc("GET /api/onboarding", s.handleGetOnboarding)
+	mux.HandleFunc("PUT /api/onboarding", withMaxBody(s.handlePutOnboarding))
 	mux.HandleFunc("GET /api/push", s.handleGetPush)
 	mux.HandleFunc("POST /api/push/devices", withMaxBody(s.handlePostPushDevice))
 	mux.HandleFunc("DELETE /api/push/devices/{id}", s.handleDeletePushDevice)

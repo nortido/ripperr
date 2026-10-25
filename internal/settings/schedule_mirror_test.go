@@ -67,3 +67,22 @@ func TestScheduleMirrorConfirmSavedTrueWinsOverDefault(t *testing.T) {
 		t.Fatal(`{"mirror_confirm":true}: MirrorConfirm = false, want true over env default false`)
 	}
 }
+
+func TestDeleteEnabledDefaultOff(t *testing.T) {
+	cfg := envDefaultApp(t)
+	if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{data: map[string]json.RawMessage{}}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.DeleteEnabled {
+		t.Fatal("absent delete_enabled: DeleteEnabled = true, want env default false")
+	}
+
+	cfg = envDefaultApp(t)
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{"schedule": json.RawMessage(`{"delete_enabled":true}`)}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Manager.DeleteEnabled {
+		t.Fatal(`{"delete_enabled":true}: DeleteEnabled = false, want true over env default`)
+	}
+}

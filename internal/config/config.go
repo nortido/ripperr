@@ -40,7 +40,7 @@ type Manager struct {
 		Password string `env:"DELUGE_PASS, default=deluge"`
 	}
 	PausedMaxRatio        float64  `env:"MANAGER_PAUSED_MAX_RATIO, default=2"`
-	DeleteEnabled         bool     `env:"MANAGER_DELETE_ENABLED, default=true"`
+	DeleteEnabled         bool     `env:"MANAGER_DELETE_ENABLED, default=false"`
 	DeleteFilesEnabled    bool     `env:"MANAGER_DELETE_FILES, default=true"`
 	DeleteFilesCategories []string `env:"MANAGER_DELETE_FILES_CATEGORIES, default="`
 	MinutesToReconnect    int      `env:"MANAGER_MINUTES_TO_RECONNECT, default=5"`

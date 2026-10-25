@@ -506,3 +506,88 @@ html.mobile-layout .confirm-modal .modal-foot {
     pointer-events: auto;
   }
 }
+
+/* выше шапок и поповеров, ниже баннера офлайна и тостов */
+.tour-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1700;
+  animation: tour-in 0.18s ease;
+}
+
+.tour-catcher {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+}
+
+.tour-spot {
+  position: fixed;
+  border-radius: 10px;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--accent-from), 0 0 0 9999px rgba(0, 0, 0, 0.6);
+}
+
+.tour-pop {
+  position: fixed;
+  box-sizing: border-box;
+  width: min(300px, calc(100vw - 24px));
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-dropdown);
+}
+
+.tour-layer.is-moving .tour-spot,
+.tour-layer.is-moving .tour-pop {
+  transition: top 0.18s ease, left 0.18s ease, width 0.18s ease, height 0.18s ease;
+}
+
+.tour-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.tour-title {
+  padding-right: 32px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.tour-text {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.tour-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.tour-count {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+@keyframes tour-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-layer {
+    animation: none;
+  }
+
+  .tour-layer.is-moving .tour-spot,
+  .tour-layer.is-moving .tour-pop {
+    transition: none;
+  }
+}

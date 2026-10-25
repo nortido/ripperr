@@ -517,3 +517,103 @@ html.mobile-layout .int-page-header .page-header-actions {
   margin-top: 0;
   align-items: center;
 }
+
+.onb-card {
+  margin-bottom: 16px;
+}
+
+.onb-count {
+  margin-left: auto;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.onb-hide {
+  flex-shrink: 0;
+}
+
+.onb-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.onb-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-from);
+  transition: width 0.2s;
+}
+
+.onb-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.onb-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.onb-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.onb-row:last-child {
+  padding-bottom: 0;
+}
+
+.onb-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+}
+
+.onb-dot svg {
+  width: 14px;
+  height: 14px;
+}
+
+.onb-row-done .onb-dot {
+  border-color: var(--success);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.onb-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.onb-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.onb-row-done .onb-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.onb-hint {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.onb-go {
+  flex-shrink: 0;
+}

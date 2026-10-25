@@ -882,3 +882,39 @@ html.mobile-layout .seg-ctrl-btn {
 html.mobile-layout .btn-ghost:active:not(:disabled) {
   background: var(--hover);
 }
+
+html.mobile-layout .onb-card {
+  margin-bottom: 12px;
+}
+
+html.mobile-layout .onb-card .card-header {
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+html.mobile-layout .onb-card .card-body {
+  padding: 14px;
+}
+
+html.mobile-layout .onb-row {
+  gap: 10px;
+}
+
+html.mobile-layout .onb-go {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+html.mobile-layout .onb-title {
+  font-size: 15px;
+}
+
+html.mobile-layout .onb-hint {
+  font-size: 13px;
+}
+
+/* прокрутка к карточке (кнопки «Начала работы») прятала ее заголовок под шапкой 56px */
+html.mobile-layout .card {
+  scroll-margin-top: 68px;
+}

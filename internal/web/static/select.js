@@ -121,11 +121,39 @@ export function initCustomSelect(selectEl) {
 
   function positionPanel() {
     wrap.classList.remove('open-up');
+    panel.style.cssText = '';
     const rect = trigger.getBoundingClientRect();
     const panelH = Math.min(panel.scrollHeight || 320, 320);
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    if (spaceBelow < panelH + 8 && spaceAbove > spaceBelow) wrap.classList.add('open-up');
+    const up = spaceBelow < panelH + 8 && spaceAbove > spaceBelow;
+    if (up) wrap.classList.add('open-up');
+    if (!wrap.closest('.modal-body')) return;
+    // тело диалога прокручивается и обрезало список, поэтому в диалоге панель
+    // фиксированная по координатам кнопки и не выше свободного места
+    const room = Math.max(120, (up ? spaceAbove : spaceBelow) - 12);
+    panel.style.position = 'fixed';
+    panel.style.left = rect.left + 'px';
+    panel.style.right = 'auto';
+    panel.style.width = rect.width + 'px';
+    panel.style.maxHeight = Math.min(320, room) + 'px';
+    if (up) {
+      panel.style.top = 'auto';
+      panel.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+    } else {
+      panel.style.top = (rect.bottom + 4) + 'px';
+      panel.style.bottom = 'auto';
+    }
+  }
+
+  function followScroll(e) {
+    if (e && e.target === panel) return;
+    if (!wrap.classList.contains('open')) {
+      window.removeEventListener('scroll', followScroll, true);
+      window.removeEventListener('resize', followScroll);
+      return;
+    }
+    positionPanel();
   }
 
   function scrollToIndex(idx) {
@@ -149,6 +177,10 @@ export function initCustomSelect(selectEl) {
     highlightIdx = selectEl.selectedIndex;
     renderOptions();
     positionPanel();
+    if (wrap.closest('.modal-body')) {
+      window.addEventListener('scroll', followScroll, true);
+      window.addEventListener('resize', followScroll);
+    }
     scrollToIndex(highlightIdx);
     highlightOption();
   }

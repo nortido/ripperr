@@ -182,6 +182,11 @@
   box-sizing: border-box;
 }
 
+/* обертка иконки строчная: svg вставал на базовую линию и уезжал вверх на 1-2px в кнопках и кружках */
+[data-icon] {
+  display: inline-flex;
+}
+
 html {
   font-size: 16px;
   font-family: var(--font);

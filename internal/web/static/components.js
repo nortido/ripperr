@@ -286,11 +286,25 @@ export function updateSegmentThumb(seg) {
       thumb.style.width = active.offsetWidth + 'px';
       thumb.style.height = active.offsetHeight + 'px';
       thumb.style.bottom = 'auto';
-      thumb.style.transform = 'translate(' + (active.offsetLeft - thumb.offsetLeft) + 'px, ' + (active.offsetTop - thumb.offsetTop) + 'px)';
+      placeSegmentThumb(seg, thumb, 'translate(' + (active.offsetLeft - thumb.offsetLeft) + 'px, ' + (active.offsetTop - thumb.offsetTop) + 'px)');
       return;
     }
   }
-  if (thumb) thumb.style.transform = 'translateX(' + idx * 100 + '%)';
+  if (thumb) placeSegmentThumb(seg, thumb, 'translateX(' + idx * 100 + '%)');
+}
+
+function placeSegmentThumb(seg, thumb, transform) {
+  if (seg._thumbPlaced) {
+    thumb.style.transform = transform;
+    return;
+  }
+  // каждая перерисовка создает переключатель заново с бегунком слева, и он ехал
+  // к выбранной кнопке на глазах. Первую расстановку делаем без анимации
+  seg._thumbPlaced = true;
+  thumb.style.transition = 'none';
+  thumb.style.transform = transform;
+  void thumb.offsetWidth;
+  thumb.style.transition = '';
 }
 
 export function initSegmentControls(root) {

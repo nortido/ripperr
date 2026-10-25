@@ -310,7 +310,7 @@ export function buildNameColumnHeader() {
   const activeIconHtml = active
     ? html`<span class="th-name-filter-icon th-name-filter-icon-active" data-icon="funnel" aria-hidden="true"></span>`
     : '';
-  return html`<th class="${thClass}"><div class="name-filter-wrap"><span class="th-name-filter-label" role="button" tabindex="0" aria-haspopup="dialog" aria-expanded="false" title="${label}"><span class="th-name-filter-text">${t('dash.col.name')}</span><span class="th-name-filter-search" data-icon="search" aria-hidden="true"></span>${activeIconHtml}</span><div class="name-filter-inline"><input type="text" class="name-filter-input" value="${historyState.name}" placeholder="${t('dash.nameFilterPlaceholder')}" autocomplete="off"><button type="button" class="name-filter-clear" title="${t('dash.nameFilterClear')}" aria-label="${t('dash.nameFilterClear')}"><span data-icon="x"></span></button></div></div></th>`;
+  return html`<th class="${thClass}"><div class="name-filter-wrap"><span class="th-name-filter-label" role="button" tabindex="0" aria-haspopup="dialog" aria-expanded="false" title="${label}"><span class="th-name-filter-text">${t('dash.col.name')}</span><span class="th-name-filter-search" data-icon="search" aria-hidden="true"></span>${activeIconHtml}</span><div class="name-filter-inline"><input type="text" class="name-filter-input" name="name-filter" value="${historyState.name}" placeholder="${t('dash.nameFilterPlaceholder')}" autocomplete="off"><button type="button" class="name-filter-clear" title="${t('dash.nameFilterClear')}" aria-label="${t('dash.nameFilterClear')}"><span data-icon="x"></span></button></div></div></th>`;
 }
 
 export function bindNameFilter(root) {
@@ -419,7 +419,7 @@ export function buildMobileNameSearchSlot() {
     headerClass: headerExpanded,
     // .mobile-name-search-toggle лежит рядом со slot, не внутри: блок кнопок с фиксированной
     // позицией не зависит от анимации поля, и кнопка поиска не сдвинется
-    html: html`<div class="${slotCls}"><div class="mobile-name-search-field"><input type="text" class="name-filter-input mobile-name-filter-input" value="${historyState.name}" placeholder="${t('dash.nameFilterPlaceholder')}" autocomplete="off"></div></div><div class="mobile-name-search-toggle"><button type="button" class="btn btn-sm btn-icon name-filter-clear mobile-name-filter-clear" title="${t('dash.nameFilterClear')}" aria-label="${t('dash.nameFilterClear')}"><span data-icon="x"></span></button><button type="button" class="${btnCls}" id="dash-mobile-name-search-btn" aria-haspopup="true" aria-expanded="${active ? 'true' : 'false'}" title="${title}" aria-label="${title}"><span data-icon="search"></span>${dotHtml}</button></div>`,
+    html: html`<div class="${slotCls}"><div class="mobile-name-search-field"><input type="text" class="name-filter-input mobile-name-filter-input" name="name-filter-mobile" value="${historyState.name}" placeholder="${t('dash.nameFilterPlaceholder')}" autocomplete="off"></div></div><div class="mobile-name-search-toggle"><button type="button" class="btn btn-sm btn-icon name-filter-clear mobile-name-filter-clear" title="${t('dash.nameFilterClear')}" aria-label="${t('dash.nameFilterClear')}"><span data-icon="x"></span></button><button type="button" class="${btnCls}" id="dash-mobile-name-search-btn" aria-haspopup="true" aria-expanded="${active ? 'true' : 'false'}" title="${title}" aria-label="${title}"><span data-icon="search"></span>${dotHtml}</button></div>`,
   };
 }
 
