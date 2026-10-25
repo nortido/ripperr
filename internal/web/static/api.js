@@ -68,6 +68,16 @@ export async function fetchJSON(url, options = {}) {
 }
 
 let currentToast = null;
+let lastFocusOutsideToast = null;
+
+// кнопка тоста после клика получает фокус, а потом тост удаляется: вернуть фокус надо на прежний элемент
+document.addEventListener('focusin', function (e) {
+  if (e.target instanceof Element && !e.target.closest('#toast-container')) lastFocusOutsideToast = e.target;
+}, true);
+document.addEventListener('focusout', function (e) {
+  // фокус ушел в пустоту (клик по фону): иначе потом вернули бы его в давно брошенное поле
+  if (!e.relatedTarget && e.target === lastFocusOutsideToast) lastFocusOutsideToast = null;
+}, true);
 
 function removeToast(entry) {
   clearTimeout(entry.timer);
@@ -126,7 +136,7 @@ function addToastControls(entry, message, type) {
         removeToast(entry);
         // ошибки уже записаны в историю: полный текст и копирование там, остальное в окне
         if (type === 'error') import('./logs.js').then(function (m) { m.openEventsAndFocus(message); });
-        else textDialog(message);
+        else textDialog(message, { returnFocus: lastFocusOutsideToast });
       });
       el.appendChild(more);
     }

@@ -1209,8 +1209,7 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
     overflow: hidden;
   }
 
-  .dash-page-header .dash-header-status-block .run-status-label,
-  .dash-page-header .dash-last-updated {
+  .dash-page-header .dash-header-status-block .run-status-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

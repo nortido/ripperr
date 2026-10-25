@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -232,5 +235,104 @@ func TestOnboardingProbeBounded(t *testing.T) {
 	}
 	if n := calls.Load(); n != 1 {
 		t.Errorf("client factory calls = %d, want 1 (one probe in flight)", n)
+	}
+}
+
+func dialError() error {
+	return &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+}
+
+func TestOnboardingProbeFailureRetriesSoon(t *testing.T) {
+	orig, origTTL := managerClientFactory, clientProbeFailTTL
+	defer func() { managerClientFactory, clientProbeFailTTL = orig, origTTL }()
+	clientProbeFailTTL = 50 * time.Millisecond
+	var calls atomic.Int32
+	managerClientFactory = func(string, model.ManagerConfig) (managerClient, error) {
+		if calls.Add(1) == 1 {
+			return nil, dialError()
+		}
+		return &fakeQbitClient{}, nil
+	}
+	srv := newTestServer(&fakeStore{settings: map[string]json.RawMessage{}})
+
+	if _, got, _ := onboardingGet(t, srv); got["client_ok"] {
+		t.Fatal("client_ok = true on dial error")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, got, _ := onboardingGet(t, srv); !got["client_ok"] {
+		t.Fatal("client_ok = false after retry")
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("client factory calls = %d, want 2", n)
+	}
+}
+
+func TestOnboardingProbeAuthFailureCachedLong(t *testing.T) {
+	orig, origTTL := managerClientFactory, clientProbeFailTTL
+	defer func() { managerClientFactory, clientProbeFailTTL = orig, origTTL }()
+	clientProbeFailTTL = 50 * time.Millisecond
+	var calls atomic.Int32
+	managerClientFactory = func(string, model.ManagerConfig) (managerClient, error) {
+		calls.Add(1)
+		return nil, errors.New("login failed")
+	}
+	srv := newTestServer(&fakeStore{settings: map[string]json.RawMessage{}})
+
+	for range 2 {
+		if _, got, _ := onboardingGet(t, srv); got["client_ok"] {
+			t.Fatal("client_ok = true on login failure")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("client factory calls = %d, want 1 (login failure keeps the long TTL)", n)
+	}
+}
+
+func TestOnboardingProbeSuccessCachedLonger(t *testing.T) {
+	orig, origTTL := managerClientFactory, clientProbeFailTTL
+	defer func() { managerClientFactory, clientProbeFailTTL = orig, origTTL }()
+	clientProbeFailTTL = 50 * time.Millisecond
+	var calls atomic.Int32
+	managerClientFactory = func(string, model.ManagerConfig) (managerClient, error) {
+		calls.Add(1)
+		return &fakeQbitClient{}, nil
+	}
+	srv := newTestServer(&fakeStore{settings: map[string]json.RawMessage{}})
+
+	for range 2 {
+		if _, got, _ := onboardingGet(t, srv); !got["client_ok"] {
+			t.Fatal("client_ok = false")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("client factory calls = %d, want 1", n)
+	}
+}
+
+func TestProbeConnectionFailure(t *testing.T) {
+	timeout := &url.Error{Op: "Post", URL: "http://x", Err: context.DeadlineExceeded}
+	cases := map[string]bool{
+		"dial":         true,
+		"wrapped dial": true,
+		"dns":          true,
+		"url timeout":  true,
+		"deadline":     true,
+		"login":        false,
+		"nil":          false,
+	}
+	errs := map[string]error{
+		"dial":         dialError(),
+		"wrapped dial": fmt.Errorf("login: %w", &url.Error{Op: "Post", URL: "http://x", Err: dialError()}),
+		"dns":          &net.DNSError{Err: "no such host", Name: "x"},
+		"url timeout":  timeout,
+		"deadline":     context.DeadlineExceeded,
+		"login":        errors.New("login failed"),
+	}
+	for name, want := range cases {
+		if got := connectionFailure(errs[name]); got != want {
+			t.Errorf("%s: connectionFailure = %v, want %v", name, got, want)
+		}
 	}
 }

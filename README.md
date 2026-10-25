@@ -25,6 +25,7 @@ tags or file selection.
    categories). Forum trackers write the topic
    URL into the torrent comment, so there is nothing to add by hand: your existing library is the
    watch list.
+   If no mode was ever saved and both lists are filled, categories are used and the log shows one warning; save Settings to fix it.
 2. **Checks.** A few times a day (you choose the start hour and the number of passes) it opens each
    topic page and compares it with the torrent you hold: release date, download id or infohash,
    depending on the tracker. Fresh releases are checked often, old ones rarely.

@@ -1442,3 +1442,79 @@ func TestScheduleWatchMode(t *testing.T) {
 		t.Fatal("expected error for bad watch_mode")
 	}
 }
+
+func TestScheduleJSONWatchModeStored(t *testing.T) {
+	var doc struct {
+		WatchMode       string `json:"watch_mode"`
+		WatchModeStored bool   `json:"watch_mode_stored"`
+	}
+	stored := config.App{Runner: config.Runner{WatchMode: "tags"}}
+	if err := json.Unmarshal(ScheduleJSON(&stored), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if !doc.WatchModeStored {
+		t.Error("watch_mode_stored = false for stored tags")
+	}
+	derived := config.App{Runner: config.Runner{WatchTags: []string{"watch"}}}
+	doc.WatchModeStored = false
+	if err := json.Unmarshal(ScheduleJSON(&derived), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.WatchMode != "tags" || doc.WatchModeStored {
+		t.Errorf("doc = %+v, want derived tags and not stored", doc)
+	}
+}
+
+func countWatchModeWarns() int {
+	n := 0
+	for _, e := range logger.Snapshot(0) {
+		if e.Level == "WARN" && strings.Contains(e.Message, "watch_mode not saved") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestWarnDerivedWatchModeBothLists(t *testing.T) {
+	cases := []struct {
+		name     string
+		client   string
+		schedule string
+		want     int
+	}{
+		{"derived categories", "qbit", `{"monitored_categories":["tv"]}`, 1},
+		{"stored mode", "qbit", `{"watch_mode":"categories","monitored_categories":["tv"]}`, 0},
+		{"deluge", "deluge", `{"monitored_categories":["tv"]}`, 0},
+		{"no categories", "qbit", `{}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetWarned()
+			base := countWatchModeWarns()
+			cfg := config.App{
+				Manager: config.Manager{Client: tc.client},
+				Runner:  config.Runner{WatchTags: []string{"watch"}},
+			}
+			db := &fakeSettingsDB{data: map[string]json.RawMessage{"schedule": json.RawMessage(tc.schedule)}}
+			for range 2 {
+				if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := countWatchModeWarns() - base; got != tc.want {
+				t.Errorf("warns = %d, want %d", got, tc.want)
+			}
+			if tc.want > 0 {
+				found := false
+				for _, e := range logger.Snapshot(0) {
+					if strings.Contains(e.Message, "watch_mode not saved") && strings.Contains(e.Message, "tv") {
+						found = true
+					}
+				}
+				if !found {
+					t.Error("warn does not name the category")
+				}
+			}
+		})
+	}
+}

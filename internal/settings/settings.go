@@ -223,6 +223,7 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 	if err := NormalizeAppIntegrations(cfg); err != nil {
 		return &InvalidConfigError{Err: err}
 	}
+	warnDerivedWatchMode(cfg)
 	return nil
 }
 
@@ -442,6 +443,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		DeleteFilesCategories []string `json:"delete_files_categories"`
 		WatchTags             []string `json:"watch_tags"`
 		WatchMode             string   `json:"watch_mode"`
+		WatchModeStored       bool     `json:"watch_mode_stored"`
 		TagsSupported         bool     `json:"tags_supported"`
 		Timezone              string   `json:"timezone"`
 	}{
@@ -457,6 +459,7 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		MonitoredCategories:  cfg.Runner.AllowedCategories,
 		WatchTags:            cfg.Runner.WatchTags,
 		WatchMode:            cfg.Runner.EffectiveWatchMode(),
+		WatchModeStored:      cfg.Runner.WatchMode == config.WatchModeCategories || cfg.Runner.WatchMode == config.WatchModeTags,
 		TagsSupported:        config.ClientSupportsTags(cfg.Manager.Client),
 		Timezone:             cfg.Runner.Timezone,
 	}
@@ -843,4 +846,16 @@ func MergeWeb(ctx context.Context, db interface {
 		return err
 	}
 	return db.SaveSetting(ctx, settingWeb, out)
+}
+
+func warnDerivedWatchMode(cfg *config.App) {
+	r := cfg.Runner
+	if r.WatchMode == config.WatchModeCategories || r.WatchMode == config.WatchModeTags {
+		return
+	}
+	if !config.ClientSupportsTags(cfg.Manager.Client) || len(r.AllowedCategories) == 0 || len(r.WatchTags) == 0 {
+		return
+	}
+	warnOnce(fmt.Sprintf("settings schedule: watch_mode not saved and both monitored_categories %v and watch_tags %v are set: "+
+		"watching by categories only, tags are ignored; save Settings to keep it or switch to tags", r.AllowedCategories, r.WatchTags))
 }

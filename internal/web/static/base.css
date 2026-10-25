@@ -208,7 +208,6 @@ body {
 .table,
 .stat-value,
 .run-status,
-.dash-last-updated,
 .logs-feed,
 .events-feed,
 .logs-last-updated {
@@ -533,7 +532,7 @@ body:has(.app.page-scaled) {
   margin-left: var(--sidebar-w);
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   min-width: 0;
 }
 
@@ -542,7 +541,7 @@ body:has(.app.page-scaled) {
   padding: 28px 32px;
   max-width: 1200px;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
   min-width: 0;
   overflow-x: hidden;
 }

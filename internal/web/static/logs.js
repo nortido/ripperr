@@ -3,7 +3,7 @@ import { triggerDryRun, updateDryRunButtonState } from './dashboard.js';
 import { hydrateIcons, icon } from './icons.js';
 import { createPoller } from './poller.js';
 import { currentView } from './router.js';
-import { initCustomSelects } from './select.js';
+import { closeOpenCustomSelect, initCustomSelects } from './select.js';
 import { buildSegmentControl, initSegmentControls } from './components.js';
 import { copyText } from './confirm.js';
 import { html, formatLogTime, updateRefreshedAt } from './util.js';
@@ -223,7 +223,15 @@ function applyLogsTab(el) {
   const events = logsState.tab === 'events';
   el.querySelector('.logs-feed').classList.toggle('hidden', events);
   el.querySelector('.events-feed').classList.toggle('hidden', !events);
-  ['logs-level-group', 'logs-limit-group', 'logs-copy-btn', 'logs-download-btn'].forEach(function (id) {
+  // группы только прячем: со скрытием через display шапка сжималась и переключатель прыгал по вертикали
+  if (events && el.querySelector('#logs-level-group .custom-select.open, #logs-limit-group .custom-select.open')) closeOpenCustomSelect(true);
+  ['logs-level-group', 'logs-limit-group'].forEach(function (id) {
+    const node = el.querySelector('#' + id);
+    if (!node) return;
+    node.classList.toggle('is-concealed', events);
+    node.toggleAttribute('inert', events);
+  });
+  ['logs-copy-btn', 'logs-download-btn'].forEach(function (id) {
     const node = el.querySelector('#' + id);
     if (node) node.classList.toggle('hidden', events);
   });

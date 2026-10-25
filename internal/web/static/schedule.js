@@ -3,6 +3,7 @@ import { initChipInput, initHintToggles, initSegmentControls, setSaving } from '
 import { confirmDialog } from './confirm.js';
 import { hydrateIcons } from './icons.js';
 import { advancedEnabled, applyAdvanced, applyTheme, THEMES } from './layout.js';
+import { clearOnboardingDismiss } from './onboarding.js';
 import { bindPasswordCard, passwordCardHtml } from './password.js';
 import { initCustomSelects } from './select.js';
 import { html, hourOptions, refreshOptions, timezoneOptions } from './util.js';
@@ -67,8 +68,8 @@ export function renderSchedule(el, sch, suggestions, qbitDown, timezones, web) {
     ? html`<p class="form-hint form-hint-warn">${t('settings.qbitUnavailable')}</p>`
     : '';
   const tagsSupported = sch.tags_supported !== false;
-  // сохраненный режим не трогаем, пока пользователь сам не выберет: у Deluge он может быть tags
-  let watchMode = sch.watch_mode === 'tags' ? 'tags' : 'categories';
+  // у Deluge без сохраненного режима tags только выведен из тега по умолчанию: не закрепляем его первым сохранением
+  let watchMode = sch.watch_mode === 'tags' && (tagsSupported || sch.watch_mode_stored) ? 'tags' : 'categories';
   const shownMode = tagsSupported ? watchMode : 'categories';
   const tagsNote = tagsSupported ? '' : html`<p class="form-hint form-hint-keep">${t('settings.tagsUnsupported')}</p>`;
   const modeHint = function (mode) {
@@ -104,6 +105,7 @@ export function renderSchedule(el, sch, suggestions, qbitDown, timezones, web) {
     onboardingReset.disabled = true;
     try {
       await fetchJSON('/api/onboarding', { method: 'PUT', body: JSON.stringify({ checklist_hidden: false, tour_done: false, replay: true }) });
+      clearOnboardingDismiss();
       showToast(t('settings.onboardingResetDone'), 'success');
     } catch (err) {
       showToast(err.message, 'error');

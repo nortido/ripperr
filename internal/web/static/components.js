@@ -289,6 +289,8 @@ export function updateSegmentThumb(seg) {
       placeSegmentThumb(seg, thumb, 'translate(' + (active.offsetLeft - thumb.offsetLeft) + 'px, ' + (active.offsetTop - thumb.offsetTop) + 'px)');
       return;
     }
+    // скрыт: наблюдатель позовет нас, когда кнопки получат размер, и бегунок встанет без анимации
+    if (seg._fitObserver) return;
   }
   if (thumb) placeSegmentThumb(seg, thumb, 'translateX(' + idx * 100 + '%)');
 }
@@ -413,9 +415,26 @@ export function initHintToggles(root) {
     // в шапке страницы кнопка прижата вправо, (i) ставим слева от нее
     if (label.matches('.page-header-actions > .btn')) label.before(btn);
     else if (label.matches('.form-switch > span, .form-submit-row > .btn')) label.after(btn);
+    else if (label.matches('.card-title')) glueHintToLastWord(label, btn);
     else label.appendChild(btn);
     if (label.matches('.form-switch > span')) pinHintToFirstLine(label, btn);
   });
+}
+
+function glueHintToLastWord(title, btn) {
+  // (i) одна в конце длинного заголовка переносилась на свою строку: последнее слово и кнопка идут вместе
+  const last = title.lastChild;
+  const m = last && last.nodeType === Node.TEXT_NODE ? /^([\s\S]*\s)(\S+)$/.exec(last.nodeValue) : null;
+  if (!m) {
+    title.appendChild(btn);
+    return;
+  }
+  const glue = document.createElement('span');
+  glue.className = 'hint-nowrap';
+  glue.textContent = m[2];
+  glue.appendChild(btn);
+  last.nodeValue = m[1];
+  title.appendChild(glue);
 }
 
 function pinHintToFirstLine(span, btn) {

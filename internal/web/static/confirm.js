@@ -1,12 +1,13 @@
 import { closeAnimated } from './components.js';
 
-let active = null;
+let stack = [];
+let dialogSeq = 0;
 
 export function confirmDialog(opts) {
-  if (active) active.finish(false, true);
+  stack.slice().forEach(function (d) { d.finish(false, true); });
   return new Promise(function (resolve) {
     const prevFocus = document.activeElement;
-    const textId = 'confirm-text';
+    const textId = 'confirm-text-' + (++dialogSeq);
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay confirm-overlay';
     const box = document.createElement('div');
@@ -48,7 +49,7 @@ export function confirmDialog(opts) {
     function finish(result, force) {
       if (done) return;
       done = true;
-      active = null;
+      stack = stack.filter(function (d) { return d !== entry; });
       // window в фазе перехвата получает Escape раньше диалога трекера и глобального обработчика
       window.removeEventListener('keydown', onKey, true);
       if (force) {
@@ -64,12 +65,13 @@ export function confirmDialog(opts) {
       resolve(result);
     }
     function onKey(e) {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || stack[stack.length - 1] !== entry) return;
       e.preventDefault();
       e.stopPropagation();
       finish(false);
     }
-    active = { finish: finish };
+    const entry = { finish: finish, text: false };
+    stack.push(entry);
 
     cancelBtn.addEventListener('click', function () { finish(false); });
     okBtn.addEventListener('click', function () { finish(true); });
@@ -109,11 +111,12 @@ export async function copyText(text) {
   if (!ok) throw new Error(t('logs.copyFail'));
 }
 
-export function textDialog(content) {
-  if (active) active.finish(false, true);
+export function textDialog(content, opts) {
+  stack.filter(function (d) { return d.text; }).forEach(function (d) { d.finish(false, true); });
   return new Promise(function (resolve) {
     const prevFocus = document.activeElement;
-    const textId = 'confirm-text';
+    const backTo = opts && opts.returnFocus;
+    const textId = 'confirm-text-' + (++dialogSeq);
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay confirm-overlay';
     const box = document.createElement('div');
@@ -155,7 +158,7 @@ export function textDialog(content) {
     function finish(result, force) {
       if (done) return;
       done = true;
-      active = null;
+      stack = stack.filter(function (d) { return d !== entry; });
       clearTimeout(copyTimer);
       window.removeEventListener('keydown', onKey, true);
       if (force) {
@@ -166,16 +169,18 @@ export function textDialog(content) {
       }
       inerted.forEach(function (el) { el.inert = false; });
       if (addedModalOpen) root.classList.remove('modal-open');
-      if (prevFocus && prevFocus.isConnected && typeof prevFocus.focus === 'function') prevFocus.focus();
+      const back = backTo && backTo.isConnected ? backTo : prevFocus;
+      if (back && back.isConnected && typeof back.focus === 'function') back.focus();
       resolve(result);
     }
     function onKey(e) {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || stack[stack.length - 1] !== entry) return;
       e.preventDefault();
       e.stopPropagation();
       finish(false);
     }
-    active = { finish: finish };
+    const entry = { finish: finish, text: true };
+    stack.push(entry);
 
     closeBtn.addEventListener('click', function () { finish(false); });
     copyBtn.addEventListener('click', async function () {

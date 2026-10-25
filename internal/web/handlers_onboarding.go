@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -65,25 +67,29 @@ func (s *Server) handlePutOnboarding(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-var clientProbeTimeout = 5 * time.Second
-
-const (
+var (
+	clientProbeTimeout = 5 * time.Second
 	clientProbeTTL     = 60 * time.Second
-	clientProbeBgLimit = 30 * time.Second
+	// Только обрыв связи: неверный пароль так же кешируется на минуту, иначе qBittorrent банит IP
+	clientProbeFailTTL = 10 * time.Second
 )
 
+const clientProbeBgLimit = 30 * time.Second
+
 type clientFlight struct {
-	done chan struct{}
-	key  string
-	ok   bool
+	done    chan struct{}
+	key     string
+	ok      bool
+	connErr bool
 }
 
 type clientProbeCache struct {
-	mu     sync.Mutex
-	key    string
-	ok     bool
-	at     time.Time
-	flight *clientFlight
+	mu      sync.Mutex
+	key     string
+	ok      bool
+	connErr bool
+	at      time.Time
+	flight  *clientFlight
 }
 
 func (s *Server) clientReachable(ctx context.Context) bool {
@@ -94,7 +100,7 @@ func (s *Server) clientReachable(ctx context.Context) bool {
 	key := strings.Join([]string{cfg.Manager.Client, mcfg.Host, mcfg.Username, mcfg.Password}, "\x00")
 	c := &s.clientProbe
 	c.mu.Lock()
-	if c.key == key && !c.at.IsZero() && time.Since(c.at) < clientProbeTTL {
+	if c.key == key && !c.at.IsZero() && time.Since(c.at) < c.ttl() {
 		ok := c.ok
 		c.mu.Unlock()
 		return ok
@@ -122,16 +128,36 @@ func (s *Server) runClientProbe(fl *clientFlight, kind string, mcfg model.Manage
 	// Вход в клиент идет без ctx и может зависнуть, поэтому проба живет отдельно от запроса и дописывает кеш позже
 	ctx, cancel := context.WithTimeout(context.Background(), clientProbeBgLimit)
 	defer cancel()
-	if mc, err := managerClientFactory(kind, mcfg); err == nil {
+	mc, err := managerClientFactory(kind, mcfg)
+	if err == nil {
 		_, err = mc.GetCategories(ctx)
-		fl.ok = err == nil
 	}
+	fl.ok = err == nil
+	fl.connErr = connectionFailure(err)
 	c := &s.clientProbe
 	c.mu.Lock()
 	if c.flight == fl {
 		c.flight = nil
-		c.key, c.ok, c.at = fl.key, fl.ok, time.Now()
+		c.key, c.ok, c.connErr, c.at = fl.key, fl.ok, fl.connErr, time.Now()
 	}
 	c.mu.Unlock()
 	close(fl.done)
+}
+
+func (c *clientProbeCache) ttl() time.Duration {
+	if !c.ok && c.connErr {
+		return clientProbeFailTTL
+	}
+	return clientProbeTTL
+}
+
+func connectionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var opErr *net.OpError
+	var dnsErr *net.DNSError
+	var netErr net.Error
+	return errors.As(err, &opErr) || errors.As(err, &dnsErr) ||
+		(errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded)
 }

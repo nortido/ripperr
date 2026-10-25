@@ -85,7 +85,7 @@ export function initCustomSelect(selectEl) {
       item.dataset.index = String(idx);
       if (opt.disabled) item.setAttribute('aria-disabled', 'true');
       if (opt.value === curVal) {
-        item.innerHTML = html`<span class="custom-select-check">${icon('check')}</span><span>${opt.textContent}</span>`;
+        item.innerHTML = html`<span>${opt.textContent}</span><span class="custom-select-check">${icon('check')}</span>`;
       } else {
         item.textContent = opt.textContent;
       }

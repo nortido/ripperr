@@ -8,8 +8,12 @@ import (
 )
 
 const (
-	eventsKeep   = 500
-	eventsMaxAge = 30 * 24 * time.Hour
+	eventsKeep            = 500
+	eventsKeepCheckFailed = 100
+	eventsMaxAge          = 30 * 24 * time.Hour
+
+	// совпадает с notify.KindCheckFailed, storage не импортирует notify
+	kindCheckFailed = "check_failed"
 )
 
 func (c *Client) AddEvent(ctx context.Context, e storage.EventEntry) error {
@@ -25,8 +29,12 @@ func (c *Client) AddEvent(ctx context.Context, e storage.EventEntry) error {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx,
-		`DELETE FROM events WHERE created_at < ? OR id NOT IN (SELECT id FROM events ORDER BY created_at DESC, id DESC LIMIT ?)`,
-		time.Now().Add(-eventsMaxAge).Unix(), eventsKeep); err != nil {
+		`DELETE FROM events WHERE created_at < ?
+		 OR (kind = ? AND id NOT IN (SELECT id FROM events WHERE kind = ? ORDER BY created_at DESC, id DESC LIMIT ?))
+		 OR (kind <> ? AND id NOT IN (SELECT id FROM events WHERE kind <> ? ORDER BY created_at DESC, id DESC LIMIT ?))`,
+		time.Now().Add(-eventsMaxAge).Unix(),
+		kindCheckFailed, kindCheckFailed, eventsKeepCheckFailed,
+		kindCheckFailed, kindCheckFailed, eventsKeep); err != nil {
 		return err
 	}
 	return tx.Commit()

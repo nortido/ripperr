@@ -11,6 +11,11 @@ const NAV_WAIT_MS = 5000;
 let onbState = null;
 let onbGen = 0;
 let tourTimer = null;
+let dismissedThisPage = false;
+
+export function clearOnboardingDismiss() {
+  dismissedThisPage = false;
+}
 
 function saveOnboarding(patch) {
   return fetchJSON('/api/onboarding', { method: 'PUT', body: JSON.stringify(patch) });
@@ -38,6 +43,11 @@ export async function refreshOnboarding() {
     tracker_ok: !!data.tracker_ok,
     watch_ok: !!data.watch_ok,
   };
+  if (dismissedThisPage) {
+    // неудавшийся PUT не должен возвращать карточку, пока страница открыта
+    onbState.checklist_hidden = true;
+    onbState.replay = false;
+  }
   if (!onbState.checklist_hidden && !onbState.replay && onbState.client_ok && onbState.tracker_ok && onbState.watch_ok) {
     // все три готовы: помечаем скрытой, чтобы дальше сервер не опрашивал клиент
     onbState.checklist_hidden = true;
@@ -89,6 +99,7 @@ function dismissChecklist() {
   if (!onbState) return;
   // ответ, который еще в пути, не должен вернуть карточку
   onbGen++;
+  dismissedThisPage = true;
   onbState.checklist_hidden = true;
   onbState.replay = false;
   renderOnboardingCard();

@@ -419,17 +419,6 @@ html.mobile-layout .run-status {
   white-space: nowrap;
 }
 
-/* при переносе статуса точка-разделитель повисала в конце строки */
-html.mobile-layout .dash-page-header .dash-meta-sep {
-  display: none;
-}
-
-html.mobile-layout .dash-last-updated {
-  white-space: nowrap;
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
 html.mobile-layout .page-header-run-group {
   width: 100%;
   justify-content: stretch;
@@ -890,7 +879,7 @@ html.mobile-layout .onb-card {
 html.mobile-layout .onb-card .card-header {
   flex-wrap: nowrap;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 8px 14px;
 }
 
 html.mobile-layout .onb-card .card-body {
@@ -917,4 +906,17 @@ html.mobile-layout .onb-hint {
 /* прокрутка к карточке (кнопки «Начала работы») прятала ее заголовок под шапкой 56px */
 html.mobile-layout .card {
   scroll-margin-top: 68px;
+}
+
+/* строка заголовка страницы одной высоты с кнопкой 44px: иначе заголовок с кнопкой
+   центрировался по ней и стоял на 6-8px ниже, чем на страницах без кнопки */
+html.mobile-layout .page-title {
+  line-height: 44px;
+}
+
+/* на телефоне заголовки карточек еще плотнее: кнопки 40px, по 8px сверху и снизу */
+html.mobile-layout .card-header {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  min-height: calc(var(--btn-h-sm) + 17px);
 }

@@ -107,3 +107,70 @@ func TestListEventsHidesStaleRows(t *testing.T) {
 		t.Fatalf("list = %+v, want only fresh", got)
 	}
 }
+
+func TestCheckFailedDoesNotEvictOthers(t *testing.T) {
+	c := newTestClient(t)
+	base := time.Now().Add(-time.Hour)
+	add := func(i int, kind string) {
+		t.Helper()
+		e := storage.EventEntry{At: base.Add(time.Duration(i) * time.Second), Source: "server", Kind: kind, Text: fmt.Sprintf("%s%d", kind, i)}
+		if err := c.AddEvent(t.Context(), e); err != nil {
+			t.Fatalf("add %s %d: %v", kind, i, err)
+		}
+	}
+	for i := range 10 {
+		add(i, "updated")
+	}
+	for i := 10; i < 610; i++ {
+		add(i, "check_failed")
+	}
+	got, err := c.ListEvents(t.Context(), 1000)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var updated, failed int
+	for _, e := range got {
+		switch e.Kind {
+		case "updated":
+			updated++
+		case "check_failed":
+			failed++
+		}
+	}
+	if updated != 10 || failed != 100 {
+		t.Fatalf("updated %d check_failed %d, want 10 and 100", updated, failed)
+	}
+	if got[0].Text != "check_failed609" {
+		t.Fatalf("first = %q, want check_failed609", got[0].Text)
+	}
+}
+
+func TestCheckFailedDoesNotShrinkOtherCap(t *testing.T) {
+	c := newTestClient(t)
+	base := time.Now().Add(-time.Hour)
+	for i := range 510 {
+		kind := "updated"
+		if i >= 505 {
+			kind = "check_failed"
+		}
+		e := storage.EventEntry{At: base.Add(time.Duration(i) * time.Second), Source: "server", Kind: kind, Text: fmt.Sprintf("e%d", i)}
+		if err := c.AddEvent(t.Context(), e); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	got, err := c.ListEvents(t.Context(), 1000)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var updated, failed int
+	for _, e := range got {
+		if e.Kind == "check_failed" {
+			failed++
+		} else {
+			updated++
+		}
+	}
+	if updated != 500 || failed != 5 {
+		t.Fatalf("updated %d check_failed %d, want 500 and 5", updated, failed)
+	}
+}

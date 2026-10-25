@@ -24,10 +24,10 @@ html:not(.mobile-layout) .page-header {
   top: 0;
   z-index: 150;
   box-sizing: border-box;
-  min-height: calc(72px - 32px * var(--p));
-  padding-top: calc(28px - 24px * var(--p));
+  min-height: calc(64px - 24px * var(--p));
+  padding-top: calc(20px - 16px * var(--p));
   padding-bottom: calc(4px * var(--p));
-  margin-bottom: calc(24px + 32px * var(--p));
+  margin-bottom: calc(16px + 24px * var(--p));
   background: var(--bg);
 }
 
@@ -42,6 +42,11 @@ html.header-compact:not(.mobile-layout) .page-header {
 
 html:not(.mobile-layout) .page-header-row {
   align-items: center;
+}
+
+/* строка одной высоты с кнопкой в шапке: заголовок на одном y и с кнопкой, и без нее */
+html:not(.mobile-layout) .page-header > .page-header-row {
+  min-height: calc(var(--btn-h-md) - 12px * var(--p));
 }
 
 html:not(.mobile-layout) .page-header .btn,
@@ -104,11 +109,6 @@ html:not(.mobile-layout) .page-header .select {
 
 .dash-page-header .page-title {
   margin-bottom: 0;
-}
-
-.dash-meta-sep {
-  color: var(--text-muted);
-  opacity: 0.65;
 }
 
 .page-header-row {
