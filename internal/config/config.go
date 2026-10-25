@@ -112,6 +112,7 @@ func ApplyTrackerEnv(ctx context.Context, t Tracker, l envconfig.Lookuper) error
 type Runner struct {
 	WatchTag              string `env:"RUNNER_TAG, default=watch"` // из окружения, действующий список в WatchTags
 	WatchTags             []string
+	WatchMode             string   // только из БД, пусто: режим выводится из списков
 	MonthThresholdDays    int      `env:"RUNNER_FIRST_MONTH_UPDATE_THRESHOLD, default=1"`
 	HalfYearThresholdDays int      `env:"RUNNER_HALF_YEAR_UPDATE_THRESHOLD, default=7"`
 	YearThresholdDays     int      `env:"RUNNER_YEAR_UPDATE_THRESHOLD, default=30"`
@@ -126,7 +127,7 @@ type Runner struct {
 	CBMinutesToRetry      int      `env:"RUNNER_CB_MINUTES_TO_RETRY, default=60"`
 	AllowedCategories     []string `env:"RUNNER_ALLOWED_CATEGORIES, default="`
 	MagnetTimeout         int64    `env:"RUNNER_MAGNET_TIMEOUT, default=60"`
-	MirrorConfirm         bool     `env:"RUNNER_MIRROR_CONFIRM, default=true"`
+	MirrorConfirm         bool     `env:"RUNNER_MIRROR_CONFIRM, default=false"`
 	RunOnStart            bool     `env:"RUNNER_RUN_ON_START, default=true"`
 	Timezone              string   // переопределение только из БД, пусто: локальная зона процесса
 }
@@ -185,8 +186,6 @@ type Notifications struct {
 	WebhookDisabled  bool
 	EmailDisabled    bool
 	PushoverDisabled bool
-	TelegramEvents   []string
-	WebhookEvents    []string
 	EmailHost        string
 	EmailPort        int
 	EmailSecurity    string
@@ -194,11 +193,10 @@ type Notifications struct {
 	EmailPassword    string
 	EmailFrom        string
 	EmailTo          string
-	EmailEvents      []string
 	PushoverToken    string
 	PushoverUser     string
-	PushoverEvents   []string
 	BrowserDisabled  bool
-	BrowserEvents    []string
 	Language         string
+
+	Events []string
 }

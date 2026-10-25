@@ -298,3 +298,12 @@ func TestIntegrationsPatchRejectsUnknownBrowserEvent(t *testing.T) {
 		t.Fatalf("err = %v, want notifications.browser.events", err)
 	}
 }
+
+func TestSchedulePatchPartialBlockStillRequiresFields(t *testing.T) {
+	if _, err := SchedulePatchFromJSON(json.RawMessage(`{"mirror_confirm":true}`)); err != nil {
+		t.Errorf("patch without schedule block: %v", err)
+	}
+	if _, err := SchedulePatchFromJSON(json.RawMessage(`{"start_hour":7}`)); err == nil {
+		t.Error("partial schedule block must stay an error")
+	}
+}

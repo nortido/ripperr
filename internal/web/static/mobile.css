@@ -453,6 +453,11 @@ html.mobile-layout .card-header-left {
   min-width: 0;
 }
 
+html.mobile-layout .card-danger .card-header {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
 html.mobile-layout .table th,
 html.mobile-layout .table td {
   padding: 0 10px;
@@ -861,8 +866,15 @@ html.mobile-layout .notify-tabs.seg-ctrl {
 }
 
 html.mobile-layout .notify-tabs .notify-tab {
-  min-height: 38px;
-  padding: 4px 8px;
+  padding: 2px 8px;
+}
+
+/* все переключатели на телефоне одной высоты: кнопка 32px, палец попадает, а место не съедает */
+html.mobile-layout .seg-ctrl {
+  --btn-h-sm: 40px;
+}
+
+html.mobile-layout .seg-ctrl-btn {
   font-size: 14px;
 }
 

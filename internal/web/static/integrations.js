@@ -22,17 +22,16 @@ const NOTIFY_CHANNEL_KEYS = {
   pushover: 'integrations.notifyChannelPushover',
   browser: 'integrations.notifyChannelBrowser',
 };
-const NOTIFY_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched', 'mirror_suggested', 'check_failed'];
+const NOTIFY_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched', 'check_failed'];
 const NOTIFY_EVENT_KEYS = {
   updated: 'integrations.notifyEventUpdated',
   broken: 'integrations.notifyEventBroken',
   tracker_down: 'integrations.notifyEventTrackerDown',
   tracker_up: 'integrations.notifyEventTrackerUp',
   mirror_switched: 'integrations.notifyEventMirrorSwitched',
-  mirror_suggested: 'integrations.notifyEventMirrorSuggested',
   check_failed: 'integrations.notifyEventCheckFailed',
 };
-const NOTIFY_DEFAULT_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched', 'mirror_suggested'];
+const NOTIFY_DEFAULT_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched'];
 const EMAIL_DEFAULT_PORTS = { starttls: 587, tls: 465, none: 25 };
 const INTEGRATION_TEST_KINDS = ['client', 'flaresolverr', 'proxy', 'mirror_source', 'notify'];
 
@@ -411,7 +410,7 @@ function proxyCardHtml(proxyParts) {
   const opt = function (value, key) {
     return html`<option value="${value}"${proxyParts.type === value ? ' selected' : ''}>${t(key)}</option>`;
   };
-  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.proxy')}</h2>${testButtonHtml('proxy')}</div><div class="card-body">${testLineHtml('proxy')}<div class="form-row"><div class="form-group"><label class="form-label" for="proxy-type">${t('integrations.proxyType')}</label><select class="select" id="proxy-type">${opt('http', 'integrations.proxyTypeHttp')}${opt('https', 'integrations.proxyTypeHttps')}${opt('socks5', 'integrations.proxyTypeSocks5')}</select></div><div class="form-group"><label class="form-label" for="proxy-download">${t('integrations.proxyAddress')}</label><input type="text" class="input" id="proxy-download" value="${proxyParts.address}" placeholder="${t('integrations.downloadProxyPlaceholder')}"></div></div></div></div>`;
+  return html`<div class="card int-advanced"><div class="card-header"><h2 class="card-title">${t('integrations.proxy')}</h2>${testButtonHtml('proxy')}</div><div class="card-body">${testLineHtml('proxy')}<div class="form-row"><div class="form-group"><label class="form-label" for="proxy-type">${t('integrations.proxyType')}</label><select class="select" id="proxy-type">${opt('http', 'integrations.proxyTypeHttp')}${opt('https', 'integrations.proxyTypeHttps')}${opt('socks5', 'integrations.proxyTypeSocks5')}</select></div><div class="form-group"><label class="form-label" for="proxy-download">${t('integrations.proxyAddress')}</label><input type="text" class="input" id="proxy-download" value="${proxyParts.address}" placeholder="${t('integrations.downloadProxyPlaceholder')}"></div></div></div></div>`;
 }
 
 function applyMirrorSourceType(el, type) {
@@ -482,7 +481,7 @@ function notifyChannelFilled(v, ch) {
 }
 
 function notifyChannelActive(v, ch) {
-  return v.enabled && v[ch].enabled && v[ch].events.length > 0 && notifyChannelFilled(v, ch);
+  return v.enabled && v[ch].enabled && v.events.length > 0 && notifyChannelFilled(v, ch);
 }
 
 function integrationTestMissing(kind) {
@@ -664,7 +663,7 @@ function mirrorSourceCardHtml(ms) {
   const opt = function (value, key) {
     return html`<option value="${value}"${type === value ? ' selected' : ''}>${t(key)}</option>`;
   };
-  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.mirrorSource')}</h2>${testButtonHtml('mirror_source')}</div><div class="card-body">${testLineHtml('mirror_source')}<div class="form-row"><div class="form-group"><label class="form-label" for="mirror-source-type">${t('integrations.mirrorSourceType')}</label><select class="select" id="mirror-source-type">${opt('github', 'integrations.mirrorSourceGithub')}${opt('jsdelivr', 'integrations.mirrorSourceJsdelivr')}${opt('custom', 'integrations.mirrorSourceCustom')}</select><p class="form-hint">${t('integrations.mirrorSourceHint')}</p></div><div class="form-group${type === 'custom' ? '' : ' hidden'}" id="mirror-source-url-group"><label class="form-label" for="mirror-source-url">${t('integrations.mirrorSourceUrl')}</label><input type="text" class="input" id="mirror-source-url" value="${ms.url || ''}" placeholder="https://example.com/{path}"><p class="form-hint">${t('integrations.mirrorSourceUrlHint')}</p></div><div class="form-group form-group-switch-end"><label class="form-switch"><input type="checkbox" id="mirror-source-direct"${ms.direct ? ' checked' : ''}><span>${t('integrations.mirrorSourceDirect')}</span></label></div></div>${mirrorConfirmHtml()}</div></div>`;
+  return html`<div class="card int-advanced"><div class="card-header"><h2 class="card-title">${t('integrations.mirrorSource')}</h2>${testButtonHtml('mirror_source')}</div><div class="card-body">${testLineHtml('mirror_source')}<div class="form-row"><div class="form-group"><label class="form-label" for="mirror-source-type">${t('integrations.mirrorSourceType')}</label><select class="select" id="mirror-source-type">${opt('github', 'integrations.mirrorSourceGithub')}${opt('jsdelivr', 'integrations.mirrorSourceJsdelivr')}${opt('custom', 'integrations.mirrorSourceCustom')}</select><p class="form-hint">${t('integrations.mirrorSourceHint')}</p></div><div class="form-group${type === 'custom' ? '' : ' hidden'}" id="mirror-source-url-group"><label class="form-label" for="mirror-source-url">${t('integrations.mirrorSourceUrl')}</label><input type="text" class="input" id="mirror-source-url" value="${ms.url || ''}" placeholder="https://example.com/{path}"><p class="form-hint">${t('integrations.mirrorSourceUrlHint')}</p></div><div class="form-group form-group-switch-end"><label class="form-switch"><input type="checkbox" id="mirror-source-direct"${ms.direct ? ' checked' : ''}><span>${t('integrations.mirrorSourceDirect')}</span></label></div></div>${mirrorConfirmHtml()}</div></div>`;
 }
 
 function notifyCardHtml(n, selected) {
@@ -682,17 +681,17 @@ function notifyCardHtml(n, selected) {
     return html`<button type="button" class="seg-ctrl-btn notify-tab${on ? ' active' : ''}" role="tab" id="notify-tab-${ch}" data-channel="${ch}" aria-selected="${on ? 'true' : 'false'}" aria-controls="notify-panel-${ch}" tabindex="${on ? '0' : '-1'}"><span class="notify-tab-name">${t(NOTIFY_CHANNEL_KEYS[ch])}</span><span class="notify-tab-dot" role="img" title="${t('integrations.notifyChannelActiveDot')}" aria-label="${t('integrations.notifyChannelActiveDot')}"></span></button>`;
   });
   const panel = function (ch, c, fields) {
-    return html`<div class="notify-channel" data-channel="${ch}" role="tabpanel" id="notify-panel-${ch}" aria-labelledby="notify-tab-${ch}"><div class="form-group"><label class="form-switch"><input type="checkbox" id="notify-ch-enabled-${ch}"${c.enabled === false ? '' : ' checked'}><span>${t('integrations.notifyChannelEnabled')}</span></label></div>${fields}${notifyEventsHtml(ch, notifyEventsOf(c))}</div>`;
+    return html`<div class="notify-channel" data-channel="${ch}" role="tabpanel" id="notify-panel-${ch}" aria-labelledby="notify-tab-${ch}"><div class="form-group"><label class="form-switch"><input type="checkbox" id="notify-ch-enabled-${ch}"${c.enabled === false ? '' : ' checked'}><span>${t('integrations.notifyChannelEnabled')}</span></label></div>${fields}</div>`;
   };
   const telegram = html`<div class="form-group"><label class="form-label" for="notify-bot-token">${t('integrations.notifyBotToken')}</label>${notifyPasswordHtml('notify-bot-token', tg.bot_token, 'notifications.telegram.bot_token')}</div>`;
   const webhook = html`<div class="form-group"><label class="form-label" for="notify-webhook-url">${t('integrations.notifyWebhookUrl')}</label><input type="text" class="input" id="notify-webhook-url" autocomplete="off" value="${wh.url}"></div>`;
   const email = html`<div class="form-row int-row-3"><div class="form-group"><label class="form-label" for="notify-email-host">${t('integrations.notifyEmailHost')}</label><input type="text" class="input" id="notify-email-host" autocomplete="off" value="${em.host}"></div><div class="form-group"><label class="form-label" for="notify-email-port">${t('integrations.notifyEmailPort')}</label><input type="number" class="input" id="notify-email-port" min="0" max="65535" autocomplete="off" value="${em.port || ''}"></div><div class="form-group"><label class="form-label" for="notify-email-security">${t('integrations.notifyEmailSecurity')}</label><select class="select" id="notify-email-security">${securityOptions}</select></div></div><div class="form-row"><div class="form-group"><label class="form-label" for="notify-email-username">${t('integrations.notifyEmailUsername')}</label><input type="text" class="input" id="notify-email-username" autocomplete="off" value="${em.username}"><p class="form-hint">${t('integrations.notifyEmailAuthHint')}</p></div><div class="form-group"><label class="form-label" for="notify-email-password">${t('integrations.notifyEmailPassword')}</label>${notifyPasswordHtml('notify-email-password', em.password, 'notifications.email.password')}</div></div><div class="form-row"><div class="form-group"><label class="form-label" for="notify-email-from">${t('integrations.notifyEmailFrom')}</label><input type="text" class="input" id="notify-email-from" autocomplete="off" value="${em.from}"></div><div class="form-group"><label class="form-label" for="notify-email-to">${t('integrations.notifyEmailTo')}</label><input type="text" class="input" id="notify-email-to" autocomplete="off" value="${em.to}"><p class="form-hint">${t('integrations.notifyEmailToHint')}</p></div></div>`;
   const pushover = html`<div class="form-row"><div class="form-group"><label class="form-label" for="notify-pushover-token">${t('integrations.notifyPushoverToken')}</label>${notifyPasswordHtml('notify-pushover-token', po.app_token, 'notifications.pushover.app_token')}</div><div class="form-group"><label class="form-label" for="notify-pushover-user">${t('integrations.notifyPushoverUser')}</label>${notifyPasswordHtml('notify-pushover-user', po.user_key, 'notifications.pushover.user_key')}<p class="form-hint">${t('integrations.notifyPushoverHint')}</p></div></div>`;
-  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.notify')}</h2>${testButtonHtml('notify')}</div><div class="card-body" id="notify-card-body" autocomplete="off">${testLineHtml('notify')}<div class="form-group"><label class="form-switch"><input type="checkbox" id="notify-enabled"${n.enabled ? ' checked' : ''}><span>${t('integrations.notifyEnabled')}</span></label></div><div class="form-group"><label class="form-label" for="notify-language">${t('integrations.notifyLanguage')}</label><select class="select" id="notify-language"><option value="ru"${n.language === 'ru' ? ' selected' : ''}>${t('settings.languageRu')}</option><option value="en"${n.language === 'ru' ? '' : ' selected'}>${t('settings.languageEn')}</option></select></div><div class="form-group"><span class="form-label" id="notify-tabs-label">${t('integrations.notifyChannels')}</span><div class="seg-ctrl seg-ctrl-fit notify-tabs" id="notify-tabs" role="tablist" aria-labelledby="notify-tabs-label"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${tabs}</div></div><div class="notify-panels">${panel('telegram', tg, telegram)}${panel('webhook', wh, webhook)}${panel('email', em, email)}${panel('pushover', po, pushover)}${panel('browser', br, browserPanelHtml())}</div></div></div>`;
+  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.notify')}</h2>${testButtonHtml('notify')}</div><div class="card-body" id="notify-card-body" autocomplete="off">${testLineHtml('notify')}<div class="form-group"><label class="form-switch"><input type="checkbox" id="notify-enabled"${n.enabled ? ' checked' : ''}><span>${t('integrations.notifyEnabled')}</span></label></div><div class="form-group"><label class="form-label" for="notify-language">${t('integrations.notifyLanguage')}</label><select class="select" id="notify-language"><option value="ru"${n.language === 'ru' ? ' selected' : ''}>${t('settings.languageRu')}</option><option value="en"${n.language === 'ru' ? '' : ' selected'}>${t('settings.languageEn')}</option></select></div>${notifyEventsHtml('all', notifyEventsOf(n))}<div class="form-group"><span class="form-label" id="notify-tabs-label">${t('integrations.notifyChannels')}</span><div class="seg-ctrl seg-ctrl-fit notify-tabs" id="notify-tabs" role="tablist" aria-labelledby="notify-tabs-label"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${tabs}</div></div><div class="notify-panels">${panel('telegram', tg, telegram)}${panel('webhook', wh, webhook)}${panel('email', em, email)}${panel('pushover', po, pushover)}${panel('browser', br, browserPanelHtml())}</div></div></div>`;
 }
 
 function metricsCardHtml(m) {
-  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.metrics')}</h2></div><div class="card-body" autocomplete="off"><div class="form-group"><label class="form-label" for="metrics-token">${t('integrations.metricsToken')}</label><div class="int-field-action">${notifyPasswordHtml('metrics-token', m.token || '', 'metrics.token')}<button type="button" class="btn btn-ghost" id="metrics-generate">${t('integrations.metricsGenerate')}</button></div><p class="form-hint">${t('integrations.metricsHint')}</p></div></div></div>`;
+  return html`<div class="card int-advanced"><div class="card-header"><h2 class="card-title">${t('integrations.metrics')}</h2></div><div class="card-body" autocomplete="off"><div class="form-group"><label class="form-label" for="metrics-token">${t('integrations.metricsToken')}</label><div class="int-field-action">${notifyPasswordHtml('metrics-token', m.token || '', 'metrics.token')}<button type="button" class="btn btn-ghost" id="metrics-generate">${t('integrations.metricsGenerate')}</button></div><p class="form-hint">${t('integrations.metricsHint')}</p></div></div></div>`;
 }
 
 function applyClientHint(el, type) {
@@ -773,14 +772,9 @@ export function getNotifyFormValue() {
     const box = document.getElementById('notify-ch-enabled-' + ch);
     return box.disabled ? box.dataset.saved === '1' : box.checked;
   };
-  const events = function (ch) {
-    return NOTIFY_EVENTS.filter(function (kind) {
-      return document.getElementById('notify-ev-' + ch + '-' + kind).checked;
-    });
-  };
   return {
-    telegram: { enabled: chEnabled('telegram'), bot_token: val('notify-bot-token'), events: events('telegram') },
-    webhook: { enabled: chEnabled('webhook'), url: val('notify-webhook-url'), events: events('webhook') },
+    telegram: { enabled: chEnabled('telegram'), bot_token: val('notify-bot-token') },
+    webhook: { enabled: chEnabled('webhook'), url: val('notify-webhook-url') },
     email: {
       enabled: chEnabled('email'),
       host: val('notify-email-host'),
@@ -790,10 +784,10 @@ export function getNotifyFormValue() {
       password: val('notify-email-password'),
       from: val('notify-email-from'),
       to: val('notify-email-to'),
-      events: events('email'),
     },
-    pushover: { enabled: chEnabled('pushover'), app_token: val('notify-pushover-token'), user_key: val('notify-pushover-user'), events: events('pushover') },
-    browser: { enabled: chEnabled('browser'), events: events('browser') },
+    pushover: { enabled: chEnabled('pushover'), app_token: val('notify-pushover-token'), user_key: val('notify-pushover-user') },
+    browser: { enabled: chEnabled('browser') },
+    events: NOTIFY_EVENTS.filter(function (kind) { return document.getElementById('notify-ev-all-' + kind).checked; }),
     enabled: document.getElementById('notify-enabled').checked,
     language: val('notify-language'),
   };

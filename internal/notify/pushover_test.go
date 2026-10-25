@@ -96,7 +96,7 @@ func TestNotifyRoutesPushoverByEvents(t *testing.T) {
 		hits.Add(1)
 		_, _ = io.WriteString(w, `{"status":1}`)
 	})
-	cfg := Config{PushoverToken: "t", PushoverUser: "u", Enabled: true, PushoverEvents: []string{KindUpdated}}
+	cfg := Config{PushoverToken: "t", PushoverUser: "u", Enabled: true, Events: []string{KindUpdated}}
 	New(cfg, "").Notify(TrackerDownEvent("rutracker", "boom"))
 	New(cfg, "").Notify(UpdatedEvent("x", "", ""))
 	waitHits(t, &hits, 1)

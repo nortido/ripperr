@@ -958,8 +958,7 @@
 }
 
 /* по той же причине группа после ряда липла к его полям */
-.notify-channel .form-row + .form-group,
-.notify-channel .form-row + .notify-events {
+.notify-channel .form-row + .form-group {
   margin-top: 18px;
 }
 
@@ -1999,4 +1998,52 @@ html.mobile-layout .tr-use-mirrors-group .form-switch > span {
 #view-schedule .card-body > :last-child,
 #view-schedule #delete-dependent > .form-group:last-child {
   margin-bottom: 0;
+}
+
+/* режим «Что отслеживать»: в DOM лежат оба списка, виден один. Отступы у списков гасим,
+   иначе скрытый добавлял бы пустое место под карточкой */
+#view-schedule .watch-mode {
+  max-width: 100%;
+}
+
+#view-schedule .watch-mode .seg-ctrl-btn {
+  padding: 4px 16px;
+}
+
+.seg-ctrl-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#view-schedule .watch-lists > .form-group {
+  margin-bottom: 0;
+}
+
+.card-danger .card-header {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.card-danger .card-title {
+  min-width: 0;
+}
+
+.card-danger-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--danger);
+}
+
+.card-danger-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.card-danger-hint {
+  margin: 0 0 18px;
+}
+
+/* прокси, источник зеркал и метрики видны только с «Расширенные настройки» */
+:root:not([data-advanced]) #view-integrations .int-advanced {
+  display: none;
 }

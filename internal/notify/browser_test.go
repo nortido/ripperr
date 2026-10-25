@@ -257,10 +257,10 @@ func TestNotifyBrowserFlags(t *testing.T) {
 	}
 
 	f = newPushFixture(t, []int{201}, []int{201})
-	f.notifier(Config{BrowserEvents: []string{KindBroken}}).Notify(UpdatedEvent("Some.Release", "https://example.com/t1", ""))
+	f.notifier(Config{Events: []string{KindBroken}}).Notify(UpdatedEvent("Some.Release", "https://example.com/t1", ""))
 	quiet()
 	if f.a.count()+f.b.count() != 0 {
-		t.Fatalf("BrowserEvents [broken] delivered updated: a=%d b=%d", f.a.count(), f.b.count())
+		t.Fatalf("Events [broken] delivered updated: a=%d b=%d", f.a.count(), f.b.count())
 	}
 
 	empty := webpush.NewStore(&memSettings{rows: map[string]json.RawMessage{}})

@@ -31,14 +31,16 @@ import (
 )
 
 const (
-	KindUpdated         = "updated"
-	KindBroken          = "broken"
-	KindTrackerDown     = "tracker_down"
-	KindTrackerUp       = "tracker_up"
-	KindCheckFailed     = "check_failed"
-	KindMirrorSwitched  = "mirror_switched"
-	KindMirrorSuggested = "mirror_suggested"
-	KindTest            = "test"
+	KindUpdated        = "updated"
+	KindBroken         = "broken"
+	KindTrackerDown    = "tracker_down"
+	KindTrackerUp      = "tracker_up"
+	KindCheckFailed    = "check_failed"
+	KindMirrorSwitched = "mirror_switched"
+	KindTest           = "test"
+
+	// старое имя события: принимаем из PUT и сохраненных списков, везде дальше это mirror_switched
+	legacyMirrorSuggested = "mirror_suggested"
 )
 
 const (
@@ -70,8 +72,6 @@ type Config struct {
 	WebhookDisabled  bool
 	EmailDisabled    bool
 	PushoverDisabled bool
-	TelegramEvents   []string
-	WebhookEvents    []string
 	EmailHost        string
 	EmailPort        int
 	EmailSecurity    string
@@ -79,13 +79,12 @@ type Config struct {
 	EmailPassword    string
 	EmailFrom        string
 	EmailTo          string
-	EmailEvents      []string
 	PushoverToken    string
 	PushoverUser     string
-	PushoverEvents   []string
 	BrowserDisabled  bool
-	BrowserEvents    []string
 	Language         string
+
+	Events []string
 }
 
 type Event struct {
@@ -189,7 +188,7 @@ func MirrorSwitchedEvent(tracker, from, to string) Event {
 
 func MirrorDigestEvent(items []MirrorDigestItem) Event {
 	return Event{
-		Kind:    KindMirrorSuggested,
+		Kind:    KindMirrorSwitched,
 		msg:     msgMirrorDigest,
 		digest:  items,
 		AppPath: pathTrackers,
@@ -198,7 +197,7 @@ func MirrorDigestEvent(items []MirrorDigestItem) Event {
 
 func MirrorPausedEvent(tracker, host string) Event {
 	return Event{
-		Kind:    KindMirrorSuggested,
+		Kind:    KindMirrorSwitched,
 		msg:     msgMirrorPaused,
 		args:    []string{tracker, host},
 		AppPath: pathTrackers,
@@ -220,17 +219,47 @@ func TestEvent(appLink string) Event {
 	return Event{Kind: KindTest, msg: msgTest, AppLink: appLink}.withDefaultText()
 }
 
+var eventOrder = []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched, KindCheckFailed}
+
 func DefaultEvents() []string {
 	// check_failed тут нет: шум от каждой ошибки включают руками
-	return []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched, KindMirrorSuggested}
+	return []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched}
 }
 
 func KnownEvent(kind string) bool {
-	switch kind {
-	case KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindCheckFailed, KindMirrorSwitched, KindMirrorSuggested:
-		return true
+	return slices.Contains(eventOrder, kind)
+}
+
+func CanonicalEvent(kind string) (string, bool) {
+	if kind == legacyMirrorSuggested {
+		return KindMirrorSwitched, true
 	}
-	return false
+	return kind, KnownEvent(kind)
+}
+
+func NormalizeEvents(list []string) []string {
+	if list == nil {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, kind := range list {
+		if k, ok := CanonicalEvent(kind); ok && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func UnionEvents(lists ...[]string) []string {
+	out := make([]string, 0, len(eventOrder))
+	for _, kind := range eventOrder {
+		if slices.ContainsFunc(lists, func(l []string) bool {
+			return slices.ContainsFunc(l, func(k string) bool { c, _ := CanonicalEvent(k); return c == kind })
+		}) {
+			out = append(out, kind)
+		}
+	}
+	return out
 }
 
 func wants(events []string, kind string) bool {
@@ -521,21 +550,21 @@ func (n *Notifier) Notify(ev Event) {
 		return
 	}
 	// устройства читаются из БД один раз за вызов: Notify не должен надолго держать воркер
-	browser := !n.cfg.BrowserDisabled && wants(n.cfg.BrowserEvents, ev.Kind) && n.browserReady()
+	browser := !n.cfg.BrowserDisabled && wants(n.cfg.Events, ev.Kind) && n.browserReady()
 	if !browser && !n.otherReady() {
 		return
 	}
 	ev = n.withLink(n.localize(ev))
-	if !n.cfg.TelegramDisabled && n.telegramReady() && wants(n.cfg.TelegramEvents, ev.Kind) {
+	if !n.cfg.TelegramDisabled && n.telegramReady() && wants(n.cfg.Events, ev.Kind) {
 		n.deliver(n.sendTelegram, ev, "telegram")
 	}
-	if !n.cfg.WebhookDisabled && n.cfg.WebhookURL != "" && wants(n.cfg.WebhookEvents, ev.Kind) {
+	if !n.cfg.WebhookDisabled && n.cfg.WebhookURL != "" && wants(n.cfg.Events, ev.Kind) {
 		n.deliver(n.sendWebhook, ev, "webhook")
 	}
-	if !n.cfg.EmailDisabled && n.emailReady() && wants(n.cfg.EmailEvents, ev.Kind) {
+	if !n.cfg.EmailDisabled && n.emailReady() && wants(n.cfg.Events, ev.Kind) {
 		n.deliver(n.sendEmail, ev, "email")
 	}
-	if !n.cfg.PushoverDisabled && n.pushoverReady() && wants(n.cfg.PushoverEvents, ev.Kind) {
+	if !n.cfg.PushoverDisabled && n.pushoverReady() && wants(n.cfg.Events, ev.Kind) {
 		n.deliver(n.sendPushover, ev, "pushover")
 	}
 	if browser {

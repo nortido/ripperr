@@ -21,7 +21,8 @@ tags or file selection.
 ## How it works
 
 1. **Discovery.** Ripperr reads your torrent client (qBittorrent, Transmission or Deluge) and picks the torrents
-   in the categories you monitor, optionally only those with a given tag. Forum trackers write the topic
+   you watch: either by categories or by tags, one mode at a time (Deluge has no tags, so it watches by
+   categories). Forum trackers write the topic
    URL into the torrent comment, so there is nothing to add by hand: your existing library is the
    watch list.
 2. **Checks.** A few times a day (you choose the start hour and the number of passes) it opens each
@@ -54,7 +55,7 @@ tags or file selection.
 - Dry run: a full pass that touches nothing, to see what would be updated.
 - Web UI in English and Russian, dark, light and OLED themes, works on phones.
 - Notifications to Telegram (with the release poster), a generic webhook, email (SMTP), Pushover and browser push notifications (Web Push, one subscription per device, HTTPS only; iPhone and iPad only as a Home Screen app on iOS 16.4+),
-  each channel with its own list of events. Notification texts are English or Russian: one setting for all
+  one set of events for all channels. Notification texts are English or Russian: one setting for all
   channels on the Integrations page (default English).
 - Health probes and Prometheus metrics (see [Monitoring](#monitoring)).
 - One account with a hashed password. Login is always required; the first account can be created only
@@ -85,14 +86,14 @@ On the Trackers page you add the trackers you use (one per type) and remove the 
 removed tracker loses its settings, login, password and cookies after a confirm, while the release
 history and the torrents in the client stay. Every added tracker can be switched on, tested and tuned
 (mirrors, credentials, cookies, hourly request limit). The main domain starts as the configured one
-(the type default or `TRACKER_<KEY>_DOMAIN`). You cannot type another one: add the address as a
+(the type default). You cannot type another one: add the address as a
 mirror, then pick that mirror as the main domain from the list (the old main domain moves to the mirrors).
 
 ### Mirror sync
 
 Once a day (the first run 2 minutes after start) Ripperr reads the public Jackett definitions of the
 trackers you added and probes the hosts itself. The definitions come from the source chosen in
-Integrations (card "Mirror source"): GitHub by default, jsDelivr, or your own HTTPS URL with `{path}`
+Integrations (card "Mirror source", shown in advanced mode): GitHub by default, jsDelivr, or your own HTTPS URL with `{path}`
 in it. The download goes through the download proxy if you set one, unless "Direct connection" is on.
 There is no fallback between sources: if the chosen one is blocked, pick another and press Test.
 
@@ -102,20 +103,21 @@ There is no fallback between sources: if the chosen one is blocked, pick another
   `private`, `localdomain`, `*.arpa`) are ignored.
 - A mirror that does not answer for 3 runs in a row, or that Jackett lists as legacy, is suggested for
   removal. A change of the main domain (a redirect, a legacy or a dead main host) is always a
-  suggestion that you apply and save yourself, and you get a notification (event "Mirror suggestions").
+  suggestion that you apply and save yourself, and you get a notification (event "Tracker mirrors", the same event as a switch to another mirror).
 - A removed host is kept as `retired`: torrents whose topic link uses it are still checked. It is
   dropped once no torrent in the client and no history record uses it.
   If you save a tracker dialog that still shows a mirror the job has retired meanwhile, it stays
   retired and the dialog tells you so.
-- Setting **Confirm mirror changes** (Settings, on by default). On: an automatically added mirror is not
-  used until you confirm it, and if only such a mirror answers, the tracker pauses and asks; dead mirrors
-  are suggestions. Off: new mirrors are used at once and dead ones are removed automatically.
+- Setting **Confirm mirror changes** (Integrations, card "Mirror source", shown in advanced mode; off by
+  default). Off: new mirrors are used at once and dead ones are removed automatically. On: an automatically
+  added mirror is not used until you confirm it, and if only such a mirror answers, the tracker pauses and
+  asks; dead mirrors are suggestions.
 
-Off is a risk you accept. Your login and password go to every address of a tracker. If the proxy
-breaks or every real host is blocked, a mirror taken from a third-party file can answer first,
+Off, the default, is a risk you accept. Your login and password go to every address of a tracker. If the
+proxy breaks or every real host is blocked, a mirror taken from a third-party file can answer first,
 receive the credentials and serve a swapped `.torrent`, and the replace then deletes the old torrent
-and its files. Leave it on unless you trust the mirror source. Every automatic change is listed in the
-tracker dialog.
+and its files. Turn the setting on unless you trust the mirror source. Every automatic change is listed
+in the tracker dialog.
 
 ## Getting started
 
@@ -129,62 +131,45 @@ docker build -t ripperr .
 docker run -d --name ripperr \
   -p 6410:6410 \
   -v ./config:/config \
-  -e QBIT_URL=http://qbittorrent:8080 \
-  -e QBIT_USER=admin \
-  -e QBIT_PASS=secret \
   ripperr
 ```
 
 Open `http://<host>:6410`, create the account on the first visit, then:
 
-1. **Integrations:** check the client connection (or switch to Transmission or Deluge), add the
-   notification channels you want (Telegram, webhook, email, Pushover, Browser) and tick the events each one gets.
+1. **Integrations:** pick the torrent client (qBittorrent, Transmission or Deluge), enter its address and
+   login, and press Test. Add the notification channels you want (Telegram, webhook, email, Pushover,
+   Browser) and tick the events: one set is shared by all channels.
 2. **Trackers:** add the trackers you use, enable them and enter credentials or cookies; the test
    button shows whether login works.
-3. **Settings:** pick the categories (and optionally tags) to monitor and the check schedule.
+3. **Settings:** choose how to watch torrents, by categories or by tags (Deluge: categories only), and set
+   the check schedule.
 
 Run a dry pass from the dashboard first to see what Ripperr would do.
 
 ## Configuration
 
-Environment variables set the starting values. Everything you change in the UI is stored in the
-database and overrides them, so after the first start the UI is the main place to configure.
+Environment variables cover startup and infrastructure only. Everything else (the torrent client,
+schedule, categories and tags, deletion, mirrors, proxy, FlareSolverr, notifications, allowed hosts and
+App URL) is set in the web UI and stored in the database.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MANAGER_CLIENT` | `qbit` | `qbit`, `transmission` or `deluge` |
-| `QBIT_URL`, `QBIT_USER`, `QBIT_PASS` | `localhost:8068`, `admin`, `adminadmin` | qBittorrent WebUI |
-| `TRANSMISSION_URL`, `TRANSMISSION_USER`, `TRANSMISSION_PASS` | `localhost:9091` | Transmission RPC |
-| `DELUGE_URL`, `DELUGE_PASS` | `localhost:8112`, `deluge` | Deluge Web UI (it has a password, no user name) |
-| `RUNNER_ALLOWED_CATEGORIES` | empty | categories to monitor, comma separated |
-| `RUNNER_TAG` | `watch` | only torrents with this tag; empty means all torrents of the categories; ignored with Deluge, which has no tags |
-| `RUNNER_START_HOUR` | `7` | hour of the first pass |
-| `RUNNER_RUN_ON_START` | `true` | run a pass right after the app starts; `false` waits for the schedule |
-| `RUNNER_LIST_REFRESH_PER_DAY` | `2` | passes per day |
-| `RUNNER_ERROR_STREAK_THRESHOLD` | `3` | failed checks in a row before a release is marked broken |
-| `RUNNER_DOWNLOAD_PROXY` | empty | `http://`, `https://` or `socks5://` proxy for tracker traffic |
-| `RUNNER_MIRROR_CONFIRM` | `true` | confirm mirror changes (see [Mirror sync](#mirror-sync)) |
-| `MIRROR_SOURCE` | `github` | where mirror lists are loaded from: `github`, `jsdelivr` or `custom` |
-| `MIRROR_SOURCE_URL` | empty | HTTPS URL with one `{path}` for `custom` |
-| `MIRROR_SOURCE_DIRECT` | `false` | `true` loads mirror lists without the download proxy |
-| `MANAGER_DELETE_ENABLED` | `true` | remove the old torrent after a replace |
-| `MANAGER_DELETE_FILES` | `true` | also remove its files (see the next variable) |
-| `MANAGER_DELETE_FILES_CATEGORIES` | empty | categories where old files may be removed |
-| `FLARE_URL` | `localhost:8191/v1` | FlareSolverr endpoint |
-| `NOTIFY_TELEGRAM_TOKEN`, `NOTIFY_TELEGRAM_CHAT_ID` | empty | Telegram bot |
-| `NOTIFY_WEBHOOK_URL` | empty | webhook endpoint |
-| `WEB_LISTEN` | `:6410` | listen address; outside Docker the port is a default that Settings → Access overrides |
-| `RIPPERR_IN_DOCKER` | `false` (`1` in the image) | set by the image: the port is fixed and the Settings → Access port field is hidden |
-| `WEB_ALLOWED_HOSTS` | empty | extra host names for a reverse proxy (for example your router's DNS name); a default that Settings → Access overrides |
-| `WEB_APP_URL` | empty | external address of Ripperr with scheme, for example `https://ripperr.example.com`; used for links in notifications; a default that the Settings → Access field "App URL" overrides |
-| `WEB_TRUSTED_PROXY` | `false` | trust `X-Forwarded-For` from a reverse proxy; set it only when every request comes through the proxy |
-| `TRACKER_<KEY>_<FIELD>` | | per-tracker values, for example `TRACKER_KINOZAL_DOMAIN`. Still works. For trackers with a login form, `TRACKER_<KEY>_CREDENTIALS` may hold `{login}` and `{password}` (the login and password come from the UI). A tracker configured through env is added once, at the first start of this version |
 | `CONFIG_DIR` | `/config` | where the database and the `logs/` folder live |
+| `DB_PATH` | empty | path of the SQLite file; empty means `ripperr.db` in `CONFIG_DIR` |
 | `DB_SECRETS_KEY` | empty | base64 of 32 bytes; encryption key for secrets in the database. If empty, the key is read from `secrets.key` next to the database file (created on first start). See [Secrets at rest](#secrets-at-rest) |
+| `BLACKHOLE_DIR` | empty | folder for the safety copies of `.torrent` files; empty means `blackhole` in `CONFIG_DIR` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-
-Email, Pushover, the Browser channel, the events of each notification channel, the notification language and the metrics token have no variables: set them on
-the Integrations page.
+| `WEB_LISTEN` | `:6410` | listen address; outside Docker the port is a default that Settings → Access overrides |
+| `WEB_ENABLED` | `true` | `false` runs the checks without the web server |
+| `RIPPERR_IN_DOCKER` | `false` (`1` in the image) | set by the image: the port is fixed and the Settings → Access port field is hidden |
+| `WEB_TRUSTED_PROXY` | `false` | trust `X-Forwarded-For` from a reverse proxy; set it only when every request comes through the proxy |
+| `RUNNER_HTTP_TIMEOUT` | `30` | seconds to wait for a tracker page |
+| `RUNNER_DOWNLOAD_TIMEOUT` | `240` | seconds to wait for a `.torrent` download |
+| `RUNNER_TLS_PROFILE` | `chrome_131` | TLS fingerprint profile of the `.torrent` downloads |
+| `RUNNER_CB_RETRIES` | `2` | failures in a row before the circuit breaker of a tracker opens |
+| `RUNNER_CB_MINUTES_TO_RETRY` | `60` | minutes before an open circuit breaker lets the next request through |
+| `MANAGER_MINUTES_TO_RECONNECT` | `5` | minutes between attempts to reach the torrent client after a failure |
+| `MANAGER_PAUSED_MAX_RATIO` | `2` | share ratio limit given to the replacement of a paused, finished torrent (no UI setting) |
 
 `WEB_LAN_BYPASS` no longer exists: any value is ignored. Remove it from your run line. Devices that used
 the bypass sign in once.
@@ -229,8 +214,7 @@ Every log line goes to stdout and to `/config/logs/ripperr.log`. The file rotate
 
 ### Web access settings
 
-Settings → Access has three fields. They are stored in the database and replace `WEB_ALLOWED_HOSTS`, `WEB_APP_URL` and the
-port of `WEB_LISTEN`.
+Settings → Access has three fields. They are stored in the database; the port replaces the port of `WEB_LISTEN`.
 
 - Allowed hosts: the domain names you reach Ripperr by through a reverse proxy (no scheme, no port).
 - App URL: the external address with scheme (for example `https://ripperr.example.com`). Notifications link to it; empty means no links.
@@ -239,7 +223,6 @@ port of `WEB_LISTEN`.
 - In Docker the port is always `6410`. Choose the host port with `-p <host>:6410`; a stored port is ignored.
 - Outside Docker, if the saved port cannot be opened at start, Ripperr logs a warning and listens on the
   `WEB_LISTEN` port.
-
 ### Secrets at rest
 
 Tracker logins, passwords and cookies, and everything you save in the UI (client passwords, notification tokens, the account hash), are stored encrypted in the database (AES-256-GCM). The history, the check log and the ignore list stay plain.
@@ -261,7 +244,7 @@ Tracker logins, passwords and cookies, and everything you save in the UI (client
 - `GET /readyz` answers `200` when the database responds and `503` when it does not. The Docker image
   uses it for its health check.
 - `GET /metrics` returns Prometheus metrics. It answers `404` until you set a token in the UI
-  (Integrations → Prometheus metrics). After that send it as `Authorization: Bearer <token>`; a missing
+  (Integrations → Prometheus metrics, a card shown in advanced mode). After that send it as `Authorization: Bearer <token>`; a missing
   or wrong token gets `401`.
 
 The probes need no login. The metrics are `ripperr_checks_total{tracker,result}` (checks by tracker and

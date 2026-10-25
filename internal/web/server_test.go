@@ -2764,3 +2764,55 @@ func TestPostIntegrationsTestNotifyCarriesLanguage(t *testing.T) {
 		}
 	}
 }
+
+func TestPutScheduleTagsModeSkipsCategoryPurge(t *testing.T) {
+	store := &fakeStore{purgedRows: 3}
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Runner.AllowedCategories = []string{"tv"}
+		cfg.Runner.WatchMode = config.WatchModeTags
+		return cfg
+	}
+	srv := New(store, func() {}, effective, ":0", runner.NewState(), nil)
+
+	body := []byte(`{"start_hour":8,"list_refresh_per_day":4,"threshold_month":1,"threshold_half_year":2,"threshold_year":3,"watch_mode":"tags"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/schedule", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handlePutSchedule(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+	}
+	// в режиме тегов список категорий не используется, чистка по нему удалила бы нужные релизы
+	if store.purgedCategories != nil {
+		t.Fatalf("purge called with %v in tags mode", store.purgedCategories)
+	}
+}
+
+func TestPutScheduleMirrorConfirmOnly(t *testing.T) {
+	stored := `{"start_hour":9,"list_refresh_per_day":4,"threshold_month":1,"threshold_half_year":2,"threshold_year":3,"mirror_confirm":false,"watch_tags":["a"],"timezone":"UTC"}`
+	for name, initial := range map[string]string{"full": stored, "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeStore{}
+			if initial != "" {
+				store.settings = map[string]json.RawMessage{"schedule": json.RawMessage(initial)}
+			}
+			srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+			req := httptest.NewRequest(http.MethodPut, "/api/schedule", strings.NewReader(`{"mirror_confirm":true}`))
+			w := httptest.NewRecorder()
+			srv.handlePutSchedule(w, req)
+			if w.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want 204, body: %s", w.Code, w.Body.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(store.settings["schedule"], &got); err != nil {
+				t.Fatal(err)
+			}
+			if got["mirror_confirm"] != true {
+				t.Errorf("mirror_confirm = %v, want true", got["mirror_confirm"])
+			}
+			if initial != "" && (got["start_hour"] != float64(9) || got["timezone"] != "UTC" || len(got["watch_tags"].([]any)) != 1) {
+				t.Errorf("stored fields changed: %v", got)
+			}
+		})
+	}
+}

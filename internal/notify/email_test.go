@@ -373,7 +373,7 @@ func TestEmailReadyAndTransport(t *testing.T) {
 func TestNotifyRoutesEmailByEvents(t *testing.T) {
 	f := newFakeSMTP(t, &fakeSMTP{})
 	cfg := emailCfg(f, "none")
-	cfg.EmailEvents = []string{}
+	cfg.Events = []string{}
 	New(cfg, "").Notify(TrackerDownEvent("rutracker", "boom"))
 	time.Sleep(150 * time.Millisecond)
 	f.mu.Lock()
@@ -383,7 +383,7 @@ func TestNotifyRoutesEmailByEvents(t *testing.T) {
 		t.Fatalf("silent email channel connected %d times", got)
 	}
 
-	cfg.EmailEvents = nil
+	cfg.Events = nil
 	New(cfg, "").Notify(TrackerDownEvent("rutracker", "boom"))
 	deadline := time.Now().Add(2 * time.Second)
 	for f.seen("DATA") == 0 {

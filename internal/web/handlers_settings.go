@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"ripperr/internal/config"
 	"ripperr/internal/settings"
 	"ripperr/internal/storage/client/sqlite"
 	"ripperr/internal/system/logger"
@@ -33,13 +34,16 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// категории берем из примененного конфига, не из патча: список мог прийти
-	// и из env, а правило "проверяем только это" должно чистить план целиком
+	// и из env, а правило "проверяем только это" должно чистить план целиком.
+	// В режиме тегов чистки нет: устаревший список категорий стер бы релизы, которые теги отслеживают
 	if cfg, cerr := s.writableConfig(); cerr != nil {
 		logger.Warn("purge disabled categories skipped: settings unreadable: " + cerr.Error())
-	} else if n, err := s.db.PurgeCategoriesExcept(r.Context(), cfg.Runner.AllowedCategories); err != nil {
-		logger.Warn("purge disabled categories: " + err.Error())
-	} else if n > 0 {
-		logger.Info(fmt.Sprintf("purged %d releases of disabled categories", n))
+	} else if cats, _ := cfg.Runner.WatchSelection(config.ClientSupportsTags(cfg.Manager.Client)); len(cats) > 0 {
+		if n, err := s.db.PurgeCategoriesExcept(r.Context(), cats); err != nil {
+			logger.Warn("purge disabled categories: " + err.Error())
+		} else if n > 0 {
+			logger.Info(fmt.Sprintf("purged %d releases of disabled categories", n))
+		}
 	}
 	s.reload()
 	w.WriteHeader(http.StatusNoContent)

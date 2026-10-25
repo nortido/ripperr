@@ -270,7 +270,7 @@ body:has(.offline-banner.visible) .content {
 .hint-popover {
   max-width: min(280px, calc(100vw - 16px));
   color: var(--text);
-  white-space: normal;
+  white-space: pre-line;
   transform-origin: top center;
 }
 
@@ -489,6 +489,20 @@ html.mobile-layout .confirm-modal .modal-foot {
   .toast-actions,
   .toast .toast-more,
   .toast.is-expanded {
+    pointer-events: auto;
+  }
+
+  /* в шапке кнопка действия: тост уходит под шапку и сам ловит нажатия,
+     иначе тап по нему попадал в скрытую под ним кнопку */
+  .toast-stack {
+    transition: top 0.2s ease;
+  }
+
+  html.header-has-actions .toast-stack {
+    top: calc(62px + env(safe-area-inset-top));
+  }
+
+  html.header-has-actions .toast {
     pointer-events: auto;
   }
 }

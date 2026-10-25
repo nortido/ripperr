@@ -300,6 +300,7 @@ function initMobileHeaderActions() {
       bottom > -Infinity && bottom <= header.getBoundingClientRect().bottom;
     bar.hidden = !show;
     header.classList.toggle('has-actions', show);
+    document.documentElement.classList.toggle('header-has-actions', show);
   }
 
   function schedule() {

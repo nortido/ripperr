@@ -926,6 +926,11 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   height: var(--btn-icon-sm);
 }
 
+/* строчный svg стоял на базовой линии и поднимался над соседними кнопками */
+.seg-ctrl-btn > [data-icon] {
+  display: flex;
+}
+
 @media (hover: hover) {
   .seg-ctrl-btn:hover {
     color: var(--text);

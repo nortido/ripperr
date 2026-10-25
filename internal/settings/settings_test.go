@@ -568,8 +568,8 @@ func TestMergeIntegrationsEventsNilVsEmpty(t *testing.T) {
 
 	cfg := &config.App{}
 	applyIntegrations(cfg, saved)
-	if cfg.Notify.WebhookEvents == nil || len(cfg.Notify.WebhookEvents) != 0 || len(cfg.Notify.TelegramEvents) != 2 {
-		t.Fatalf("apply: webhook %#v telegram %#v", cfg.Notify.WebhookEvents, cfg.Notify.TelegramEvents)
+	if !slices.Contains(cfg.Notify.Events, "check_failed") {
+		t.Fatalf("shared set must be the union of stored channel lists: %v", cfg.Notify.Events)
 	}
 }
 
@@ -577,30 +577,28 @@ func TestIntegrationsJSONShowsResolvedEvents(t *testing.T) {
 	cfg := &config.App{}
 	var got struct {
 		Notifications struct {
-			Telegram struct {
-				Events []string `json:"events"`
-			} `json:"telegram"`
-			Webhook struct {
-				Events []string `json:"events"`
-			} `json:"webhook"`
+			Events []string `json:"events"`
 		} `json:"notifications"`
 	}
 	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Notifications.Telegram.Events) != len(notify.DefaultEvents()) || len(got.Notifications.Webhook.Events) != len(notify.DefaultEvents()) {
-		t.Fatalf("nil lists must resolve to defaults: %+v", got.Notifications)
+	if len(got.Notifications.Events) != len(notify.DefaultEvents()) {
+		t.Fatalf("nil list must resolve to defaults: %+v", got.Notifications)
 	}
-	cfg.Notify.WebhookEvents = []string{}
-	cfg.Notify.TelegramEvents = []string{"check_failed"}
+	cfg.Notify.Events = []string{}
 	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Notifications.Webhook.Events == nil || len(got.Notifications.Webhook.Events) != 0 {
-		t.Fatalf("empty list must stay [] in JSON, got %#v", got.Notifications.Webhook.Events)
+	if got.Notifications.Events == nil || len(got.Notifications.Events) != 0 {
+		t.Fatalf("empty list must stay [] in JSON, got %#v", got.Notifications.Events)
 	}
-	if len(got.Notifications.Telegram.Events) != 1 || got.Notifications.Telegram.Events[0] != "check_failed" {
-		t.Fatalf("telegram events = %#v", got.Notifications.Telegram.Events)
+	cfg.Notify.Events = []string{"check_failed"}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Notifications.Events) != 1 || got.Notifications.Events[0] != "check_failed" {
+		t.Fatalf("events = %#v", got.Notifications.Events)
 	}
 }
 
@@ -615,23 +613,20 @@ func TestIntegrationsJSONIncludesEmailPushover(t *testing.T) {
 	cfg.Notify.EmailTo = "a@example.com"
 	cfg.Notify.PushoverToken = "apptok"
 	cfg.Notify.PushoverUser = "userkey"
-	cfg.Notify.PushoverEvents = []string{}
 	var got struct {
 		Notifications struct {
 			Email struct {
-				Host     string   `json:"host"`
-				Port     int      `json:"port"`
-				Security string   `json:"security"`
-				Username string   `json:"username"`
-				Password string   `json:"password"`
-				From     string   `json:"from"`
-				To       string   `json:"to"`
-				Events   []string `json:"events"`
+				Host     string `json:"host"`
+				Port     int    `json:"port"`
+				Security string `json:"security"`
+				Username string `json:"username"`
+				Password string `json:"password"`
+				From     string `json:"from"`
+				To       string `json:"to"`
 			} `json:"email"`
 			Pushover struct {
-				AppToken string   `json:"app_token"`
-				UserKey  string   `json:"user_key"`
-				Events   []string `json:"events"`
+				AppToken string `json:"app_token"`
+				UserKey  string `json:"user_key"`
 			} `json:"pushover"`
 		} `json:"notifications"`
 	}
@@ -642,10 +637,7 @@ func TestIntegrationsJSONIncludesEmailPushover(t *testing.T) {
 	if e.Host != "smtp.example.com" || e.Port != 465 || e.Security != "tls" || e.Username != "user" || e.Password != SecretMask || e.From != "bot@example.com" || e.To != "a@example.com" {
 		t.Fatalf("email = %+v", e)
 	}
-	if len(e.Events) != len(notify.DefaultEvents()) {
-		t.Fatalf("nil email events must resolve to defaults: %v", e.Events)
-	}
-	if p.AppToken != SecretMask || p.UserKey != SecretMask || p.Events == nil || len(p.Events) != 0 {
+	if p.AppToken != SecretMask || p.UserKey != SecretMask {
 		t.Fatalf("pushover = %+v", p)
 	}
 
@@ -664,7 +656,7 @@ func TestIntegrationsJSONIncludesEmailPushover(t *testing.T) {
 	if n.EmailHost != "mx" || n.EmailPort != 587 || n.EmailSecurity != "starttls" || n.EmailUsername != "u" || n.EmailPassword != "p" || n.EmailFrom != "f@x.example" || n.EmailTo != "t@x.example" {
 		t.Fatalf("applied email = %+v", n)
 	}
-	if len(n.EmailEvents) != 1 || n.PushoverToken != "a" || n.PushoverUser != "k" || n.PushoverEvents == nil || len(n.PushoverEvents) != 0 {
+	if n.PushoverToken != "a" || n.PushoverUser != "k" {
 		t.Fatalf("applied = %+v", n)
 	}
 }
@@ -1287,9 +1279,9 @@ func TestIntegrationsBrowserChannelRoundTrip(t *testing.T) {
 		var s struct {
 			Notifications struct {
 				Browser *struct {
-					Enabled bool     `json:"enabled"`
-					Events  []string `json:"events"`
+					Enabled bool `json:"enabled"`
 				} `json:"browser"`
+				Events []string `json:"events"`
 			} `json:"notifications"`
 		}
 		if err := json.Unmarshal(IntegrationsJSON(cfg), &s); err != nil {
@@ -1298,7 +1290,7 @@ func TestIntegrationsBrowserChannelRoundTrip(t *testing.T) {
 		if s.Notifications.Browser == nil {
 			t.Fatal("notifications.browser is absent in IntegrationsJSON")
 		}
-		return s.Notifications.Browser.Enabled, s.Notifications.Browser.Events
+		return s.Notifications.Browser.Enabled, s.Notifications.Events
 	}
 	enabled, events := browser(&cfg)
 	if !enabled || !slices.Equal(events, notify.DefaultEvents()) {
@@ -1308,7 +1300,7 @@ func TestIntegrationsBrowserChannelRoundTrip(t *testing.T) {
 		patch   string
 		enabled bool
 	}{
-		{`{"notifications":{"browser":{"enabled":false,"events":["broken","updated","broken"]}}}`, false},
+		{`{"notifications":{"events":["broken","updated","broken"],"browser":{"enabled":false}}}`, false},
 		{`{"notifications":{"browser":{"enabled":true}}}`, true},
 	} {
 		if err := MergeIntegrations(ctx, db, json.RawMessage(step.patch)); err != nil {
@@ -1322,8 +1314,8 @@ func TestIntegrationsBrowserChannelRoundTrip(t *testing.T) {
 		if enabled != step.enabled || !slices.Equal(events, []string{"broken", "updated"}) {
 			t.Fatalf("%s: JSON browser = %v %v", step.patch, enabled, events)
 		}
-		if cfg.Notify.BrowserDisabled == step.enabled || !slices.Equal(cfg.Notify.BrowserEvents, []string{"broken", "updated"}) {
-			t.Fatalf("%s: cfg.Notify = %v %v", step.patch, cfg.Notify.BrowserDisabled, cfg.Notify.BrowserEvents)
+		if cfg.Notify.BrowserDisabled == step.enabled || !slices.Equal(cfg.Notify.Events, []string{"broken", "updated"}) {
+			t.Fatalf("%s: cfg.Notify = %v %v", step.patch, cfg.Notify.BrowserDisabled, cfg.Notify.Events)
 		}
 	}
 }
@@ -1404,5 +1396,49 @@ func TestMergeConcurrentKeepsBoth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestScheduleWatchMode(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"schedule": json.RawMessage(`{"watch_mode":"tags"}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.WatchMode != "tags" {
+		t.Errorf("WatchMode = %q, want tags", cfg.Runner.WatchMode)
+	}
+
+	var doc struct {
+		WatchMode     string `json:"watch_mode"`
+		TagsSupported bool   `json:"tags_supported"`
+	}
+	view := config.App{Runner: config.Runner{AllowedCategories: []string{"tv"}, WatchTags: []string{"watch"}}}
+	if err := json.Unmarshal(ScheduleJSON(&view), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.WatchMode != "categories" || !doc.TagsSupported {
+		t.Errorf("doc = %+v, want categories and tags supported", doc)
+	}
+	view.Manager.Client = "deluge"
+	doc.TagsSupported = true
+	if err := json.Unmarshal(ScheduleJSON(&view), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.TagsSupported {
+		t.Error("tags_supported = true for deluge")
+	}
+
+	_, err := SchedulePatchFromJSON(json.RawMessage(`{
+		"start_hour":7,"list_refresh_per_day":2,"threshold_month":1,
+		"threshold_half_year":7,"threshold_year":30,"watch_mode":"x"}`))
+	if err == nil {
+		t.Fatal("expected error for bad watch_mode")
 	}
 }

@@ -108,6 +108,14 @@ func SchedulePatchFromJSON(raw json.RawMessage) (scheduleOverlay, error) {
 }
 
 func ValidateSchedulePatch(o scheduleOverlay) error {
+	if o.WatchMode != nil && *o.WatchMode != config.WatchModeCategories && *o.WatchMode != config.WatchModeTags {
+		return fmt.Errorf("watch_mode must be categories or tags")
+	}
+	// патч без расписания (напр. только mirror_confirm): проверять нечего, обязательные поля нужны лишь целому блоку
+	if o.StartHour == nil && o.ListRefreshPerDay == nil && o.ThresholdMonth == nil && o.ThresholdHalfYear == nil &&
+		o.ThresholdYear == nil && o.ErrorStreakThreshold == nil && o.MagnetTimeout == nil {
+		return nil
+	}
 	if o.StartHour == nil {
 		return fmt.Errorf("start_hour is required")
 	}
@@ -334,24 +342,11 @@ func validateEvents(field string, events *[]string) error {
 		return nil
 	}
 	for _, kind := range *events {
-		if !notify.KnownEvent(kind) {
+		if _, ok := notify.CanonicalEvent(kind); !ok {
 			return fmt.Errorf("%s: unknown event %q", field, kind)
 		}
 	}
 	return nil
-}
-
-func dedupeEvents(events *[]string) {
-	if events == nil {
-		return
-	}
-	out := make([]string, 0, len(*events))
-	for _, kind := range *events {
-		if !slices.Contains(out, kind) {
-			out = append(out, kind)
-		}
-	}
-	*events = out
 }
 
 func IntegrationsPatchFromJSON(raw json.RawMessage) (integrationsOverlay, error) {
@@ -365,11 +360,18 @@ func IntegrationsPatchFromJSON(raw json.RawMessage) (integrationsOverlay, error)
 	if err := normalizeIntegrationsPatch(&o); err != nil {
 		return o, err
 	}
-	dedupeEvents(o.Notifications.Telegram.Events)
-	dedupeEvents(o.Notifications.Webhook.Events)
-	dedupeEvents(o.Notifications.Email.Events)
-	dedupeEvents(o.Notifications.Pushover.Events)
-	dedupeEvents(o.Notifications.Browser.Events)
+	for _, events := range []*[]string{
+		o.Notifications.Events,
+		o.Notifications.Telegram.Events,
+		o.Notifications.Webhook.Events,
+		o.Notifications.Email.Events,
+		o.Notifications.Pushover.Events,
+		o.Notifications.Browser.Events,
+	} {
+		if events != nil {
+			*events = notify.NormalizeEvents(*events)
+		}
+	}
 	return o, nil
 }
 
@@ -388,6 +390,9 @@ func ValidateIntegrationsPatch(o integrationsOverlay) error {
 	// в отличие от client, пустой тип не пропускаем: UI всегда шлет выбранное значение
 	if t := o.MirrorSource.Type; t != nil && *t != "github" && *t != "jsdelivr" && *t != "custom" {
 		return fmt.Errorf("mirror_source.type must be github, jsdelivr or custom")
+	}
+	if err := validateEvents("notifications.events", o.Notifications.Events); err != nil {
+		return err
 	}
 	if err := validateEvents("notifications.telegram.events", o.Notifications.Telegram.Events); err != nil {
 		return err

@@ -2490,7 +2490,7 @@ func TestLogCheckErrorSendsCheckFailed(t *testing.T) {
 		return &handler{
 			config:   model.HandlerConfig{ErrorStreakThreshold: 100},
 			storage:  &loggingStorage{},
-			notifier: notify.New(notify.Config{WebhookURL: srv.URL, WebhookEvents: events, Enabled: true}, ""),
+			notifier: notify.New(notify.Config{WebhookURL: srv.URL, Events: events, Enabled: true}, ""),
 		}
 	}
 	e := &model.Entry{URL: "https://example.com/t/1", Name: "test", URLHash: "abc"}

@@ -67,7 +67,7 @@ function histFilterMainHtml() {
   const resetActive = histFilterTriggerMeta().showDot;
   const resetClass = 'btn btn-sm btn-ghost btn-icon hist-filter-reset' + (resetActive ? '' : ' is-hidden');
   const resetLabel = t('dash.filterReset');
-  const resetHtml = html`<button type="button" class="${resetClass}" title="${resetLabel}" aria-label="${resetLabel}">${icon('x')}</button>`;
+  const resetHtml = html`<button type="button" class="${resetClass}" title="${resetLabel}" aria-label="${resetLabel}">${icon('funnelX')}</button>`;
   return html`<div class="hist-filter-panel-head"><span class="hist-filter-panel-title">${t('dash.filterTitle')}</span>${resetHtml}</div><div class="hist-filter-panel-body"><div class="hist-filter-group-label">${t('dash.col.status')}</div>${histFilterStatusOptionsHtml()}<div class="hist-filter-divider"></div>${histFilterRowHtml('tracker', t('dash.filterTrackerLabel'), histFilterTrackerValueLabel())}<div class="hist-filter-divider"></div>${histFilterRowHtml('category', t('dash.filterCategoryLabel'), histFilterCategoryValueLabel())}</div>`;
 }
 

@@ -63,11 +63,12 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 			clientName = manager.ClientQbit
 		}
 	}
-	// у Deluge нет тегов: непустой watch_tags отсеял бы все его торренты
-	if !manager.SupportsTags(clientName) && len(handlerCfg.WatchTags) > 0 {
-		logger.Info(fmt.Sprintf("%s has no tags, watch_tags %v ignored", clientName, handlerCfg.WatchTags))
-		handlerCfg.WatchTags = nil
+	// список один на режим; у Deluge нет тегов, режим тегов дал бы пустую выборку, поэтому категории
+	supportsTags := manager.SupportsTags(clientName)
+	if cfg.Runner.EffectiveWatchMode() == config.WatchModeTags && !supportsTags {
+		logger.Info(fmt.Sprintf("%s has no tags, watching by categories %v", clientName, cfg.Runner.AllowedCategories))
 	}
+	handlerCfg.Categories, handlerCfg.WatchTags = cfg.Runner.WatchSelection(supportsTags)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()

@@ -48,5 +48,5 @@ func NewClient(kind string, cfg model.ManagerConfig) (Client, error) {
 }
 
 func SupportsTags(kind string) bool {
-	return NormalizeClient(kind) != ClientDeluge
+	return config.ClientSupportsTags(kind)
 }

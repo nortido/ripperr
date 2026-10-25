@@ -935,41 +935,31 @@ func waitHits(t *testing.T, hits *atomic.Int32, want int32) {
 	}
 }
 
-func TestNotifyRoutesByChannelEvents(t *testing.T) {
+func TestNotifyRoutesBySharedEvents(t *testing.T) {
 	origAPI := telegramAPIURL
 	defer func() { telegramAPIURL = origAPI }()
 
 	tg, tgHits := countingServer(t)
 	wh, whHits := countingServer(t)
 	telegramAPIURL = tg.URL + "/bot%s/sendMessage"
+	cfg := Config{TelegramToken: "tok", TelegramChatID: "1", WebhookURL: wh.URL, Enabled: true, Events: []string{KindUpdated}}
 
-	n := New(Config{
-		TelegramToken:  "tok",
-		TelegramChatID: "1",
-		TelegramEvents: []string{KindUpdated},
-		WebhookURL:     wh.URL,
-		Enabled:        true,
-	}, "")
-	n.Notify(TrackerDownEvent("rutracker", "boom"))
-	waitHits(t, whHits, 1)
-	time.Sleep(100 * time.Millisecond)
-	if tgHits.Load() != 0 {
-		t.Fatalf("telegram subscribed to updated only got tracker_down: %d hits", tgHits.Load())
+	New(cfg, "").Notify(TrackerDownEvent("rutracker", "boom"))
+	time.Sleep(150 * time.Millisecond)
+	if tgHits.Load()+whHits.Load() != 0 {
+		t.Fatalf("shared set [updated] let tracker_down through: tg %d wh %d", tgHits.Load(), whHits.Load())
 	}
 
-	n = New(Config{
-		TelegramToken:  "tok",
-		TelegramChatID: "1",
-		TelegramEvents: []string{KindTrackerDown},
-		WebhookURL:     wh.URL,
-		WebhookEvents:  []string{},
-		Enabled:        true,
-	}, "")
-	n.Notify(TrackerDownEvent("rutracker", "boom"))
+	cfg.Events = []string{KindTrackerDown}
+	New(cfg, "").Notify(TrackerDownEvent("rutracker", "boom"))
 	waitHits(t, tgHits, 1)
-	time.Sleep(100 * time.Millisecond)
-	if whHits.Load() != 1 {
-		t.Fatalf("webhook with empty list must stay silent, hits %d", whHits.Load())
+	waitHits(t, whHits, 1)
+
+	cfg.Events = []string{}
+	New(cfg, "").Notify(TrackerDownEvent("rutracker", "boom"))
+	time.Sleep(150 * time.Millisecond)
+	if tgHits.Load() != 1 || whHits.Load() != 1 {
+		t.Fatalf("empty shared set must stay silent: tg %d wh %d", tgHits.Load(), whHits.Load())
 	}
 }
 
@@ -1016,13 +1006,13 @@ func TestNotifyCheckFailedNotInDefault(t *testing.T) {
 	if whHits.Load() != 0 {
 		t.Fatal("check_failed reached a channel with no stored list")
 	}
-	New(Config{WebhookURL: wh.URL, WebhookEvents: []string{KindCheckFailed}, Enabled: true}, "").Notify(ev)
+	New(Config{WebhookURL: wh.URL, Events: []string{KindCheckFailed}, Enabled: true}, "").Notify(ev)
 	waitHits(t, whHits, 1)
 }
 
 func TestSendIgnoresEventLists(t *testing.T) {
 	wh, whHits := countingServer(t)
-	n := New(Config{WebhookURL: wh.URL, WebhookEvents: []string{}, Enabled: true}, "")
+	n := New(Config{WebhookURL: wh.URL, Events: []string{}, Enabled: true}, "")
 	if err := n.Send(context.Background(), Event{Kind: KindTest, Text: "x"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1114,21 +1104,55 @@ func TestErrorsHideWebhookURLSecrets(t *testing.T) {
 	t.Fatal("no notify: webhook log entry")
 }
 
-func TestMirrorSuggestedEvents(t *testing.T) {
-	if !KnownEvent(KindMirrorSuggested) || KindMirrorSuggested != "mirror_suggested" {
-		t.Fatal("mirror_suggested must be a known event kind")
-	}
-	if !slices.Contains(DefaultEvents(), KindMirrorSuggested) {
-		t.Fatalf("mirror_suggested must be in the default events: %v", DefaultEvents())
-	}
+func TestMirrorEventsMerged(t *testing.T) {
 	digest := MirrorDigestEvent([]MirrorDigestItem{{Tracker: "a", Kind: DigestConfirm, Host: "a.x"}, {Tracker: "b", Kind: DigestRemove, Host: "b.x"}})
-	if digest.Kind != KindMirrorSuggested || digest.Text != "Tracker mirrors: a: new mirror a.x awaits confirmation; b: remove b.x" {
+	if digest.Kind != KindMirrorSwitched || digest.Text != "Tracker mirrors: a: new mirror a.x awaits confirmation; b: remove b.x" {
 		t.Fatalf("digest = %+v", digest)
 	}
 	paused := MirrorPausedEvent("kinozal", "kinozal.xyz")
 	want := "Tracker kinozal is paused: only the new mirror kinozal.xyz responds. Confirm it in the tracker settings."
-	if paused.Kind != KindMirrorSuggested || paused.Text != want {
+	if paused.Kind != KindMirrorSwitched || paused.Text != want {
 		t.Fatalf("paused = %+v", paused)
+	}
+	if d := DefaultEvents(); len(d) != 5 || slices.Contains(d, "mirror_suggested") {
+		t.Fatalf("defaults = %v", d)
+	}
+	if KnownEvent("mirror_suggested") {
+		t.Fatal("legacy alias is not a canonical kind")
+	}
+	if k, ok := CanonicalEvent("mirror_suggested"); !ok || k != KindMirrorSwitched {
+		t.Fatalf("CanonicalEvent(alias) = %q %v", k, ok)
+	}
+	if k, ok := CanonicalEvent("broken"); !ok || k != KindBroken {
+		t.Fatalf("CanonicalEvent(broken) = %q %v", k, ok)
+	}
+	if _, ok := CanonicalEvent("nope"); ok {
+		t.Fatal("unknown kind must not be canonical")
+	}
+	if got := NormalizeEvents([]string{"mirror_suggested", "mirror_switched", "nope"}); !slices.Equal(got, []string{KindMirrorSwitched}) {
+		t.Fatalf("NormalizeEvents = %v", got)
+	}
+	if got := NormalizeEvents(nil); got != nil {
+		t.Fatalf("NormalizeEvents(nil) = %#v", got)
+	}
+	if got := NormalizeEvents([]string{"nope"}); got == nil || len(got) != 0 {
+		t.Fatalf("NormalizeEvents(unknown only) = %#v, want empty non-nil", got)
+	}
+	got := UnionEvents([]string{"check_failed", "mirror_suggested"}, []string{"updated", "bogus"}, nil)
+	if !slices.Equal(got, []string{KindUpdated, KindMirrorSwitched, KindCheckFailed}) {
+		t.Fatalf("UnionEvents = %v", got)
+	}
+}
+
+func TestNotifyUsesSharedEvents(t *testing.T) {
+	wh, whHits := countingServer(t)
+	n := New(Config{WebhookURL: wh.URL, Enabled: true, Events: []string{KindUpdated}}, "")
+	n.Notify(UpdatedEvent("a", "", ""))
+	waitHits(t, whHits, 1)
+	n.Notify(TrackerDownEvent("t", "x"))
+	time.Sleep(300 * time.Millisecond)
+	if whHits.Load() != 1 {
+		t.Fatalf("shared set must filter, hits %d", whHits.Load())
 	}
 }
 

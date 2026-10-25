@@ -27,8 +27,8 @@ func TestScheduleMirrorConfirm(t *testing.T) {
 	if err := ApplyOverrides(context.Background(), &cfg, &fakeSettingsDB{data: map[string]json.RawMessage{}}); err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Runner.MirrorConfirm {
-		t.Fatal("absent mirror_confirm: MirrorConfirm = false, want env default true")
+	if cfg.Runner.MirrorConfirm {
+		t.Fatal("absent mirror_confirm: MirrorConfirm = true, want env default false")
 	}
 
 	cfg = envDefaultApp(t)
@@ -54,5 +54,16 @@ func TestScheduleMirrorConfirm(t *testing.T) {
 	}
 	if o.MirrorConfirm == nil || *o.MirrorConfirm {
 		t.Fatalf("schedule patch MirrorConfirm = %v, want false", o.MirrorConfirm)
+	}
+}
+
+func TestScheduleMirrorConfirmSavedTrueWinsOverDefault(t *testing.T) {
+	cfg := envDefaultApp(t)
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{"schedule": json.RawMessage(`{"mirror_confirm":true}`)}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Runner.MirrorConfirm {
+		t.Fatal(`{"mirror_confirm":true}: MirrorConfirm = false, want true over env default false`)
 	}
 }

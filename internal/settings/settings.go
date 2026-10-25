@@ -63,6 +63,7 @@ type scheduleOverlay struct {
 	DeleteFilesCategories *[]string `json:"delete_files_categories,omitempty"`
 	WatchTags             *[]string `json:"watch_tags,omitempty"`
 	WatchTag              *string   `json:"watch_tag,omitempty"` // устаревшее, только на чтение
+	WatchMode             *string   `json:"watch_mode,omitempty"`
 	Timezone              *string   `json:"timezone,omitempty"`
 }
 
@@ -140,8 +141,9 @@ type integrationsOverlay struct {
 			Enabled *bool     `json:"enabled,omitempty"`
 			Events  *[]string `json:"events,omitempty"`
 		} `json:"browser"`
-		Enabled  *bool   `json:"enabled,omitempty"`
-		Language *string `json:"language,omitempty"`
+		Enabled  *bool     `json:"enabled,omitempty"`
+		Language *string   `json:"language,omitempty"`
+		Events   *[]string `json:"events,omitempty"`
 	} `json:"notifications"`
 	Metrics struct {
 		Token *string `json:"token,omitempty"`
@@ -254,6 +256,9 @@ func applySchedule(cfg *config.App, o scheduleOverlay) {
 	} else if o.WatchTag != nil {
 		cfg.Runner.WatchTags = watchTagsFromLegacy(*o.WatchTag)
 	}
+	if o.WatchMode != nil {
+		cfg.Runner.WatchMode = *o.WatchMode
+	}
 	if o.Timezone != nil {
 		cfg.Runner.Timezone = *o.Timezone
 	}
@@ -365,12 +370,6 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if o.Notifications.Webhook.URL != nil {
 		cfg.Notify.WebhookURL = *o.Notifications.Webhook.URL
 	}
-	if o.Notifications.Telegram.Events != nil {
-		cfg.Notify.TelegramEvents = slices.Clone(*o.Notifications.Telegram.Events)
-	}
-	if o.Notifications.Webhook.Events != nil {
-		cfg.Notify.WebhookEvents = slices.Clone(*o.Notifications.Webhook.Events)
-	}
 	if v := o.Notifications.Email.Host; v != nil {
 		cfg.Notify.EmailHost = *v
 	}
@@ -392,20 +391,11 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if v := o.Notifications.Email.To; v != nil {
 		cfg.Notify.EmailTo = *v
 	}
-	if v := o.Notifications.Email.Events; v != nil {
-		cfg.Notify.EmailEvents = slices.Clone(*v)
-	}
 	if v := o.Notifications.Pushover.AppToken; v != nil {
 		cfg.Notify.PushoverToken = *v
 	}
 	if v := o.Notifications.Pushover.UserKey; v != nil {
 		cfg.Notify.PushoverUser = *v
-	}
-	if v := o.Notifications.Pushover.Events; v != nil {
-		cfg.Notify.PushoverEvents = slices.Clone(*v)
-	}
-	if v := o.Notifications.Browser.Events; v != nil {
-		cfg.Notify.BrowserEvents = slices.Clone(*v)
 	}
 	if o.Notifications.Enabled != nil {
 		cfg.Notify.Enabled = *o.Notifications.Enabled
@@ -413,6 +403,7 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	if v := o.Notifications.Language; v != nil {
 		cfg.Notify.Language = *v
 	}
+	applyNotifyEvents(cfg, o)
 	if o.Metrics.Token != nil {
 		cfg.Metrics.Token = *o.Metrics.Token
 	}
@@ -450,6 +441,8 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		MonitoredCategories   []string `json:"monitored_categories"`
 		DeleteFilesCategories []string `json:"delete_files_categories"`
 		WatchTags             []string `json:"watch_tags"`
+		WatchMode             string   `json:"watch_mode"`
+		TagsSupported         bool     `json:"tags_supported"`
 		Timezone              string   `json:"timezone"`
 	}{
 		StartHour:            cfg.Runner.StartHour,
@@ -463,6 +456,8 @@ func ScheduleJSON(cfg *config.App) json.RawMessage {
 		RunOnStart:           cfg.Runner.RunOnStart,
 		MonitoredCategories:  cfg.Runner.AllowedCategories,
 		WatchTags:            cfg.Runner.WatchTags,
+		WatchMode:            cfg.Runner.EffectiveWatchMode(),
+		TagsSupported:        config.ClientSupportsTags(cfg.Manager.Client),
 		Timezone:             cfg.Runner.Timezone,
 	}
 	s.DeleteEnabled = cfg.Manager.DeleteEnabled
@@ -508,39 +503,35 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 		} `json:"proxy"`
 		Notifications struct {
 			Telegram struct {
-				Enabled  bool     `json:"enabled"`
-				BotToken string   `json:"bot_token"`
-				ChatID   string   `json:"chat_id"`
-				Events   []string `json:"events"`
+				Enabled  bool   `json:"enabled"`
+				BotToken string `json:"bot_token"`
+				ChatID   string `json:"chat_id"`
 			} `json:"telegram"`
 			Webhook struct {
-				Enabled bool     `json:"enabled"`
-				URL     string   `json:"url"`
-				Events  []string `json:"events"`
+				Enabled bool   `json:"enabled"`
+				URL     string `json:"url"`
 			} `json:"webhook"`
 			Email struct {
-				Enabled  bool     `json:"enabled"`
-				Host     string   `json:"host"`
-				Port     int      `json:"port"`
-				Security string   `json:"security"`
-				Username string   `json:"username"`
-				Password string   `json:"password"`
-				From     string   `json:"from"`
-				To       string   `json:"to"`
-				Events   []string `json:"events"`
+				Enabled  bool   `json:"enabled"`
+				Host     string `json:"host"`
+				Port     int    `json:"port"`
+				Security string `json:"security"`
+				Username string `json:"username"`
+				Password string `json:"password"`
+				From     string `json:"from"`
+				To       string `json:"to"`
 			} `json:"email"`
 			Pushover struct {
-				Enabled  bool     `json:"enabled"`
-				AppToken string   `json:"app_token"`
-				UserKey  string   `json:"user_key"`
-				Events   []string `json:"events"`
+				Enabled  bool   `json:"enabled"`
+				AppToken string `json:"app_token"`
+				UserKey  string `json:"user_key"`
 			} `json:"pushover"`
 			Browser struct {
-				Enabled bool     `json:"enabled"`
-				Events  []string `json:"events"`
+				Enabled bool `json:"enabled"`
 			} `json:"browser"`
-			Enabled  bool   `json:"enabled"`
-			Language string `json:"language"`
+			Enabled  bool     `json:"enabled"`
+			Language string   `json:"language"`
+			Events   []string `json:"events"`
 		} `json:"notifications"`
 		Metrics struct {
 			Token string `json:"token"`
@@ -563,6 +554,7 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s.Flaresolverr.URL = cfg.Flaresolverr.Host
 	s.Flaresolverr.TimeoutMS = cfg.Flaresolverr.MaxTimeout
 	s.Proxy.DownloadProxy = cfg.Runner.DownloadProxy
+	s.Notifications.Events = resolvedEvents(cfg.Notify.Events)
 	s.Notifications.Telegram.Enabled = !cfg.Notify.TelegramDisabled
 	s.Notifications.Webhook.Enabled = !cfg.Notify.WebhookDisabled
 	s.Notifications.Email.Enabled = !cfg.Notify.EmailDisabled
@@ -570,8 +562,6 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s.Notifications.Telegram.BotToken = cfg.Notify.TelegramToken
 	s.Notifications.Telegram.ChatID = cfg.Notify.TelegramChatID
 	s.Notifications.Webhook.URL = cfg.Notify.WebhookURL
-	s.Notifications.Telegram.Events = resolvedEvents(cfg.Notify.TelegramEvents)
-	s.Notifications.Webhook.Events = resolvedEvents(cfg.Notify.WebhookEvents)
 	s.Notifications.Email.Host = cfg.Notify.EmailHost
 	s.Notifications.Email.Port = cfg.Notify.EmailPort
 	s.Notifications.Email.Security = cfg.Notify.EmailSecurity
@@ -579,12 +569,9 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s.Notifications.Email.Password = cfg.Notify.EmailPassword
 	s.Notifications.Email.From = cfg.Notify.EmailFrom
 	s.Notifications.Email.To = cfg.Notify.EmailTo
-	s.Notifications.Email.Events = resolvedEvents(cfg.Notify.EmailEvents)
 	s.Notifications.Pushover.AppToken = cfg.Notify.PushoverToken
 	s.Notifications.Pushover.UserKey = cfg.Notify.PushoverUser
-	s.Notifications.Pushover.Events = resolvedEvents(cfg.Notify.PushoverEvents)
 	s.Notifications.Browser.Enabled = !cfg.Notify.BrowserDisabled
-	s.Notifications.Browser.Events = resolvedEvents(cfg.Notify.BrowserEvents)
 	s.Notifications.Enabled = cfg.Notify.Enabled
 	s.Notifications.Language = notify.NormalizeLanguage(cfg.Notify.Language)
 	s.Metrics.Token = cfg.Metrics.Token
