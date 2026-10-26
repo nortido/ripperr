@@ -469,6 +469,29 @@ func TestBrowserPayloadCleansName(t *testing.T) {
 	}
 }
 
+func TestBrowserPayloadKeepsVersionDots(t *testing.T) {
+	tests := []struct{ name, want string }{
+		{"Game.v1.0.12", "Game v1.0.12"},
+		{"App.v1.0.12.exe", "App v1.0.12"},
+		{"Tool.1.46.2", "Tool 1.46.2"},
+		{"Show.2024.12", "Show 2024.12"},
+		{"Name v1.0.12 [FitGirl]", "Name v1.0.12 [FitGirl]"},
+		{"Movie.2024.1080p", "Movie 2024 1080p"},
+		{"Show.S01E01.2160p", "Show S01E01 2160p"},
+		{"2024.1080p", "2024 1080p"},
+		{"Audio.5.1.Mix", "Audio 5.1 Mix"},
+		{"v1.2.3", "v1.2.3"},
+		{"Iron.Man.3.2013.1080p", "Iron Man 3 2013 1080p"},
+		{"1917.2019.2160p", "1917 2019 2160p"},
+	}
+	for _, tc := range tests {
+		_, body := pushOf(t, "en", UpdatedEvent(tc.name, "u", ""))
+		if body != tc.want {
+			t.Errorf("body for %q = %q, want %q", tc.name, body, tc.want)
+		}
+	}
+}
+
 func TestBrowserPayloadStripsApprovedExtensions(t *testing.T) {
 	exts := strings.Fields(`mkv mp4 m4v avi mov wmv flv webm mpg mpeg m2ts mts ts vob ogv 3gp rmvb divx flac mp3 m4a m4b aac ac3 dts wav ape alac ogg opus wma wv dsf dff aiff mka srt ass ssa sub idx sup vtt iso img bin cue mdf mds nrg vhd vmdk zip rar 7z tar gz tgz bz2 xz zst cab nsp nsz xci xcz nro cia 3ds wbfs wux rvz gcm chd cso pbp exe msi dmg pkg deb rpm appimage apk ipa pdf epub mobi azw3 fb2 djvu cbz cbr jpg png`)
 	if len(exts) != 95 {

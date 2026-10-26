@@ -156,7 +156,6 @@ func TestTemplatize(t *testing.T) {
 func TestTemplatizeExpandRoundTrip(t *testing.T) {
 	forms := []struct{ name, tmpl, user, pass string }{
 		{"rutracker", "login_username=&login_password=&login=%D0%B2%D1%85%D0%BE%D0%B4", "login_username", "login_password"},
-		{"login_username=&login_password=&login=%D0%B2%D1%85%D0%BE%D0%B4", "login_username", "login_password"},
 		{"kinozal", "username=&password=&to=%2F", "username", "password"},
 		{"toloka", "username=&password=&autologin=on&ssl=on&redirect=&login=%D0%92%D1%85%D1%96%D0%B4", "username", "password"},
 		{"tapochek", "login_username=&login_password=&autologin=1&redirect=index.php&login=1", "login_username", "login_password"},

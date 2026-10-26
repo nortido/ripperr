@@ -24,6 +24,7 @@ type selectionRecorder struct {
 	forms     map[string]map[string]string
 	// 0 значит 200
 	renameStatus int
+	startStatus  int
 	// nil значит статичный список files, иначе живые пути с проверками как в qbit
 	paths   []string
 	lag     int
@@ -106,6 +107,11 @@ func newSelectionServer(t *testing.T, hash string, files qbt.TorrentFiles, prioS
 		case "filePrio":
 			w.WriteHeader(prioStatus)
 			return
+		case "start":
+			if rec.startStatus != 0 {
+				w.WriteHeader(rec.startStatus)
+				return
+			}
 		case "renameFile", "renameFolder":
 			if name == "renameFile" && rec.paths != nil {
 				w.WriteHeader(rec.renameLive(r.FormValue("oldPath"), r.FormValue("newPath")))
@@ -196,6 +202,31 @@ func TestAddFromBuffer_SelectionKeepsStoppedWhenAsked(t *testing.T) {
 	}
 	if log := rec.log(); slices.Contains(log, "start") || slices.Contains(log, "resume") {
 		t.Fatalf("stopped add must not start, log %v", log)
+	}
+}
+
+func TestAddFromBuffer_SelectionAllUnwantedSetsAllThenStarts(t *testing.T) {
+	data, hash := buildTestTorrent(t)
+	c, rec := newSelectionServer(t, hash, filesOf("R2/a", "R2/b", "R2/c"), http.StatusOK)
+	selection := []model.TorrentFile{{Path: "R1/a", Wanted: false}, {Path: "R1/b", Wanted: false}}
+	err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), model.ManagerAddFileOptions{Name: "n", FileSelection: selection})
+	if err != nil {
+		t.Fatalf("AddFromBuffer: %v", err)
+	}
+	if got := rec.form("add")["stopped"]; got != "true" {
+		t.Fatalf("add stopped = %q, want true", got)
+	}
+	prio := rec.form("filePrio")
+	if prio["hash"] != hash || prio["id"] != "0|1|2" || prio["priority"] != "0" {
+		t.Fatalf("filePrio form = %v, want hash=%s id=0|1|2 priority=0", prio, hash)
+	}
+	log := rec.log()
+	ip, is := slices.Index(log, "filePrio"), slices.Index(log, "start")
+	if ip < 0 || is < ip {
+		t.Fatalf("start must follow filePrio, log %v", log)
+	}
+	if slices.Contains(log, "delete") {
+		t.Fatalf("unexpected delete, log %v", log)
 	}
 }
 

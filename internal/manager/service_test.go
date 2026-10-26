@@ -1320,6 +1320,22 @@ func TestSubmit_SelectionConvergeRetriesFailedDrop(t *testing.T) {
 	assertNoDiscardNoResume(t, stub)
 }
 
+func TestSubmit_SelectionRunningNewAllUnwantedDropsOld(t *testing.T) {
+	stub, newHash := selectionConvergeStub(t, &model.Entry{})
+	all := []model.TorrentFile{{Path: "R/a"}, {Path: "R/b"}}
+	stub.files = all
+	stub.filesByHash = map[string][]model.TorrentFile{newHash: all}
+	stub.existsByHash[newHash] = true
+	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, model.ErrAlreadyAdded) {
+		t.Fatalf("err = %v, want ErrAlreadyAdded", err)
+	}
+	assertCalls(t, stub, "details", "incoming", "exists", "delete")
+	if len(stub.applyHashes) != 0 || len(stub.deleteOpts) != 1 || stub.deleteOpts[0].Hash != "oldhash" || stub.deleteOpts[0].DeleteFiles {
+		t.Errorf("apply %v, delete opts %+v, want no apply and one delete of oldhash without files", stub.applyHashes, stub.deleteOpts)
+	}
+	assertNoDiscardNoResume(t, stub)
+}
+
 func TestSubmit_SelectionRunningNewKeepsOldUnlessMatching(t *testing.T) {
 	cases := []struct {
 		name     string

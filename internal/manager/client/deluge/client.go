@@ -410,8 +410,20 @@ func (c *Client) ConvergeAdded(ctx context.Context, hash string, _ []byte, opts 
 	if err != nil {
 		return err
 	}
-	// снятый файл значит, что выбор уже ставили мы или сам пользователь: не трогаем
+	// снятый файл значит, что выбор уже ставили мы или сам пользователь: не трогаем.
+	// Если выбор ровно наш, значит прошлый запуск упал на старте: только запускаем
 	if slices.ContainsFunc(files, func(f model.TorrentFile) bool { return !f.Wanted }) {
+		paths := make([]string, len(files))
+		for i, f := range files {
+			paths[i] = f.Path
+		}
+		if opts.Stopped || !fileselect.Applied(opts.FileSelection, files, paths) {
+			return nil
+		}
+		logger.Info(fmt.Sprintf("deluge: converge %s: file selection already set, starting %s", opts.Name, hash))
+		if _, err = c.rpc.call(ctx, "core.resume_torrent", hash); err != nil {
+			return fmt.Errorf("converge %s: start %s: %w", opts.Name, hash, err)
+		}
 		return nil
 	}
 	logger.Info(fmt.Sprintf("deluge: converge %s: applying label and file selection", opts.Name))

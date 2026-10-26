@@ -53,15 +53,7 @@ func (c *Client) setSelection(ctx context.Context, hash string, opts model.Manag
 	if len(files) == 0 {
 		return fmt.Errorf("empty file list for %s", hash)
 	}
-	paths := make([]string, len(files))
-	for i, f := range files {
-		paths[i] = f.Path
-	}
-	// у того же infohash позиции файлов совпадают, а выбор записан под прежними именами.
-	// Свежие имена после renameFile qbit может отдать с задержкой
-	if len(opts.FilePaths) == len(files) {
-		paths = opts.FilePaths
-	}
+	paths := selectionPaths(files, opts)
 	idx := fileselect.Unwanted(opts.FileSelection, paths)
 	if len(idx) > 0 {
 		ids := make([]string, len(idx))
@@ -79,4 +71,17 @@ func (c *Client) setSelection(ctx context.Context, hash string, opts model.Manag
 	}
 	logger.Info(fmt.Sprintf("qbit: file selection for %s: skipped %d of %d files", opts.Name, len(idx), len(paths)))
 	return nil
+}
+
+func selectionPaths(files []model.TorrentFile, opts model.ManagerAddFileOptions) []string {
+	// у того же infohash позиции файлов совпадают, а выбор записан под прежними именами.
+	// Свежие имена после renameFile qbit может отдать с задержкой
+	if len(opts.FilePaths) == len(files) {
+		return opts.FilePaths
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	return paths
 }

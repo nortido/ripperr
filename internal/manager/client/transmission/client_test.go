@@ -73,6 +73,8 @@ type stubServer struct {
 	addFileStats []rpcFileStat
 	// torrent-set с files-unwanted отвечает ошибкой
 	failSetUnwanted bool
+	// torrent-start отвечает ошибкой
+	failStart bool
 	// торрент на деле не добавляется, как при молчаливом отказе Transmission
 	failEnsurePresent bool
 	// torrent-add с этим хешем отвечает torrent-duplicate, как настоящий
@@ -169,6 +171,10 @@ func newStubServer(t *testing.T, downloadDir string) *stubServer {
 			s.setCalls = append(s.setCalls, req.Arguments)
 			writeResult(w, map[string]interface{}{})
 		case "torrent-start":
+			if s.failStart {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			s.startCalls = append(s.startCalls, req.Arguments)
 			writeResult(w, map[string]interface{}{})
 		default:
@@ -1035,6 +1041,32 @@ func TestAddFromBuffer_SelectionStoppedSkipsStart(t *testing.T) {
 	}
 	if len(stub.startCalls) != 0 {
 		t.Errorf("expected no torrent-start for a stopped add, got %v", stub.startCalls)
+	}
+}
+
+func TestAddFromBuffer_SelectionAllUnwantedSetsAllThenStarts(t *testing.T) {
+	stub, c, data, hash := newSelectionStub(t)
+	opts := selectionOpts()
+	opts.FileSelection = []model.TorrentFile{{Path: "R1/a", Wanted: false}, {Path: "R1/b", Wanted: false}}
+
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), opts); err != nil {
+		t.Fatalf("AddFromBuffer: %v", err)
+	}
+	sets := unwantedSets(stub)
+	if len(sets) != 1 || !idsAre(sets[0]["ids"], hash) {
+		t.Fatalf("expected one files-unwanted torrent-set for %s, got %v", hash, stub.setCalls)
+	}
+	if got, _ := sets[0]["files-unwanted"].([]interface{}); !slices.Equal(got, []interface{}{float64(0), float64(1), float64(2)}) {
+		t.Errorf("files-unwanted: got %v, want [0 1 2]", sets[0]["files-unwanted"])
+	}
+	if len(stub.startCalls) != 1 || !idsAre(stub.startCalls[0]["ids"], hash) {
+		t.Fatalf("expected one torrent-start for %s, got %v", hash, stub.startCalls)
+	}
+	if setAt, startAt := slices.Index(stub.methods, "torrent-set"), slices.Index(stub.methods, "torrent-start"); setAt < 0 || startAt < setAt {
+		t.Errorf("expected torrent-start after torrent-set, methods %v", stub.methods)
+	}
+	if len(stub.removeCalls) != 0 {
+		t.Errorf("expected no torrent-remove, got %v", stub.removeCalls)
 	}
 }
 

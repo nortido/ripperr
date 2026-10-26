@@ -70,10 +70,68 @@ func TestConvergeAddedLeavesRunningAlone(t *testing.T) {
 	}
 }
 
-func TestConvergeAddedKeepsExistingSelection(t *testing.T) {
+func TestConvergeAddedStoppedWithOurSelectionStarts(t *testing.T) {
 	stub, c, hash := newConvergeStub(t, 0, []rpcFileStat{{Wanted: true}, {Wanted: false}})
 
 	if err := c.ConvergeAdded(context.Background(), hash, nil, selectionOpts()); err != nil {
+		t.Fatalf("ConvergeAdded: %v", err)
+	}
+	if len(stub.startCalls) != 1 || !idsAre(stub.startCalls[0]["ids"], hash) {
+		t.Fatalf("expected one torrent-start for %s, got %v", hash, stub.startCalls)
+	}
+	if len(stub.setCalls) != 0 || len(stub.removeCalls) != 0 {
+		t.Errorf("expected no set or remove, got sets %v removes %v", stub.setCalls, stub.removeCalls)
+	}
+}
+
+func TestConvergeAddedAllUnwantedStoppedStarts(t *testing.T) {
+	stub, c, hash := newConvergeStub(t, 0, []rpcFileStat{{Wanted: false}, {Wanted: false}})
+	opts := selectionOpts()
+	opts.FileSelection = []model.TorrentFile{{Path: "R1/a", Wanted: false}, {Path: "R1/b", Wanted: false}}
+
+	if err := c.ConvergeAdded(context.Background(), hash, nil, opts); err != nil {
+		t.Fatalf("ConvergeAdded: %v", err)
+	}
+	if len(stub.startCalls) != 1 || !idsAre(stub.startCalls[0]["ids"], hash) {
+		t.Fatalf("expected one torrent-start for %s, got %v", hash, stub.startCalls)
+	}
+	if len(stub.setCalls) != 0 || len(stub.removeCalls) != 0 {
+		t.Errorf("expected no set or remove, got sets %v removes %v", stub.setCalls, stub.removeCalls)
+	}
+}
+
+func TestConvergeAddedStartFailureKeepsTorrent(t *testing.T) {
+	stub, c, hash := newConvergeStub(t, 0, []rpcFileStat{{Wanted: true}, {Wanted: false}})
+	stub.failStart = true
+
+	if err := c.ConvergeAdded(context.Background(), hash, nil, selectionOpts()); err == nil {
+		t.Fatal("expected an error when torrent-start fails")
+	}
+	if len(stub.removeCalls) != 0 {
+		t.Fatalf("expected no torrent-remove, got %v", stub.removeCalls)
+	}
+	if len(stub.setCalls) != 0 {
+		t.Errorf("expected no torrent-set, got %v", stub.setCalls)
+	}
+}
+
+func TestConvergeAddedKeepsOtherSelection(t *testing.T) {
+	stub, c, hash := newConvergeStub(t, 0, []rpcFileStat{{Wanted: false}, {Wanted: true}})
+
+	if err := c.ConvergeAdded(context.Background(), hash, nil, selectionOpts()); err != nil {
+		t.Fatalf("ConvergeAdded: %v", err)
+	}
+	if len(stub.setCalls) != 0 || len(stub.startCalls) != 0 || len(stub.removeCalls) != 0 {
+		t.Errorf("expected no set, start or remove, got sets %v starts %v removes %v", stub.setCalls, stub.startCalls, stub.removeCalls)
+	}
+}
+
+func TestConvergeAddedOurSelectionStoppedWhenAsked(t *testing.T) {
+	stub, c, hash := newConvergeStub(t, 0, []rpcFileStat{{Wanted: true}, {Wanted: false}})
+	opts := selectionOpts()
+	opts.Stopped = true
+
+	if err := c.ConvergeAdded(context.Background(), hash, nil, opts); err != nil {
 		t.Fatalf("ConvergeAdded: %v", err)
 	}
 	if len(stub.setCalls) != 0 || len(stub.startCalls) != 0 || len(stub.removeCalls) != 0 {

@@ -535,6 +535,34 @@ func TestAddStoppedWithSelection(t *testing.T) {
 	})
 }
 
+func TestAddSelectionAllUnwanted(t *testing.T) {
+	withFastTimings(t)
+	data, h := buildTorrent(t, "show", "e1.mkv", "e2.mkv", "e3.mkv")
+	selection := []model.TorrentFile{{Path: "show/e1.mkv"}, {Path: "show/e2.mkv"}, {Path: "show/e3.mkv"}}
+	f := newFake(t)
+	c := newClient(t, f, model.ManagerConfig{})
+	if err := c.AddFromBuffer(context.Background(), bytes.NewBuffer(data), model.ManagerAddFileOptions{Name: "show", FileSelection: selection}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	sets := f.callsTo("core.set_torrent_options")
+	if len(sets) != 1 {
+		t.Fatalf("set_torrent_options calls = %d, want 1", len(sets))
+	}
+	if ids := arg[[]string](t, sets[0].Params, 0); !slices.Equal(ids, []string{h}) {
+		t.Fatalf("ids = %v", ids)
+	}
+	if prio := arg[map[string][]int](t, sets[0].Params, 1)["file_priorities"]; !slices.Equal(prio, []int{0, 0, 0}) {
+		t.Fatalf("file_priorities = %v, want [0 0 0]", prio)
+	}
+	methods := f.methodsSince(0)
+	if ir := slices.Index(methods, "core.resume_torrent"); ir < slices.Index(methods, "core.set_torrent_options") {
+		t.Fatalf("resume missing or before selection: %v", methods)
+	}
+	if rm := removes(t, f); len(rm) != 0 {
+		t.Fatalf("remove calls = %+v, want none", rm)
+	}
+}
+
 func TestAddDuplicate(t *testing.T) {
 	withFastTimings(t)
 	data, h := buildTorrent(t, "dup")

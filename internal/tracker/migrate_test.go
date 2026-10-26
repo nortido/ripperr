@@ -63,6 +63,7 @@ func TestMigrateSettingsConvertsCredentials(t *testing.T) {
 		overlay      = `{"rutracker":{"credentials":"` + rutrackerOld + `","cookies":"c=1","enabled":true},` +
 			`"kinozal":{"credentials":"username={login}&password={password}&to=%2F","login":"k","password":"SEC-q"},` +
 			`"nnm":{"credentials":"raw=1"},` +
+			`"tapochek":{"credentials":"login_username=a@b&login_password=SEC-x&login=%D0%B2%D1%85%D0%BE%D0%B4"}}`
 	)
 	db := &migrateDB{data: map[string]json.RawMessage{"trackers": json.RawMessage(overlay)}}
 	logStart := len(logger.Snapshot(1000))
@@ -81,7 +82,7 @@ func TestMigrateSettingsConvertsCredentials(t *testing.T) {
 	if err := json.Unmarshal(db.data["trackers"], &after); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"kinozal", "nnm"} {
+	for _, key := range []string{"kinozal", "nnm", "tapochek"} {
 		if string(after[key]) != string(before[key]) {
 			t.Fatalf("%s entry changed: %s, was %s", key, after[key], before[key])
 		}
@@ -113,7 +114,7 @@ func TestMigrateSettingsConvertsCredentials(t *testing.T) {
 	entries := logger.Snapshot(1000)[logStart:]
 	var warned bool
 	for _, e := range entries {
-		if e.Level == "WARN" && strings.Contains(e.Message) {
+		if e.Level == "WARN" && strings.Contains(e.Message, "tapochek") {
 			warned = true
 		}
 		for _, secret := range []string{"SEC-", "a@b", "va sya", "va+sya", "p@ss"} {
@@ -123,6 +124,7 @@ func TestMigrateSettingsConvertsCredentials(t *testing.T) {
 		}
 	}
 	if !warned {
+		t.Fatal("no WARN for tapochek")
 	}
 
 	if err := MigrateSettings(context.Background(), db, defaultBase()); err != nil {
@@ -172,6 +174,7 @@ func TestMigrateSettingsBootstrapsAddedList(t *testing.T) {
 		db := &migrateDB{
 			data: map[string]json.RawMessage{
 				"trackers":       json.RawMessage(`{"kinozal":{"enabled":true}}`),
+				"trackers_added": json.RawMessage(`["tapochek"]`),
 			},
 			rows: map[int]bool{1: true},
 		}

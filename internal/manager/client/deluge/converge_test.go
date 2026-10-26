@@ -86,7 +86,7 @@ func TestConvergeAddedLeavesOthersAlone(t *testing.T) {
 		{"seeding", "Seeding", []int{4, 4}},
 		{"queued", "Queued", []int{4, 4}},
 		{"error", "Error", []int{4, 4}},
-		{"paused with an unwanted file", "Paused", []int{4, 0}},
+		{"paused with another selection", "Paused", []int{0, 4}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +98,56 @@ func TestConvergeAddedLeavesOthersAlone(t *testing.T) {
 				t.Fatalf("calls = %v, want reads only", got)
 			}
 		})
+	}
+}
+
+func TestConvergeAddedPausedWithOurSelectionResumes(t *testing.T) {
+	cases := []struct {
+		name      string
+		prios     []int
+		selection []model.TorrentFile
+	}{
+		{"one unwanted", []int{4, 0}, nil},
+		{"all unwanted", []int{0, 0}, []model.TorrentFile{{Path: "show/e1.mkv"}, {Path: "show/e2.mkv"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, c, h, opts := convergeSetup(t, "Paused", tc.prios)
+			if tc.selection != nil {
+				opts.FileSelection = tc.selection
+			}
+			if err := c.ConvergeAdded(context.Background(), h, nil, opts); err != nil {
+				t.Fatalf("ConvergeAdded: %v", err)
+			}
+			if got := mutatingCalls(f); !slices.Equal(got, []string{"core.resume_torrent"}) {
+				t.Fatalf("calls = %v, want only core.resume_torrent", got)
+			}
+			if r := f.callsTo("core.resume_torrent"); arg[string](t, r[0].Params, 0) != h {
+				t.Fatalf("resume hash = %s, want %s", arg[string](t, r[0].Params, 0), h)
+			}
+		})
+	}
+}
+
+func TestConvergeAddedOurSelectionStoppedStaysPaused(t *testing.T) {
+	f, c, h, opts := convergeSetup(t, "Paused", []int{4, 0})
+	opts.Stopped = true
+	if err := c.ConvergeAdded(context.Background(), h, nil, opts); err != nil {
+		t.Fatalf("ConvergeAdded: %v", err)
+	}
+	if got := mutatingCalls(f); len(got) != 0 {
+		t.Fatalf("calls = %v, want reads only", got)
+	}
+}
+
+func TestConvergeAddedResumeFailureKeepsTorrent(t *testing.T) {
+	f, c, h, opts := convergeSetup(t, "Paused", []int{4, 0})
+	f.lock(func() { f.hook = failWith("core.resume_torrent", 3, "Exception: boom") })
+	if err := c.ConvergeAdded(context.Background(), h, nil, opts); err == nil {
+		t.Fatalf("ConvergeAdded succeeded with a failed resume")
+	}
+	if rm := removes(t, f); len(rm) != 0 || !f.has(h) {
+		t.Fatalf("remove calls = %+v, present = %v, want no remove", rm, f.has(h))
 	}
 }
 

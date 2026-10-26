@@ -62,6 +62,37 @@ func isWordRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
+func digitsRun(r []rune) bool {
+	for _, c := range r {
+		if !isWordRune(c) {
+			return true
+		}
+		if !unicode.IsDigit(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func yearAfterNumber(r []rune, i int) bool {
+	n := 0
+	for n < len(r)-i-1 && isWordRune(r[i+1+n]) {
+		n++
+	}
+	if n != 4 {
+		return false
+	}
+	if p := string(r[i+1 : i+3]); p != "19" && p != "20" {
+		return false
+	}
+	for j := i - 1; j >= 0 && isWordRune(r[j]); j-- {
+		if !unicode.IsDigit(r[j]) {
+			return false
+		}
+	}
+	return true
+}
+
 func pushName(s string) string {
 	s = strings.TrimSpace(s)
 	// расширение режем только из списка и только строчное: ".MKV" остается как есть
@@ -73,8 +104,9 @@ func pushName(s string) string {
 		if r[i] != '.' || !isWordRune(r[i-1]) || !isWordRune(r[i+1]) {
 			continue
 		}
-		// "5.1" и "v1.2.3" это версии, их точки не трогаем: после цифры дальше идет не буква и не цифра
-		if unicode.IsDigit(r[i-1]) && unicode.IsDigit(r[i+1]) && (i+2 >= len(r) || !isWordRune(r[i+2])) {
+		// "5.1", "v1.0.12" это версии: точку после цифры оставляем, если до следующего не-слова идут только цифры ("2024.1080p" режем)
+		// число перед годом ("Iron.Man.3.2013", "1917.2019") не склеиваем с ним
+		if unicode.IsDigit(r[i-1]) && digitsRun(r[i+1:]) && !yearAfterNumber(r, i) {
 			continue
 		}
 		r[i] = ' '

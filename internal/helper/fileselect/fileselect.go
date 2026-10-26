@@ -1,6 +1,7 @@
 package fileselect
 
 import (
+	"slices"
 	"strings"
 
 	"ripperr/internal/model"
@@ -49,10 +50,21 @@ func Unwanted(old []model.TorrentFile, cur []string) []int {
 			res = append(res, i)
 		}
 	}
-	if len(res) == len(cur) {
+	// ничего не осталось отмечено: качаем все, но если в старом было снято все, снимаем все и в новом
+	if len(res) == len(cur) && slices.ContainsFunc(old, func(f model.TorrentFile) bool { return f.Wanted }) {
 		return nil
 	}
 	return res
+}
+
+func Applied(old, files []model.TorrentFile, paths []string) bool {
+	var unwanted []int
+	for i, f := range files {
+		if !f.Wanted {
+			unwanted = append(unwanted, i)
+		}
+	}
+	return slices.Equal(unwanted, Unwanted(old, paths))
 }
 
 func hasUnwanted(old []model.TorrentFile) bool {

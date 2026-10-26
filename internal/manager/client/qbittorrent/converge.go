@@ -7,6 +7,7 @@ import (
 
 	qbt "github.com/autobrr/go-qbittorrent"
 
+	"ripperr/internal/helper/fileselect"
 	"ripperr/internal/helper/torrentmeta"
 	"ripperr/internal/model"
 	"ripperr/internal/system/logger"
@@ -34,8 +35,16 @@ func (c *Client) ConvergeAdded(ctx context.Context, hash string, data []byte, op
 	if err != nil {
 		return err
 	}
-	// снятый файл значит, что выбор уже ставили мы или пользователь: не трогаем ни выбор, ни имена
+	// снятый файл значит, что выбор уже ставили мы или пользователь: не трогаем ни выбор, ни имена.
+	// Если он ровно наш, прошлый запуск упал на старте: только запускаем
 	if len(opts.FileSelection) > 0 && slices.ContainsFunc(files, func(f model.TorrentFile) bool { return !f.Wanted }) {
+		if opts.Stopped || !fileselect.Applied(opts.FileSelection, files, selectionPaths(files, opts)) {
+			return nil
+		}
+		logger.Info(fmt.Sprintf("qbit: converge %s: file selection already set, starting %s", opts.Name, hash))
+		if err = c.client.StartCtx(ctx, []string{hash}); err != nil {
+			return fmt.Errorf("converge %s: start %s: %w", opts.Name, hash, err)
+		}
 		return nil
 	}
 	if len(opts.FilePaths) > 0 {

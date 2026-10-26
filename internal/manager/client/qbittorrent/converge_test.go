@@ -73,10 +73,71 @@ func TestConvergeAddedRunningLeftAlone(t *testing.T) {
 	}
 }
 
-func TestConvergeAddedStoppedWithUnwantedFileLeftAlone(t *testing.T) {
+func convergeOurSelectionStarts(t *testing.T, files qbt.TorrentFiles, opts model.ManagerAddFileOptions) {
+	t.Helper()
+	c, rec, data, hash := newConvergeServer(t, qbt.TorrentStateStoppedDl, files, http.StatusOK)
+	if err := c.ConvergeAdded(context.Background(), hash, data, opts); err != nil {
+		t.Fatalf("ConvergeAdded: %v", err)
+	}
+	if log := rec.log(); !slices.Equal(log, []string{"info", "files", "start"}) {
+		t.Fatalf("log = %v, want info, files and start only", log)
+	}
+	if got := rec.form("start")["hashes"]; got != hash {
+		t.Fatalf("start hashes = %q, want %s", got, hash)
+	}
+}
+
+func TestConvergeAddedStoppedWithOurSelectionStarts(t *testing.T) {
+	files := qbt.TorrentFiles{{Index: 0, Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/e2.mkv", Priority: 0}}
+	t.Run("file paths", func(t *testing.T) {
+		convergeOurSelectionStarts(t, files, model.ManagerAddFileOptions{Name: "n", FileSelection: convergeSelection, FilePaths: []string{"Show/Episode 1.mkv", "Show/e2.mkv"}})
+	})
+	t.Run("plain", func(t *testing.T) {
+		convergeOurSelectionStarts(t, files, model.ManagerAddFileOptions{Name: "n", FileSelection: plainSelection})
+	})
+}
+
+func TestConvergeAddedAllUnwantedStoppedStarts(t *testing.T) {
+	files := qbt.TorrentFiles{{Index: 0, Name: "Show/e1.mkv", Priority: 0}, {Index: 1, Name: "Show/e2.mkv", Priority: 0}}
+	selection := []model.TorrentFile{{Path: "Show/e1.mkv", Wanted: false}, {Path: "Show/e2.mkv", Wanted: false}}
+	convergeOurSelectionStarts(t, files, model.ManagerAddFileOptions{Name: "n", FileSelection: selection})
+}
+
+func TestConvergeAddedStartFailureKeepsTorrent(t *testing.T) {
 	files := qbt.TorrentFiles{{Index: 0, Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/e2.mkv", Priority: 0}}
 	c, rec, data, hash := newConvergeServer(t, qbt.TorrentStateStoppedDl, files, http.StatusOK)
+	rec.mu.Lock()
+	rec.startStatus = http.StatusConflict
+	rec.mu.Unlock()
+	opts := model.ManagerAddFileOptions{Name: "n", FileSelection: plainSelection}
+	if err := c.ConvergeAdded(context.Background(), hash, data, opts); err == nil {
+		t.Fatal("expected an error when start fails")
+	}
+	log := rec.log()
+	if n := countOf(log, "start"); n != 1 {
+		t.Fatalf("start calls = %d, want 1, log %v", n, log)
+	}
+	if slices.Contains(log, "filePrio") || slices.Contains(log, "delete") {
+		t.Fatalf("unexpected filePrio or delete, log %v", log)
+	}
+}
+
+func TestConvergeAddedStoppedWithOtherSelectionLeftAlone(t *testing.T) {
+	files := qbt.TorrentFiles{{Index: 0, Name: "Show/e1.mkv", Priority: 0}, {Index: 1, Name: "Show/e2.mkv", Priority: 1}}
+	c, rec, data, hash := newConvergeServer(t, qbt.TorrentStateStoppedDl, files, http.StatusOK)
 	opts := model.ManagerAddFileOptions{Name: "n", FileSelection: convergeSelection, FilePaths: []string{"Show/Episode 1.mkv", "Show/e2.mkv"}}
+	if err := c.ConvergeAdded(context.Background(), hash, data, opts); err != nil {
+		t.Fatalf("ConvergeAdded: %v", err)
+	}
+	if log := rec.log(); !slices.Equal(log, []string{"info", "files"}) {
+		t.Fatalf("log = %v, want info and files only", log)
+	}
+}
+
+func TestConvergeAddedOurSelectionStoppedWhenAsked(t *testing.T) {
+	files := qbt.TorrentFiles{{Index: 0, Name: "Show/e1.mkv", Priority: 1}, {Index: 1, Name: "Show/e2.mkv", Priority: 0}}
+	c, rec, data, hash := newConvergeServer(t, qbt.TorrentStateStoppedDl, files, http.StatusOK)
+	opts := model.ManagerAddFileOptions{Name: "n", Stopped: true, FileSelection: convergeSelection, FilePaths: []string{"Show/Episode 1.mkv", "Show/e2.mkv"}}
 	if err := c.ConvergeAdded(context.Background(), hash, data, opts); err != nil {
 		t.Fatalf("ConvergeAdded: %v", err)
 	}
