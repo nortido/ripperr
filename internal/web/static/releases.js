@@ -2,7 +2,7 @@ import { fetchJSON, showToast } from './api.js';
 import { bindErrorBadges } from './components.js';
 import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardFetchGen, setRunPending, updateRunStatusUI } from './dashboard.js';
 import { confirmDialog } from './confirm.js';
-import { hydrateIcons, ICONS } from './icons.js';
+import { hydrateIcons, ICONS, icon } from './icons.js';
 import { historyFiltered, historyState } from './state.js';
 import { formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, statusIcon, trackerBadgeHtml } from './util.js';
 
@@ -112,9 +112,10 @@ export function syncPlanForceLocal(items) {
   });
 }
 
-export function redownloadButtonHtml(hash) {
-  const btnTitle = t('dash.redownload');
-  return html`<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" title="${btnTitle}" aria-label="${btnTitle}" data-hash="${hash}"><span data-icon="download"></span></button>`;
+export function redownloadButtonHtml(hash, absent) {
+  const btnTitle = absent ? t('dash.absentTitle') : t('dash.redownload');
+  const off = absent ? html` disabled` : '';
+  return html`<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" title="${btnTitle}" aria-label="${btnTitle}" data-hash="${hash}"${off}><span data-icon="download"></span></button>`;
 }
 
 // в покое стрелка вниз, чтобы не путать с 'Обновить'; на время запроса подобранный под вращение rotateCw
@@ -172,21 +173,40 @@ export function buildTimeColumnHeader() {
   return html`<th class="${cls}"><span class="th-label-full">${t(fullKey)}</span><span class="th-label-short">${t(shortKey)}</span></th>`;
 }
 
+// формой повторяет дату "25.10 23:11": тире не спутать со значком статуса
+const DATE_STUB = '--.-- --:--';
+
+function dateStubHtml(cls) {
+  return html`<span class="${cls} time-stub">${DATE_STUB}</span>`;
+}
+
 function planRecheckSpanHtml(short, full, ignored) {
   // игнорируемые не перепроверяются, и дата тут была бы выдумкой.
   // В атрибутах остается настоящая, меняем только то, что видно
-  const text = ignored ? t('common.emDash') : short;
-  const title = ignored ? '' : full;
-  return html`<span class="plan-recheck-text" title="${title}">${text}</span>`;
+  if (ignored || !short) return dateStubHtml('plan-recheck-text');
+  return html`<span class="plan-recheck-text" title="${full}">${short}</span>`;
+}
+
+function plannedCheckSpanHtml(short, full, ignored) {
+  if (ignored) return dateStubHtml('col-time-text');
+  return html`<span class="col-time-text time-planned" title="${t('dash.firstCheckAt', { time: full })}">${icon('clock')}${short}</span>`;
 }
 
 export function releaseTimeCellHtml(item) {
   const meta = releaseMetaHtml(item);
+  const ignored = isUrlIgnored(item.url_hash || '');
   if (historyState.sort === 'recheck') {
-    const recheckShort = formatTableTime(item.recheck_at);
-    const recheckFull = formatDateTime(item.recheck_at);
-    const ignored = isUrlIgnored(item.url_hash || '');
+    const recheckShort = item.recheck_at ? formatTableTime(item.recheck_at) : '';
+    const recheckFull = item.recheck_at ? formatDateTime(item.recheck_at) : '';
     return html`<td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}">${planRecheckSpanHtml(recheckShort, recheckFull, ignored)}${meta}</td>`;
+  }
+  if (!item.checked_at && item.recheck_at) {
+    const plannedShort = formatTableTime(item.recheck_at);
+    const plannedFull = formatDateTime(item.recheck_at);
+    return html`<td class="col-time" data-recheck-short="${plannedShort}" data-recheck-full="${plannedFull}">${plannedCheckSpanHtml(plannedShort, plannedFull, ignored)}${meta}</td>`;
+  }
+  if (!item.checked_at) {
+    return html`<td class="col-time">${dateStubHtml('col-time-text')}${meta}</td>`;
   }
   const timeShort = formatTableTime(item.checked_at);
   const timeFull = formatDateTime(item.checked_at);
@@ -225,9 +245,11 @@ export function buildReleaseRows(histItems) {
     if (item.broken) rowClsValue = rowClsValue ? rowClsValue + ' release-row-broken' : 'release-row-broken';
     if (checkingHashes.has(urlHash)) rowClsValue += ' release-row-checking';
     else if (queuedHashes.has(urlHash)) rowClsValue += ' release-row-queued';
+    if (item.absent) rowClsValue += ' release-row-absent';
     const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
+    const absentLabel = item.absent ? html`<span class="release-absent" title="${t('dash.absentTitle')}">${t('dash.absent')}</span>` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
-    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadEnabled ? redownloadButtonHtml(urlHash) : ''}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
+    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}${absentLabel}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadEnabled ? redownloadButtonHtml(urlHash, item.absent) : ''}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
   });
   return html`${rows}`;
 }
@@ -310,15 +332,18 @@ export function bindDashboardReleaseRows(root) {
         await refreshIgnoreState();
         if (historyState.ignored) {
           loadDashboard();
-        } else if (historyState.sort === 'recheck') {
-          // строка остается на месте без полной перезагрузки, так что ее ячейка
-          // перепроверки должна сразу показать новое состояние игнора
+        } else {
+          // строка остается на месте без полной перезагрузки, так что ячейка с
+          // плановой датой должна сразу показать новое состояние игнора.
+          // Меняем только текст: рядом чипы, innerHTML стер бы их
           const row = btn.closest('tr');
-          const cell = row && row.querySelector('.plan-recheck-cell');
-          if (cell) {
+          const cell = row && row.querySelector('.plan-recheck-cell, .col-time[data-recheck-short]');
+          const textEl = cell && cell.querySelector('.plan-recheck-text, .col-time-text');
+          if (textEl) {
             const dateShort = cell.getAttribute('data-recheck-short') || '';
             const dateFull = cell.getAttribute('data-recheck-full') || '';
-            cell.innerHTML = planRecheckSpanHtml(dateShort, dateFull, isUrlIgnored(hash));
+            const planned = cell.classList.contains('plan-recheck-cell') ? planRecheckSpanHtml : plannedCheckSpanHtml;
+            textEl.outerHTML = planned(dateShort, dateFull, isUrlIgnored(hash));
           }
         }
       } catch (err) {

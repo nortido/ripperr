@@ -69,6 +69,11 @@ type storage interface {
 	ErrorMarks(ctx context.Context) (map[string]storageModel.ErrorMark, error)
 	AddReleaseTime(ctx context.Context, urlHash string, at time.Time, keep int) error
 	RecentReleaseTimes(ctx context.Context, urlHash string, since time.Time, limit int) ([]time.Time, error)
+	NewReleaseHolds(ctx context.Context) (map[string]time.Time, error)
+	DeleteNewRelease(ctx context.Context, urlHash string) error
+	KnownReleases(ctx context.Context) (hashes, names map[string]struct{}, err error)
+	ListedReleases(ctx context.Context) (names map[string]string, fresh map[string]struct{}, err error)
+	AddNewRelease(ctx context.Context, e *storageModel.CheckLogEntry, firstCheck time.Time) (bool, error)
 }
 
 type handler struct {
@@ -97,6 +102,13 @@ type handler struct {
 	startedMu sync.Mutex
 	// urlHash -> номер, под которым последний раз стартовала задача этого релиза
 	started map[string]uint64
+	pollMu  sync.Mutex
+	// хеши торрентов, которые опрос уже отбросил насовсем: свойства qBittorrent для них не просим
+	pollSkip map[string]struct{}
+	// хеш торрента без адреса -> когда опрос его видел: свойства перезапрашиваем раз в pollEmptyTTL
+	pollEmpty map[string]time.Time
+	// хеш торрента -> URLHash его адреса, который опрос уже узнал: торрент в pollSkip свойств больше не дает
+	pollURL map[string]string
 }
 
 type retryState struct {
@@ -130,6 +142,14 @@ func (h *handler) Run(ctx context.Context) {
 		return
 	}
 	h.gen = h.state.Reset()
+	h.state.SetPoller(h.gen, func(reqCtx context.Context) (int, error) {
+		pctx, cancel := context.WithCancel(reqCtx)
+		defer cancel()
+		stop := context.AfterFunc(ctx, cancel)
+		defer stop()
+		return h.pollNew(pctx)
+	})
+	defer h.state.SetPoller(h.gen, nil)
 	h.initTrackerChannels()
 	for ttid := range h.idx {
 		go h.trackerWorker(ctx, ttid, cherr)
@@ -315,6 +335,7 @@ type pushPass struct {
 	adopted map[*model.Entry]struct{}
 	marks   map[string]storageModel.ErrorMark
 	slot    time.Time
+	holds   map[string]time.Time
 }
 
 func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}) (err error) {
@@ -333,6 +354,16 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 		h.state.setDry(true)
 		logger.Info(fmt.Sprintf("dry-run started: up to %d entries, nothing will be written", dryRunLimit))
 		defer rep.release()
+	}
+
+	// строки "new" читаем до списка торентов: ту, что опрос добавит посреди прохода,
+	// чистка этого прохода не тронет
+	var holds map[string]time.Time
+	if !dry {
+		if holds, err = h.storage.NewReleaseHolds(ctx); err != nil {
+			logger.Warn(fmt.Sprintf("new release holds not read: %v", err))
+			holds = nil
+		}
 	}
 
 	rawEntries, entries, adopted, partial, err := h.collectEntries(ctx)
@@ -372,7 +403,7 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 	}
 
 	if err = h.enqueueEntries(ctx, entries, &pushPass{
-		dry: dry, forced: forced, rep: rep, items: items, ignore: ignoreSet, adopted: adopted, marks: marks, slot: slot,
+		dry: dry, forced: forced, rep: rep, items: items, ignore: ignoreSet, adopted: adopted, marks: marks, slot: slot, holds: holds,
 	}); err != nil {
 		return err
 	}
@@ -384,6 +415,7 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 			logger.Warn("history purge skipped: partial torrent list")
 		} else {
 			h.purgeStaleHistory(ctx, rawEntries, items)
+			h.purgeStaleHolds(ctx, entries, holds, items)
 		}
 	}
 	return nil
@@ -587,10 +619,7 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 				continue
 			}
 		}
-		if len(h.config.Categories) > 0 && !slices.Contains(h.config.Categories, entries[i].Category) {
-			continue
-		}
-		if len(h.config.WatchTags) > 0 && !entryMatchesWatchTags(entries[i].Tag, h.config.WatchTags) {
+		if !h.watched(entries[i]) {
 			continue
 		}
 		// запись комментария трогает клиент (Transmission перезаливает торрент), поэтому
@@ -604,6 +633,10 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 			continue
 		} else if err != nil {
 			return err
+		}
+		// как recheck_at истории: форс и пробный проход срок первой проверки не ждут
+		if until, held := p.holds[entries[i].URLHash]; held && p.forced == nil && time.Now().Before(until) {
+			continue
 		}
 		if h.backedOff(p, entries[i]) {
 			backedOff++
@@ -652,6 +685,16 @@ func entryMatchesWatchTags(entryTags string, watchTags []string) bool {
 	return false
 }
 
+func (h *handler) watched(e *model.Entry) bool {
+	if len(h.config.Categories) > 0 && !slices.Contains(h.config.Categories, e.Category) {
+		return false
+	}
+	if len(h.config.WatchTags) > 0 && !entryMatchesWatchTags(e.Tag, h.config.WatchTags) {
+		return false
+	}
+	return true
+}
+
 func (h *handler) purgeStaleHistory(ctx context.Context, allEntries []*model.Entry, items map[string]*runnerModel.HistoryItem) {
 	present := make(map[string]struct{})
 	for _, e := range allEntries {
@@ -679,6 +722,41 @@ func (h *handler) purgeStaleHistory(ctx context.Context, allEntries []*model.Ent
 			continue
 		}
 		logger.Info(fmt.Sprintf("purged from history: %s", item.Name))
+	}
+}
+
+func (h *handler) purgeStaleHolds(ctx context.Context, entries []*model.Entry, holds map[string]time.Time, items map[string]*runnerModel.HistoryItem) {
+	if len(holds) == 0 || len(entries) == 0 {
+		return
+	}
+	// строку "new" проход не проверит, если торрент удален, за ним не следят или он проиграл
+	// дедупликацию по имени: такая ждала бы вечно
+	keep := make(map[string]struct{})
+	hasURL := false
+	for _, e := range entries {
+		if e.URL == "" {
+			continue
+		}
+		hasURL = true
+		if h.watched(e) {
+			keep[storagePkg.URLHash(e.URL)] = struct{}{}
+		}
+	}
+	if !hasURL {
+		return
+	}
+	for hash := range holds {
+		if _, ok := keep[hash]; ok {
+			continue
+		}
+		if _, ok := items[hash]; ok {
+			continue
+		}
+		if err := h.storage.DeleteNewRelease(ctx, hash); err != nil {
+			logger.Error(fmt.Sprintf("new release drop %s: %v", hash, err))
+			continue
+		}
+		logger.Info(fmt.Sprintf("new release dropped: %s", hash))
 	}
 }
 

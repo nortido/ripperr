@@ -141,6 +141,29 @@ td.plan-recheck-cell {
   white-space: nowrap;
 }
 
+/* в ячейке tabular-nums, поэтому заглушка той же длины, что и настоящая дата,
+   и не похожа на значок статуса */
+.time-stub {
+  color: var(--text-muted);
+}
+
+.time-planned {
+  color: var(--text-muted);
+}
+
+/* значок мелкий и с малым зазором: в узкой колонке он делит место с датой */
+.time-planned svg {
+  width: 10px;
+  height: 10px;
+  margin-right: 2px;
+  vertical-align: 1px;
+}
+
+/* на мобильном шрифт 14px, и тот же сдвиг поднимал значок выше центра текста */
+html.mobile-layout .time-planned svg {
+  vertical-align: 0;
+}
+
 .btn-force-all {
   color: var(--hue-amber);
 }

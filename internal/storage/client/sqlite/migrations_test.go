@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
+
+	"ripperr/internal/model/storage"
 )
 
 func newRawDB(t *testing.T) *sql.DB {
@@ -197,5 +200,117 @@ func TestBootstrapCreatesReleaseTimes(t *testing.T) {
 	}
 	if got := userVersion(t, db); got != len(migrations) {
 		t.Fatalf("user_version = %d, want %d", got, len(migrations))
+	}
+}
+
+func TestMigrateAddsNewCategoryColumn(t *testing.T) {
+	ctx := t.Context()
+	db := newRawDB(t)
+	c := New(db, testBox(t))
+	if err := c.migrate(ctx, migrations[:4]); err != nil {
+		t.Fatalf("migrate to 4: %v", err)
+	}
+	if got := userVersion(t, db); got != 4 {
+		t.Fatalf("user_version = %d, want 4", got)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "h1", Name: "Has history", Category: "tv"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "Has history", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "e1", ItemName: "Broken", Status: "error"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO check_log (checked_at, url_hash, item_name, status) VALUES (?, 'n0', 'New one', 'new')`, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := func() []string {
+		rows, err := db.Query(`SELECT url_hash || '|' || status || '|' || checked_at || '|' || item_name FROM check_log ORDER BY url_hash`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = rows.Close() }()
+		var out []string
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, s)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	before := snapshot()
+	if len(before) != 3 {
+		t.Fatalf("seeded rows = %d, want 3", len(before))
+	}
+
+	checkColumn := func(stage string) {
+		t.Helper()
+		var n, notNull int
+		var dflt sql.NullString
+		if err := db.QueryRow(`SELECT COUNT(*), COALESCE(MAX("notnull"), 0), MAX(dflt_value) FROM pragma_table_info('check_log') WHERE name = 'new_category'`).Scan(&n, &notNull, &dflt); err != nil {
+			t.Fatalf("%s: table info: %v", stage, err)
+		}
+		if n != 1 || notNull != 0 || dflt.Valid {
+			t.Fatalf("%s: new_category count=%d notnull=%d default=%v, want 1, 0, NULL", stage, n, notNull, dflt)
+		}
+	}
+
+	if err := c.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap from 4: %v", err)
+	}
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Fatalf("user_version = %d, want %d", got, len(migrations))
+	}
+	checkColumn("first run")
+	if after := snapshot(); !slices.Equal(before, after) {
+		t.Fatalf("rows changed by migration: before %v, after %v", before, after)
+	}
+	var nulls int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM check_log WHERE new_category IS NULL`).Scan(&nulls); err != nil {
+		t.Fatal(err)
+	}
+	if nulls != 3 {
+		t.Fatalf("rows with NULL new_category = %d, want 3", nulls)
+	}
+
+	if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap rerun: %v", err)
+	}
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Fatalf("user_version after rerun = %d, want %d", got, len(migrations))
+	}
+	checkColumn("rerun")
+}
+
+func TestAddNewCategorySkipsWithoutCheckLog(t *testing.T) {
+	db := newRawDB(t)
+	c := New(db, testBox(t))
+	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL DEFAULT (unixepoch()))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Bootstrap(t.Context()); err != nil {
+		t.Fatalf("bootstrap without check_log: %v", err)
+	}
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Fatalf("user_version = %d, want %d", got, len(migrations))
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'check_log'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("check_log was created by step 5")
 	}
 }

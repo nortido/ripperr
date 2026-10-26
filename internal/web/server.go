@@ -35,6 +35,7 @@ type store interface {
 	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
 	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
+	IsNewRelease(ctx context.Context, urlHash string) (bool, error)
 	ForceCheckAll(ctx context.Context, force bool, f storage.CheckLogFilter) (hashes []string, n int64, err error)
 	GetTracker(ctx context.Context, trackerID int) (*tracker.Tracker, error)
 	PurgeCategoriesExcept(ctx context.Context, allowed []string) (int64, error)
@@ -108,6 +109,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("POST /api/run", withMaxBody(s.handleRun))
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/history/summary", s.handleHistorySummary)
+	mux.HandleFunc("POST /api/history/poll", withMaxBody(s.handlePollNew))
 	mux.HandleFunc("POST /api/plan/{hash}/force", withMaxBody(s.handlePlanForce))
 	mux.HandleFunc("POST /api/plan/force-all", withMaxBody(s.handlePlanForceAll))
 	mux.HandleFunc("POST /api/history/{hash}/redownload", withMaxBody(s.handleRedownload))

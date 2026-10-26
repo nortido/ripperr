@@ -49,6 +49,23 @@ type fakeStorage struct {
 	recentErr   error
 	recentCalls []recentCall
 	purges      []map[string][]string
+	holds       map[string]time.Time
+	holdsErr    error
+	holdsCalls  int
+	droppedNew  []string
+	knownHashes map[string]struct{}
+	knownNames  []string
+	knownErr    error
+	newAdds     []newAdd
+	newAddErr   error
+	listedNames map[string]string
+	listedFresh map[string]struct{}
+	listedErr   error
+}
+
+type newAdd struct {
+	entry storageModel.CheckLogEntry
+	at    time.Time
 }
 
 type recentCall struct {
@@ -99,6 +116,56 @@ func (f *fakeStorage) GetIgnoreSet(context.Context) (map[string]struct{}, error)
 func (f *fakeStorage) DeleteItem(_ context.Context, urlHash string) error {
 	f.deleted = append(f.deleted, urlHash)
 	return nil
+}
+
+func (f *fakeStorage) NewReleaseHolds(context.Context) (map[string]time.Time, error) {
+	f.holdsCalls++
+	return f.holds, f.holdsErr
+}
+
+func (f *fakeStorage) DeleteNewRelease(_ context.Context, urlHash string) error {
+	f.droppedNew = append(f.droppedNew, urlHash)
+	return nil
+}
+
+func (f *fakeStorage) KnownReleases(context.Context) (hashes, names map[string]struct{}, err error) {
+	if f.knownErr != nil {
+		return nil, nil, f.knownErr
+	}
+	hashes = map[string]struct{}{}
+	for k := range f.knownHashes {
+		hashes[k] = struct{}{}
+	}
+	names = map[string]struct{}{}
+	for _, n := range f.knownNames {
+		names[storageModel.FoldName(n)] = struct{}{}
+	}
+	return hashes, names, nil
+}
+
+func (f *fakeStorage) ListedReleases(context.Context) (names map[string]string, fresh map[string]struct{}, err error) {
+	return f.listedNames, f.listedFresh, f.listedErr
+}
+
+func (f *fakeStorage) AddNewRelease(_ context.Context, e *storageModel.CheckLogEntry, firstCheck time.Time) (bool, error) {
+	if f.newAddErr != nil {
+		return false, f.newAddErr
+	}
+	if _, ok := f.knownHashes[e.URLHash]; ok {
+		return false, nil
+	}
+	for _, n := range f.knownNames {
+		if storageModel.FoldName(n) == storageModel.FoldName(e.ItemName) {
+			return false, nil
+		}
+	}
+	f.newAdds = append(f.newAdds, newAdd{entry: *e, at: firstCheck})
+	if f.knownHashes == nil {
+		f.knownHashes = map[string]struct{}{}
+	}
+	f.knownHashes[e.URLHash] = struct{}{}
+	f.knownNames = append(f.knownNames, e.ItemName)
+	return true, nil
 }
 
 func (f *fakeStorage) PurgeDuplicateNames(_ context.Context, live map[string][]string) error {
@@ -3278,5 +3345,181 @@ func TestWorkerDateMissingForcesLoginNext(t *testing.T) {
 	}
 	if len(rec.forced) != 1 {
 		t.Fatalf("forced = %v, want one call when the page has no date", rec.forced)
+	}
+}
+
+func drainQueued(ch chan *task) []string {
+	var urls []string
+	for {
+		select {
+		case tk := <-ch:
+			urls = append(urls, tk.entry.URL)
+		default:
+			return urls
+		}
+	}
+}
+
+func newHoldHandler(store storage, mgr manager, cfg model.HandlerConfig) *handler {
+	h := &handler{config: cfg, manager: mgr, storage: store, trackerService: &fakeTracker{id: 1}}
+	h.initTrackerChannels()
+	return h
+}
+
+func TestPushSkipsHeldNewRelease(t *testing.T) {
+	const held = "https://example.com/t/1"
+	const free = "https://example.com/t/2"
+	store := &fakeStorage{holds: map[string]time.Time{storagePkg.URLHash(held): time.Now().Add(time.Hour)}}
+	h := newHoldHandler(store, &fakeManager{all: []*model.Entry{
+		{URL: held, Name: "held"},
+		{URL: free, Name: "free"},
+	}}, model.HandlerConfig{})
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := drainQueued(h.idx[1]); !slices.Equal(got, []string{free}) {
+		t.Fatalf("queued %v, want [%s]", got, free)
+	}
+	if store.holdsCalls != 1 {
+		t.Fatalf("holds read %d times, want 1", store.holdsCalls)
+	}
+}
+
+func TestPushQueuesDueHold(t *testing.T) {
+	const due = "https://example.com/t/1"
+	store := &fakeStorage{holds: map[string]time.Time{storagePkg.URLHash(due): time.Now().Add(-time.Minute)}}
+	h := newHoldHandler(store, &fakeManager{all: []*model.Entry{{URL: due, Name: "due"}}}, model.HandlerConfig{})
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := drainQueued(h.idx[1]); !slices.Equal(got, []string{due}) {
+		t.Fatalf("queued %v, want [%s]", got, due)
+	}
+}
+
+func TestPushForcedIgnoresHold(t *testing.T) {
+	const held = "https://example.com/t/1"
+	hash := storagePkg.URLHash(held)
+	store := &fakeStorage{holds: map[string]time.Time{hash: time.Now().Add(time.Hour)}}
+	h := newHoldHandler(store, &fakeManager{all: []*model.Entry{{URL: held, Name: "held"}}}, model.HandlerConfig{})
+	if err := h.push(context.Background(), false, map[string]struct{}{hash: {}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := drainQueued(h.pri[1]); !slices.Equal(got, []string{held}) {
+		t.Fatalf("queued %v, want [%s]", got, held)
+	}
+}
+
+func TestPushDryIgnoresHolds(t *testing.T) {
+	const held = "https://example.com/t/1"
+	store := &fakeStorage{holds: map[string]time.Time{storagePkg.URLHash(held): time.Now().Add(time.Hour)}}
+	h := newHoldHandler(store, &fakeManager{all: []*model.Entry{{URL: held, Name: "held"}}}, model.HandlerConfig{})
+	h.state = NewState()
+	h.gen = h.state.Reset()
+	if err := h.push(context.Background(), true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := drainQueued(h.idx[1]); !slices.Equal(got, []string{held}) {
+		t.Fatalf("queued %v, want [%s]", got, held)
+	}
+	if store.holdsCalls != 0 || len(store.droppedNew) != 0 {
+		t.Fatalf("dry pass: holds read %d times, dropped %v", store.holdsCalls, store.droppedNew)
+	}
+}
+
+func TestPushPurgesStaleHolds(t *testing.T) {
+	const a = "https://example.com/t/1"
+	const b = "https://example.com/t/2"
+	const c = "https://example.com/t/3"
+	const e = "https://example.com/t/5"
+	ha, hb, hc, he := storagePkg.URLHash(a), storagePkg.URLHash(b), storagePkg.URLHash(c), storagePkg.URLHash(e)
+	later := time.Now().Add(time.Hour)
+	store := &fakeStorage{
+		holds: map[string]time.Time{ha: later, hb: later, hc: later, he: later},
+		items: map[string]*runnerModel.HistoryItem{he: {URLHash: he, Name: "e", TrackerTypeID: 1, RecheckAt: timePtr(later)}},
+	}
+	h := newHoldHandler(store, &fakeManager{all: []*model.Entry{
+		{URL: a, Name: "a", Category: "tv"},
+		{URL: c, Name: "c", Category: "movies"},
+		{URL: e, Name: "e", Category: "movies"},
+	}}, model.HandlerConfig{Categories: []string{"tv"}})
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := slices.Clone(store.droppedNew)
+	slices.Sort(got)
+	want := []string{hb, hc}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("dropped %v, want %v", got, want)
+	}
+	if len(store.deleted) != 0 {
+		t.Fatalf("history deleted %v, want none", store.deleted)
+	}
+}
+
+func TestPushKeepsHoldsOnPartialList(t *testing.T) {
+	const alive = "https://example.com/t/1"
+	store := &fakeStorage{holds: map[string]time.Time{storagePkg.URLHash("https://example.com/t/2"): time.Now().Add(time.Hour)}}
+	h := newHoldHandler(store, &fakeManager{all: []*model.Entry{{URL: alive, Name: "alive"}}, partialList: true}, model.HandlerConfig{})
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.droppedNew) != 0 {
+		t.Fatalf("dropped %v on a partial list, want none", store.droppedNew)
+	}
+}
+
+func TestPushHoldsReadErrorIgnoresHolds(t *testing.T) {
+	const held = "https://example.com/t/1"
+	store := &fakeStorage{
+		holds: map[string]time.Time{
+			storagePkg.URLHash(held):                      time.Now().Add(time.Hour),
+			storagePkg.URLHash("https://example.com/t/2"): time.Now().Add(time.Hour),
+		},
+		holdsErr: errors.New("db locked"),
+	}
+	h := newHoldHandler(store, &fakeManager{all: []*model.Entry{{URL: held, Name: "held"}}}, model.HandlerConfig{})
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := drainQueued(h.idx[1]); !slices.Equal(got, []string{held}) {
+		t.Fatalf("queued %v, want [%s]", got, held)
+	}
+	if len(store.droppedNew) != 0 {
+		t.Fatalf("dropped %v after a holds read error, want none", store.droppedNew)
+	}
+}
+
+type orderStorage struct {
+	*fakeStorage
+	log *[]string
+}
+
+func (s orderStorage) NewReleaseHolds(ctx context.Context) (map[string]time.Time, error) {
+	*s.log = append(*s.log, "holds")
+	return s.fakeStorage.NewReleaseHolds(ctx)
+}
+
+type orderManager struct {
+	*fakeManager
+	log *[]string
+}
+
+func (m orderManager) GetEntries(ctx context.Context, opts model.FilterOptions) ([]*model.Entry, error) {
+	*m.log = append(*m.log, "list")
+	return m.fakeManager.GetEntries(ctx, opts)
+}
+
+func TestPushReadsHoldsBeforeList(t *testing.T) {
+	var log []string
+	h := newHoldHandler(orderStorage{fakeStorage: &fakeStorage{}, log: &log},
+		orderManager{fakeManager: &fakeManager{all: []*model.Entry{{URL: "https://example.com/t/1", Name: "a"}}}, log: &log},
+		model.HandlerConfig{})
+	if err := h.push(context.Background(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log, []string{"holds", "list"}) {
+		t.Fatalf("calls %v, want [holds list]", log)
 	}
 }

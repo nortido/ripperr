@@ -50,6 +50,12 @@
   background: var(--warning-bg);
 }
 
+.hist-filter-trigger.active-info {
+  color: var(--hue-blue);
+  border-color: var(--hue-blue);
+  background: var(--tint-blue);
+}
+
 .hist-filter-trigger.active-danger {
   color: var(--danger);
   border-color: var(--danger);
@@ -313,6 +319,10 @@ html:not(.mobile-layout) .hist-filter-row {
 
 .hist-filter-option-icon-unknown {
   color: var(--warning);
+}
+
+.hist-filter-option-icon-new {
+  color: var(--hue-blue);
 }
 
 .hist-filter-option-icon-error {
@@ -1075,6 +1085,23 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
     min-width: 15ch;
   }
 
+  /* ссылка блочная, и метка уходила под имя: в строку с ним, имя сжимается многоточием */
+  html:not(.mobile-layout) .table-dash-releases tr.release-row-absent .release-title-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases tr.release-row-absent .release-link {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  html:not(.mobile-layout) .table-dash-releases tr.release-row-absent .release-absent {
+    flex: none;
+    margin-left: 0;
+  }
+
   /* Chrome переносит по <wbr> даже при nowrap: на десктопе имя в одну строку с многоточием */
   html:not(.mobile-layout) .table-dash-releases .col-name wbr {
     display: none;
@@ -1097,6 +1124,12 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   html:not(.mobile-layout) .table-dash-releases .plan-recheck-cell {
     padding-left: 8px;
     padding-right: 14px;
+  }
+
+  /* дата плана идет со значком на 12px: в 110px она залезала в соседнюю колонку */
+  html:not(.mobile-layout) .table-dash-releases .col-time {
+    width: 116px;
+    max-width: 116px;
   }
 
   html:not(.mobile-layout) .table-dash-releases .col-actions {

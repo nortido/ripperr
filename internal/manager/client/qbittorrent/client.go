@@ -43,13 +43,17 @@ type Client struct {
 	bh     *blackhole.Store
 }
 
-func (c *Client) List(ctx context.Context, _ model.FilterOptions) (entries []*model.Entry, err error) {
+func (c *Client) List(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error) {
 	qts, err := c.client.GetTorrentsCtx(ctx, qbt.TorrentFilterOptions{
 		Filter: qbt.TorrentFilterAll,
 		Sort:   "added_on",
 	})
 	if err != nil {
 		return
+	}
+
+	if opts.Narrow != nil {
+		qts = narrowTorrents(qts, opts.Narrow)
 	}
 
 	raw := make([]*model.Entry, len(qts))
@@ -85,6 +89,25 @@ func (c *Client) List(ctx context.Context, _ model.FilterOptions) (entries []*mo
 		err = fmt.Errorf("%w: %d torrents skipped due to errors", model.ErrPartialList, n)
 	}
 	return
+}
+
+func narrowTorrents(qts []qbt.Torrent, narrow func([]*model.Entry) []*model.Entry) []qbt.Torrent {
+	brief := make([]*model.Entry, len(qts))
+	for i := range qts {
+		ts := time.Unix(qts[i].AddedOn, 0)
+		brief[i] = &model.Entry{Hash: qts[i].Hash, Name: qts[i].Name, Category: qts[i].Category, Tag: qts[i].Tags, Timestamp: &ts}
+	}
+	keep := make(map[string]struct{})
+	for _, e := range narrow(brief) {
+		keep[e.Hash] = struct{}{}
+	}
+	kept := make([]qbt.Torrent, 0, len(keep))
+	for _, t := range qts {
+		if _, ok := keep[t.Hash]; ok {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error) {

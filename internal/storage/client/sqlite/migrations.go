@@ -69,6 +69,10 @@ WHERE id IN (
 			`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, created_at INTEGER NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', app_path TEXT NOT NULL DEFAULT '')`,
 		},
 	},
+	{
+		name:  "new release category",
+		apply: addNewCategory,
+	},
 }
 
 func (c *Client) Bootstrap(ctx context.Context) error {
@@ -132,4 +136,18 @@ func (c *Client) applyMigration(ctx context.Context, version int, m migration) (
 	}
 	err = tx.Commit()
 	return
+}
+
+func addNewCategory(ctx context.Context, _ *Client, tx *sql.Tx) error {
+	// после decrypt-secrets шаг повторится, а ADD COLUMN не знает IF NOT EXISTS.
+	// Без таблицы (старая база на версии 1 без check_log) добавлять нечего
+	var cols, have int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(name = 'new_category'), 0) FROM pragma_table_info('check_log')`).Scan(&cols, &have); err != nil {
+		return err
+	}
+	if cols == 0 || have > 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `ALTER TABLE check_log ADD COLUMN new_category TEXT`)
+	return err
 }

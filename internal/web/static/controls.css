@@ -261,6 +261,11 @@
   color: var(--warning);
 }
 
+.status-icon-info {
+  background: var(--tint-blue);
+  color: var(--hue-blue);
+}
+
 .status-icon-danger {
   background: var(--danger-bg);
   color: var(--danger);
@@ -287,6 +292,27 @@
 .table-dash-releases tr.release-row-broken .col-name {
   /* тот же цвет, что у фильтра "битые": амбер занят значком "не определено" */
   box-shadow: inset 2px 0 0 var(--hue-violet);
+}
+
+/* торрента нет в клиенте: бледнеет содержимое, а не ячейка действий и не метка */
+.table-dash-releases tr.release-row-absent .release-link,
+.table-dash-releases tr.release-row-absent .release-foot,
+.table-dash-releases tr.release-row-absent .release-meta,
+.table-dash-releases tr.release-row-absent .col-tracker,
+.table-dash-releases tr.release-row-absent .col-category,
+.table-dash-releases tr.release-row-absent .col-status,
+.table-dash-releases tr.release-row-absent .col-time-text,
+.table-dash-releases tr.release-row-absent .plan-recheck-text {
+  opacity: 0.55;
+}
+
+.release-absent {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .dash-alerts {

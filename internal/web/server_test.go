@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,7 @@ type fakeStore struct {
 	purgedCategories []string
 	purgedRows       int64
 	deletedTrackers  []int
+	newReleases      map[string]bool
 }
 
 func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
@@ -176,6 +178,10 @@ func (f *fakeStore) SetForceCheck(_ context.Context, urlHash string, force bool)
 	}
 	f.forceItems[urlHash] = force
 	return true, nil
+}
+
+func (f *fakeStore) IsNewRelease(_ context.Context, urlHash string) (bool, error) {
+	return f.newReleases[urlHash], nil
 }
 
 func (f *fakeStore) ForceCheckAll(_ context.Context, force bool, filter storage.CheckLogFilter) ([]string, int64, error) {
@@ -589,6 +595,35 @@ func TestGetHistory(t *testing.T) {
 	}
 	if resp.Items[0]["force_check"] != true {
 		t.Fatalf("force_check = %v, want true", resp.Items[0]["force_check"])
+	}
+}
+
+func TestGetHistoryAbsent(t *testing.T) {
+	store := &fakeStore{checkLog: []storage.CheckLogEntry{
+		{ID: 1, CheckedAt: time.Now(), URLHash: "a", ItemName: "A", Status: "unchanged"},
+		{ID: 2, CheckedAt: time.Now(), URLHash: "b", ItemName: "B", Status: "unchanged"},
+	}}
+	state := runner.NewState()
+	gen := state.Reset()
+	state.SetPoller(gen, func(context.Context) (int, error) { return 0, nil })
+	state.SetAbsent(gen, map[string]struct{}{"a": {}})
+	srv := withTestSession(New(store, func() {}, testEffective, ":0", state, nil))
+	w := httptest.NewRecorder()
+	srv.handleHistory(w, httptest.NewRequest(http.MethodGet, "/api/history", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(resp.Items))
+	}
+	if resp.Items[0]["absent"] != true || resp.Items[1]["absent"] != false {
+		t.Fatalf("absent = %v, %v, want true, false", resp.Items[0]["absent"], resp.Items[1]["absent"])
 	}
 }
 
@@ -2814,5 +2849,150 @@ func TestPutScheduleMirrorConfirmOnly(t *testing.T) {
 				t.Errorf("stored fields changed: %v", got)
 			}
 		})
+	}
+}
+
+func TestPostHistoryPoll(t *testing.T) {
+	post := func(srv *Server, header bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/history/poll", nil)
+		if header {
+			req.Header.Set("X-Ripperr", "1")
+		}
+		w := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(w, req)
+		return w
+	}
+	poller := func(state *runner.State, calls *int, n int, err error) {
+		state.SetPoller(state.Reset(), func(context.Context) (int, error) {
+			*calls++
+			return n, err
+		})
+	}
+
+	t.Run("no poller", func(t *testing.T) {
+		srv := newTestServer(&fakeStore{})
+		if w := post(srv, true); w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", w.Code)
+		}
+	})
+	t.Run("waiting settings", func(t *testing.T) {
+		state := runner.NewState()
+		calls := 0
+		poller(state, &calls, 2, nil)
+		state.SetWaitingSettings(true)
+		srv := withTestSession(New(&fakeStore{}, func() {}, testEffective, ":0", state, nil))
+		if w := post(srv, true); w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", w.Code)
+		}
+		if calls != 0 {
+			t.Fatalf("poller called %d times while settings are unreadable", calls)
+		}
+	})
+	t.Run("changed", func(t *testing.T) {
+		state := runner.NewState()
+		calls := 0
+		poller(state, &calls, 2, nil)
+		srv := withTestSession(New(&fakeStore{}, func() {}, testEffective, ":0", state, nil))
+		w := post(srv, true)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]int
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp["changed"] != 2 || calls != 1 {
+			t.Fatalf("resp = %v, calls = %d, want changed 2 and 1 call", resp, calls)
+		}
+	})
+	t.Run("poller error", func(t *testing.T) {
+		state := runner.NewState()
+		calls := 0
+		poller(state, &calls, 0, errors.New("qbit down"))
+		srv := withTestSession(New(&fakeStore{}, func() {}, testEffective, ":0", state, nil))
+		if w := post(srv, true); w.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502", w.Code)
+		}
+	})
+	t.Run("csrf and GET", func(t *testing.T) {
+		state := runner.NewState()
+		calls := 0
+		poller(state, &calls, 1, nil)
+		srv := New(&fakeStore{}, func() {}, testEffective, ":0", state, nil)
+		if w := post(srv, false); w.Code != http.StatusForbidden {
+			t.Fatalf("status without X-Ripperr = %d, want 403", w.Code)
+		}
+		w := httptest.NewRecorder()
+		srv = withTestSession(srv)
+		srv.srv.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/history/poll", nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("GET status = %d, want 404 (catch-all route, no poll)", w.Code)
+		}
+		if calls != 0 {
+			t.Fatalf("poller called %d times by rejected requests", calls)
+		}
+	})
+}
+
+func TestPostPlanForceNewRelease(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{}, newReleases: map[string]bool{"n1": true}}
+	state := runner.NewState()
+	srv := New(store, func() {}, testEffective, ":0", state, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/n1/force", bytes.NewReader([]byte(`{"force":true}`)))
+	req.SetPathValue("hash", "n1")
+	w := httptest.NewRecorder()
+	srv.handlePlanForce(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]bool
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["force"] || !resp["force_queued"] {
+		t.Fatalf("resp = %v, want force false and force_queued true", resp)
+	}
+	select {
+	case h := <-state.Force():
+		if h != "n1" {
+			t.Fatalf("queued %q, want n1", h)
+		}
+	default:
+		t.Fatal("expected force request queued")
+	}
+	if len(store.forceItems) != 0 {
+		t.Fatalf("forceItems touched: %v", store.forceItems)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/plan/n1/force", bytes.NewReader([]byte(`{"force":false}`)))
+	req.SetPathValue("hash", "n1")
+	w = httptest.NewRecorder()
+	srv.handlePlanForce(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("clearing force on a new row: status = %d, want 404", w.Code)
+	}
+}
+
+func TestGetHistoryNewReleaseTimes(t *testing.T) {
+	first := time.Date(2026, 10, 26, 7, 0, 0, 0, time.UTC)
+	store := &fakeStore{checkLog: []storage.CheckLogEntry{{ID: 1, URLHash: "n1", ItemName: "New", Status: "new", RecheckAt: &first}}}
+	srv := New(store, func() {}, testEffective, ":0", runner.NewState(), nil)
+	w := httptest.NewRecorder()
+	srv.handleHistory(w, httptest.NewRequest(http.MethodGet, "/api/history?status=new", nil))
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("items = %d, want 1 (status=new passes through)", len(resp.Items))
+	}
+	if got := resp.Items[0]["checked_at"]; got != "" {
+		t.Fatalf("checked_at = %v, want empty", got)
+	}
+	if got := resp.Items[0]["recheck_at"]; got != first.Format(time.RFC3339) {
+		t.Fatalf("recheck_at = %v, want %s", got, first.Format(time.RFC3339))
 	}
 }

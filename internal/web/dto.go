@@ -94,11 +94,16 @@ type historyItemResp struct {
 	Broken      bool   `json:"broken"`
 	RecheckAt   string `json:"recheck_at"`
 	ForceCheck  bool   `json:"force_check"`
+	Absent      bool   `json:"absent"`
 }
 
 type historyResp struct {
 	Items []historyItemResp `json:"items"`
 	Total int               `json:"total"`
+}
+
+type pollNewResp struct {
+	Changed int `json:"changed"`
 }
 
 type checkLogSummaryResp struct {

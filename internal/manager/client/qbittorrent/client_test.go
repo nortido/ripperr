@@ -748,3 +748,65 @@ func TestDeletesFilesIgnoresEmptyCategory(t *testing.T) {
 		t.Fatalf("DeletesFiles false for listed category")
 	}
 }
+
+func TestList_NarrowSkipsDroppedProperties(t *testing.T) {
+	torrents := []qbt.Torrent{
+		{Hash: "a", Name: "name-a", Category: "tv", Tags: "x", AddedOn: 1700000001},
+		{Hash: "b", Name: "name-b", Category: "tv", Tags: "x", AddedOn: 1700000002},
+		{Hash: "c", Name: "name-c", Category: "tv", Tags: "x", AddedOn: 1700000003},
+	}
+	var mu sync.Mutex
+	var propHashes []string
+	server := newStubServer(t, torrents, func(w http.ResponseWriter, r *http.Request) {
+		hash := r.URL.Query().Get("hash")
+		mu.Lock()
+		propHashes = append(propHashes, hash)
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(qbt.TorrentProperties{
+			Hash:         hash,
+			Comment:      "https://example.com/topic/" + hash,
+			AdditionDate: 1700000000,
+		})
+	})
+	c, err := New(model.ManagerConfig{Host: server.URL})
+	if err != nil {
+		t.Fatalf("unexpected error creating client: %v", err)
+	}
+
+	var narrowIn []*model.Entry
+	entries, err := c.List(context.Background(), model.FilterOptions{
+		Narrow: func(in []*model.Entry) []*model.Entry {
+			narrowIn = in
+			var kept []*model.Entry
+			for _, e := range in {
+				if e.Hash == "b" {
+					kept = append(kept, e)
+				}
+			}
+			return kept
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Hash != "b" || entries[0].URL != "https://example.com/topic/b" {
+		t.Fatalf("expected only b with its comment, got %+v", entries)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(propHashes) != 1 || propHashes[0] != "b" {
+		t.Errorf("expected properties only for b, got %v", propHashes)
+	}
+	if len(narrowIn) != 3 {
+		t.Fatalf("expected 3 entries passed to Narrow, got %d", len(narrowIn))
+	}
+	for i, e := range narrowIn {
+		src := torrents[i]
+		if e.Hash != src.Hash || e.Name != src.Name || e.Category != "tv" || e.Tag != "x" {
+			t.Errorf("narrow entry %d: %+v", i, e)
+		}
+		if e.Timestamp == nil || !e.Timestamp.Equal(time.Unix(src.AddedOn, 0)) {
+			t.Errorf("narrow entry %d timestamp %v, want %v", i, e.Timestamp, time.Unix(src.AddedOn, 0))
+		}
+	}
+}

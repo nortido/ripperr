@@ -20,11 +20,14 @@ import (
 	"ripperr/internal/model"
 	"ripperr/internal/model/storage"
 	trackerModel "ripperr/internal/model/tracker"
+	"ripperr/internal/runner"
 	storagePkg "ripperr/internal/storage"
 	"ripperr/internal/system/logger"
 	trackerPkg "ripperr/internal/tracker"
 	"ripperr/internal/tracker/registry"
 )
+
+const pollNewTimeout = 20 * time.Second
 
 func queryInt(r *http.Request, key string, def, min, max int) int {
 	v, _ := strconv.Atoi(r.URL.Query().Get(key))
@@ -81,15 +84,23 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// метки ставит опрос, здесь только читаем один снимок на весь ответ
+	absent := s.runnerState.Absent()
 	out := make([]historyItemResp, len(items))
 	for i, e := range items {
 		recheckAt := ""
 		if e.RecheckAt != nil {
 			recheckAt = e.RecheckAt.Format(time.RFC3339)
 		}
+		// у новой записи проверки еще не было
+		checkedAt := ""
+		if !e.CheckedAt.IsZero() {
+			checkedAt = e.CheckedAt.Format(time.RFC3339)
+		}
+		_, isAbsent := absent[e.URLHash]
 		out[i] = historyItemResp{
 			ID:          e.ID,
-			CheckedAt:   e.CheckedAt.Format(time.RFC3339),
+			CheckedAt:   checkedAt,
 			URLHash:     e.URLHash,
 			Name:        e.ItemName,
 			URL:         e.ItemURL,
@@ -104,9 +115,29 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			Broken:     f.BrokenStreak >= 1 && e.ErrorStreak >= f.BrokenStreak,
 			RecheckAt:  recheckAt,
 			ForceCheck: e.ForceCheck,
+			Absent:     isAbsent,
 		}
 	}
 	writeJSON(w, http.StatusOK, historyResp{Items: out, Total: total})
+}
+
+func (s *Server) handlePollNew(w http.ResponseWriter, r *http.Request) {
+	if s.runnerState.WaitingSettings() {
+		writeError(w, http.StatusServiceUnavailable, "stored settings are unreadable, poll not started")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), pollNewTimeout)
+	defer cancel()
+	n, err := s.runnerState.PollNew(ctx)
+	if err != nil {
+		code := http.StatusBadGateway
+		if errors.Is(err, runner.ErrPollUnavailable) {
+			code = http.StatusServiceUnavailable
+		}
+		writeError(w, code, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, pollNewResp{Changed: n})
 }
 
 func (s *Server) handleHistorySummary(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +171,18 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
+		if req.Force {
+			newRel, err := s.db.IsNewRelease(r.Context(), hash)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if newRel {
+				// истории у новой записи нет, флагу негде жить: просим проверку сразу
+				writeJSON(w, http.StatusOK, map[string]bool{"force": false, "force_queued": s.runnerState.RequestForce(hash)})
+				return
+			}
+		}
 		writeError(w, http.StatusNotFound, "history item not found")
 		return
 	}

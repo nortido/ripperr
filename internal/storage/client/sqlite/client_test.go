@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"encoding/json"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -947,5 +948,367 @@ func TestPurgeCategoriesExceptDropsReleaseTimes(t *testing.T) {
 		if got := releaseUnix(t, c, h); len(got) != 1 {
 			t.Fatalf("%s = %v, want one row", h, got)
 		}
+	}
+}
+
+func TestListCheckLogNewReleaseHold(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	t1 := time.Now().Add(time.Hour).Truncate(time.Second)
+	t2 := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	if _, err := c.db.ExecContext(ctx,
+		`INSERT INTO check_log (checked_at, url_hash, item_name, status) VALUES (?, 'n1', 'n1', 'new')`, t1.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "h1", Name: "h1", RecheckAt: &t2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "h1", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "e1", ItemName: "e1", Status: "error"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _, err := c.ListCheckLog(ctx, storage.CheckLogFilter{SortBy: "recheck", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, e := range entries {
+		order = append(order, e.URLHash)
+	}
+	if !slices.Equal(order, []string{"n1", "h1", "e1"}) {
+		t.Fatalf("order = %v, want [n1 h1 e1]", order)
+	}
+	n1 := entries[0]
+	if n1.RecheckAt == nil || !n1.RecheckAt.Equal(t1) {
+		t.Fatalf("n1.RecheckAt = %v, want %v", n1.RecheckAt, t1)
+	}
+	if !n1.CheckedAt.IsZero() {
+		t.Fatalf("n1.CheckedAt = %v, want zero", n1.CheckedAt)
+	}
+	if entries[1].CheckedAt.IsZero() {
+		t.Fatal("h1.CheckedAt is zero, only a new row without history may have it empty")
+	}
+
+	def, _, err := c.ListCheckLog(ctx, storage.CheckLogFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(def) != 3 || def[0].URLHash != "n1" {
+		t.Fatalf("default order = %v, want n1 first", hashesOf(def))
+	}
+}
+
+func TestAddNewRelease(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	first := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "a", ItemName: "New one", ItemURL: "u", TrackerTypeID: 3}, first)
+	if err != nil || !ok {
+		t.Fatalf("first insert: ok=%v err=%v, want true nil", ok, err)
+	}
+	if ok, err = c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "a", ItemName: "New one"}, first.Add(time.Hour)); err != nil || ok {
+		t.Fatalf("same hash: ok=%v err=%v, want false nil", ok, err)
+	}
+	if ok, err = c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "b", ItemName: " NEW ONE "}, first.Add(time.Hour)); err != nil || ok {
+		t.Fatalf("same name other hash: ok=%v err=%v, want false nil", ok, err)
+	}
+	if err = c.AddItem(ctx, &storage.Item{URLHash: "h", Name: "Hist"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err = c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "h", ItemName: "Hist"}, first); err != nil || ok {
+		t.Fatalf("hash with history: ok=%v err=%v, want false nil", ok, err)
+	}
+
+	var n int
+	if err = c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_log`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("check_log rows = %d err=%v, want 1", n, err)
+	}
+	var name, url, status string
+	var at int64
+	var ttid int
+	if err = c.db.QueryRowContext(ctx, `SELECT checked_at, item_name, item_url, tracker_type_id, status FROM check_log WHERE url_hash = 'a'`).
+		Scan(&at, &name, &url, &ttid, &status); err != nil {
+		t.Fatal(err)
+	}
+	if at != first.Unix() || name != "New one" || url != "u" || ttid != 3 || status != "new" {
+		t.Fatalf("row a = %d %q %q %d %q, want first row unchanged", at, name, url, ttid, status)
+	}
+}
+
+func TestNewReleaseHolds(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "a", ItemName: "A"}, at); err != nil || !ok {
+		t.Fatalf("add: ok=%v err=%v", ok, err)
+	}
+	holds, err := c.NewReleaseHolds(ctx)
+	if err != nil || len(holds) != 1 || !holds["a"].Equal(at) {
+		t.Fatalf("holds = %v err=%v, want {a: %v}", holds, err, at)
+	}
+	if isNew, err := c.IsNewRelease(ctx, "a"); err != nil || !isNew {
+		t.Fatalf("IsNewRelease(a) = %v err=%v, want true", isNew, err)
+	}
+	if isNew, err := c.IsNewRelease(ctx, "zzz"); err != nil || isNew {
+		t.Fatalf("IsNewRelease(zzz) = %v err=%v, want false", isNew, err)
+	}
+
+	if _, err = c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "a", ItemName: "A", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	holds, err = c.NewReleaseHolds(ctx)
+	if err != nil || len(holds) != 0 {
+		t.Fatalf("holds after check = %v err=%v, want empty", holds, err)
+	}
+	if isNew, err := c.IsNewRelease(ctx, "a"); err != nil || isNew {
+		t.Fatalf("IsNewRelease after check = %v err=%v, want false", isNew, err)
+	}
+	entries, _, err := c.ListCheckLog(ctx, storage.CheckLogFilter{Limit: 10})
+	if err != nil || len(entries) != 1 || time.Since(entries[0].CheckedAt) > time.Minute {
+		t.Fatalf("checked_at after check = %v err=%v, want about now", entries, err)
+	}
+
+	// строка new с историей уже не удержание: релиз скачан
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "b", ItemName: "B"}, at); err != nil || !ok {
+		t.Fatalf("add b: ok=%v err=%v", ok, err)
+	}
+	if err = c.AddItem(ctx, &storage.Item{URLHash: "b", Name: "B"}); err != nil {
+		t.Fatal(err)
+	}
+	if holds, err = c.NewReleaseHolds(ctx); err != nil || len(holds) != 0 {
+		t.Fatalf("holds with history = %v err=%v, want empty", holds, err)
+	}
+	if isNew, err := c.IsNewRelease(ctx, "b"); err != nil || isNew {
+		t.Fatalf("IsNewRelease with history = %v err=%v, want false", isNew, err)
+	}
+}
+
+func TestKnownReleases(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "a", ItemName: "Жук Name", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "h", Name: " Other "}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "empty", Name: "  "}); err != nil {
+		t.Fatal(err)
+	}
+	hashes, names, err := c.KnownReleases(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHashes := map[string]struct{}{"a": {}, "h": {}, "empty": {}}
+	wantNames := map[string]struct{}{"жук name": {}, "other": {}}
+	if len(hashes) != len(wantHashes) || len(names) != len(wantNames) {
+		t.Fatalf("hashes=%v names=%v, want %v and %v", hashes, names, wantHashes, wantNames)
+	}
+	for h := range wantHashes {
+		if _, ok := hashes[h]; !ok {
+			t.Fatalf("hashes = %v, missing %q", hashes, h)
+		}
+	}
+	for n := range wantNames {
+		if _, ok := names[n]; !ok {
+			t.Fatalf("names = %v, missing %q", names, n)
+		}
+	}
+}
+
+func TestDeleteNewRelease(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "n", ItemName: "N"}, at); err != nil || !ok {
+		t.Fatalf("add n: ok=%v err=%v", ok, err)
+	}
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "nh", ItemName: "NH"}, at); err != nil || !ok {
+		t.Fatalf("add nh: ok=%v err=%v", ok, err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "nh", Name: "NH"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "u", ItemName: "U", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "u", Name: "U"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "e", ItemName: "E", Status: "error"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddReleaseTime(ctx, "u", at, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, h := range []string{"n", "nh", "u", "e", "missing"} {
+		if err := c.DeleteNewRelease(ctx, h); err != nil {
+			t.Fatalf("DeleteNewRelease(%s): %v", h, err)
+		}
+	}
+
+	count := func(q string) int {
+		t.Helper()
+		var n int
+		if err := c.db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count(`SELECT COUNT(*) FROM check_log WHERE url_hash = 'n'`); n != 0 {
+		t.Fatalf("hold n rows = %d, want deleted", n)
+	}
+	for _, h := range []string{"nh", "u", "e"} {
+		if n := count(`SELECT COUNT(*) FROM check_log WHERE url_hash = '` + h + `'`); n != 1 {
+			t.Fatalf("check_log %s rows = %d, want kept", h, n)
+		}
+	}
+	if n := count(`SELECT COUNT(*) FROM history`); n != 2 {
+		t.Fatalf("history rows = %d, want 2 untouched", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM release_times`); n != 1 {
+		t.Fatalf("release_times rows = %d, want 1 untouched", n)
+	}
+}
+
+func TestListedReleases(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "Show A", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "h1", Name: "Show A"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "n1", ItemName: "New one"}, at); err != nil || !ok {
+		t.Fatalf("add n1: ok=%v err=%v", ok, err)
+	}
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "nh", ItemName: "NH"}, at); err != nil || !ok {
+		t.Fatalf("add nh: ok=%v err=%v", ok, err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "nh", Name: "NH"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "e1", ItemName: "Err one", Status: "error"}); err != nil {
+		t.Fatal(err)
+	}
+	// история без строки журнала в список не попадает
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "hx", Name: "Only history"}); err != nil {
+		t.Fatal(err)
+	}
+
+	names, fresh, err := c.ListedReleases(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNames := map[string]string{"h1": "Show A", "n1": "New one", "nh": "NH", "e1": "Err one"}
+	if !maps.Equal(names, wantNames) {
+		t.Fatalf("names = %v, want %v", names, wantNames)
+	}
+	if len(fresh) != 1 {
+		t.Fatalf("fresh = %v, want only n1", fresh)
+	}
+	if _, ok := fresh["n1"]; !ok {
+		t.Fatalf("fresh = %v, want n1", fresh)
+	}
+}
+
+func TestListCheckLogNewReleaseCategory(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "h1", Name: "h1", Category: "tv"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "h1", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "e1", ItemName: "e1", Status: "error"}); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Now().Add(time.Hour).Truncate(time.Second)
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "n1", ItemName: "New one", Category: "tv"}, first); err != nil || !ok {
+		t.Fatalf("AddNewRelease: ok=%v err=%v, want true nil", ok, err)
+	}
+
+	categories := func(f storage.CheckLogFilter) map[string]string {
+		t.Helper()
+		f.Limit = 10
+		entries, _, err := c.ListCheckLog(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make(map[string]string, len(entries))
+		for _, e := range entries {
+			out[e.URLHash] = e.Category
+		}
+		return out
+	}
+	want := map[string]string{"n1": "tv", "h1": "tv", "e1": ""}
+	if got := categories(storage.CheckLogFilter{}); !maps.Equal(got, want) {
+		t.Fatalf("categories = %v, want %v", got, want)
+	}
+	if got := categories(storage.CheckLogFilter{Category: "tv"}); !maps.Equal(got, map[string]string{"n1": "tv", "h1": "tv"}) {
+		t.Fatalf("filter tv = %v, want h1 and n1", got)
+	}
+	if got := categories(storage.CheckLogFilter{Category: "movies"}); len(got) != 0 {
+		t.Fatalf("filter movies = %v, want none", got)
+	}
+
+	hashes, _, err := c.ForceCheckAll(ctx, true, storage.CheckLogFilter{Category: "tv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Sort(hashes); !slices.Equal(hashes, []string{"h1", "n1"}) {
+		t.Fatalf("force-all hashes = %v, want h1 and n1", hashes)
+	}
+
+	if _, err = c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "n1", ItemName: "New one", Status: "error"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := categories(storage.CheckLogFilter{}); got["n1"] != "tv" {
+		t.Fatalf("n1 after first check = %q, want tv", got["n1"])
+	}
+
+	// у строки с историей колонка new_category не читается
+	if _, err = c.db.ExecContext(ctx, `UPDATE check_log SET new_category = 'movies' WHERE url_hash = 'h1'`); err != nil {
+		t.Fatal(err)
+	}
+	if got := categories(storage.CheckLogFilter{}); got["h1"] != "tv" {
+		t.Fatalf("h1 with stale new_category = %q, want tv", got["h1"])
+	}
+	if got := categories(storage.CheckLogFilter{Category: "movies"}); len(got) != 0 {
+		t.Fatalf("filter movies after stale = %v, want none", got)
+	}
+
+	// история без категории (NULL) тоже не должна подхватывать new_category
+	if err = c.AddItem(ctx, &storage.Item{URLHash: "h2", Name: "h2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.db.ExecContext(ctx, `UPDATE history SET category_name = NULL WHERE url_hash = 'h2'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h2", ItemName: "h2", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.db.ExecContext(ctx, `UPDATE check_log SET new_category = 'movies' WHERE url_hash = 'h2'`); err != nil {
+		t.Fatal(err)
+	}
+	if got := categories(storage.CheckLogFilter{}); got["h2"] != "" {
+		t.Fatalf("h2 with NULL history category = %q, want empty", got["h2"])
+	}
+	if got := categories(storage.CheckLogFilter{Category: "movies"}); len(got) != 0 {
+		t.Fatalf("filter movies for NULL history category = %v, want none", got)
 	}
 }

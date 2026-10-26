@@ -11,7 +11,11 @@ var (
 	ErrExportUnsupported  = errors.New("client cannot export torrent")
 )
 
-type FilterOptions struct{}
+type FilterOptions struct {
+	// qBittorrent зовет его до запроса свойств и берет их только для оставленных торрентов,
+	// остальные клиенты поле не читают
+	Narrow func([]*Entry) []*Entry
+}
 
 type ManagerAddFileOptions struct {
 	Hash           string

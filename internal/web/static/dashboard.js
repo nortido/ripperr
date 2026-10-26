@@ -98,8 +98,33 @@ export function dashboardHasActiveInteraction() {
   return false;
 }
 
+let newPollBusy = false;
+let newPollAt = 0;
+let newPollRefreshPending = false;
+
+async function pollNewReleases() {
+  if (currentView !== 'dashboard' || document.visibilityState !== 'visible') return;
+  if (newPollRefreshPending && !dashboardHasActiveInteraction()) {
+    newPollRefreshPending = false;
+    refreshDashboard();
+  }
+  if (newPollBusy || Date.now() - newPollAt < 10000) return;
+  newPollBusy = true;
+  newPollAt = Date.now();
+  try {
+    const res = await fetchJSON('/api/history/poll', { method: 'POST' });
+    if (res && res.changed > 0) {
+      if (dashboardHasActiveInteraction()) newPollRefreshPending = true;
+      else refreshDashboard();
+    }
+  } catch (_) { /* 502/503 и обрыв связи: следующий опрос попробует снова */ } finally {
+    newPollBusy = false;
+  }
+}
+
 const dashboardPoller = createPoller('dashboard', [
   { run: pollDashboardStatus, ms: 5000, onResume: true },
+  { run: pollNewReleases, ms: 15000, onResume: true },
   { run: function () { refreshDashboard(); }, ms: 30000 },
 ]);
 export const stopDashboardPolling = dashboardPoller.stop;
@@ -368,6 +393,7 @@ export async function loadDashboard() {
     syncPlanForceLocal((data.history && data.history.items) || []);
     renderDashboard(el, data.status, data.history, data.stats);
     ensureDashboardPolling();
+    pollNewReleases();
   } catch (err) {
     el.innerHTML = html`<div class="alert alert-danger">${err.message}</div>`;
     showToast(err.message, 'error');

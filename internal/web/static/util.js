@@ -273,6 +273,10 @@ export function statusIcon(status, error, streak) {
     cls += ' status-icon-warning';
     iconName = 'help';
     label = t('status.unknown');
+  } else if (status === 'new') {
+    cls += ' status-icon-info';
+    iconName = 'plus';
+    label = t('status.new');
   }
   // полный текст ошибки только в попапе по клику: подсказка при наведении дублировала
   // его и закрывала соседние строки. unknown кладет в то же поле кусок страницы трекера,

@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -533,4 +535,238 @@ func TestStateServerErrorIsolation(t *testing.T) {
 	if _, ok := s.ServerErrorMark("a"); ok {
 		t.Fatal("page success must clear the mark")
 	}
+}
+
+func TestPollNewWithoutPoller(t *testing.T) {
+	var nilState *State
+	if _, err := nilState.PollNew(context.Background()); !errors.Is(err, ErrPollUnavailable) {
+		t.Fatalf("nil state: err = %v, want ErrPollUnavailable", err)
+	}
+	nilState.SetPoller(1, func(context.Context) (int, error) { return 1, nil })
+	s := NewState()
+	if _, err := s.PollNew(context.Background()); !errors.Is(err, ErrPollUnavailable) {
+		t.Fatalf("no poller: err = %v, want ErrPollUnavailable", err)
+	}
+}
+
+func TestPollNewSerializesAndReuses(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	var calls, running, maxRunning atomic.Int32
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	s.SetPoller(gen, func(context.Context) (int, error) {
+		calls.Add(1)
+		if n := running.Add(1); n > maxRunning.Load() {
+			maxRunning.Store(n)
+		}
+		entered <- struct{}{}
+		<-release
+		running.Add(-1)
+		return 2, nil
+	})
+
+	var wg sync.WaitGroup
+	got := make([]int, 3)
+	errs := make([]error, 3)
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got[i], errs[i] = s.PollNew(context.Background())
+		}()
+	}
+	<-entered
+	close(release)
+	wg.Wait()
+	if calls.Load() != 1 || maxRunning.Load() != 1 {
+		t.Fatalf("calls = %d, max parallel = %d, want 1 and 1", calls.Load(), maxRunning.Load())
+	}
+	for i := range got {
+		if errs[i] != nil || got[i] != 2 {
+			t.Fatalf("caller %d: n = %d, err = %v, want 2, nil", i, got[i], errs[i])
+		}
+	}
+
+	old := pollMinGap
+	pollMinGap = 0
+	t.Cleanup(func() { pollMinGap = old })
+	if n, err := s.PollNew(context.Background()); err != nil || n != 2 {
+		t.Fatalf("after gap: n = %d, err = %v", n, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2 once the reuse window is over", calls.Load())
+	}
+}
+
+func TestPollNewErrorNotCached(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	boom := errors.New("boom")
+	var calls int
+	s.SetPoller(gen, func(context.Context) (int, error) {
+		calls++
+		if calls == 1 {
+			return 0, boom
+		}
+		return 3, nil
+	})
+	if _, err := s.PollNew(context.Background()); !errors.Is(err, boom) {
+		t.Fatalf("first: err = %v, want boom", err)
+	}
+	if n, err := s.PollNew(context.Background()); err != nil || n != 3 {
+		t.Fatalf("second: n = %d, err = %v, want 3, nil", n, err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+func TestSetPollerGeneration(t *testing.T) {
+	ctx := context.Background()
+	s := NewState()
+	old := s.Reset()
+	cur := s.Reset()
+	s.SetPoller(old, func(context.Context) (int, error) { return 1, nil })
+	if _, err := s.PollNew(ctx); !errors.Is(err, ErrPollUnavailable) {
+		t.Fatalf("stale gen registered: err = %v", err)
+	}
+
+	s.SetPoller(cur, func(context.Context) (int, error) { return 2, nil })
+	if n, err := s.PollNew(ctx); err != nil || n != 2 {
+		t.Fatalf("n = %d, err = %v, want 2, nil", n, err)
+	}
+	s.SetPoller(old, nil)
+	if n, err := s.PollNew(ctx); err != nil || n != 2 {
+		t.Fatalf("old gen nil dropped the new poller: n = %d, err = %v", n, err)
+	}
+
+	next := s.Reset()
+	s.SetPoller(next, func(context.Context) (int, error) { return 7, nil })
+	if n, err := s.PollNew(ctx); err != nil || n != 7 {
+		t.Fatalf("new poller served from the old cache: n = %d, err = %v", n, err)
+	}
+
+	s.SetPoller(next, nil)
+	if _, err := s.PollNew(ctx); !errors.Is(err, ErrPollUnavailable) {
+		t.Fatalf("own nil: err = %v, want ErrPollUnavailable", err)
+	}
+}
+
+func TestSetPollerDoesNotWaitForPoll(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	s.SetPoller(gen, func(context.Context) (int, error) {
+		close(entered)
+		<-release
+		return 1, nil
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = s.PollNew(context.Background())
+	}()
+	<-entered
+
+	returned := make(chan struct{})
+	go func() {
+		s.SetPoller(gen, nil)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(100 * time.Millisecond):
+		t.Error("SetPoller waited for the running poll")
+	}
+	close(release)
+	<-done
+	<-returned
+}
+
+func absentSet(hashes ...string) map[string]struct{} {
+	m := make(map[string]struct{}, len(hashes))
+	for _, h := range hashes {
+		m[h] = struct{}{}
+	}
+	return m
+}
+
+func TestSetAbsent(t *testing.T) {
+	poller := func(context.Context) (int, error) { return 0, nil }
+	same := func(t *testing.T, s *State, want map[string]struct{}) {
+		t.Helper()
+		got := s.Absent()
+		if len(got) != len(want) {
+			t.Fatalf("Absent = %v, want %v", got, want)
+		}
+		for h := range want {
+			if _, ok := got[h]; !ok {
+				t.Fatalf("Absent = %v, want %v", got, want)
+			}
+		}
+	}
+
+	var nilState *State
+	if n := nilState.SetAbsent(1, absentSet("a")); n != 0 {
+		t.Fatalf("nil State: flipped = %d, want 0", n)
+	}
+	if got := nilState.Absent(); got != nil {
+		t.Fatalf("nil State: Absent = %v, want nil", got)
+	}
+
+	s := NewState()
+	gen := s.Reset()
+	if n := s.SetAbsent(gen, absentSet("a")); n != 0 {
+		t.Fatalf("no poller: flipped = %d, want 0", n)
+	}
+	same(t, s, nil)
+
+	s.SetPoller(gen, poller)
+	if n := s.SetAbsent(gen, absentSet("a", "b")); n != 2 {
+		t.Fatalf("first set: flipped = %d, want 2", n)
+	}
+	if n := s.SetAbsent(gen, absentSet("b", "c")); n != 2 {
+		t.Fatalf("shift: flipped = %d, want 2", n)
+	}
+	same(t, s, absentSet("b", "c"))
+	if n := s.SetAbsent(gen, absentSet("b", "c")); n != 0 {
+		t.Fatalf("same set: flipped = %d, want 0", n)
+	}
+
+	in := absentSet("p")
+	s.SetAbsent(gen, in)
+	in["q"] = struct{}{}
+	same(t, s, absentSet("p"))
+
+	gen2 := s.Reset()
+	s.SetPoller(gen2, poller)
+	same(t, s, nil)
+	if n := s.SetAbsent(gen, absentSet("x")); n != 0 {
+		t.Fatalf("old gen: flipped = %d, want 0", n)
+	}
+	same(t, s, nil)
+
+	s.SetAbsent(gen2, absentSet("y"))
+	s.SetPoller(gen2, nil)
+	same(t, s, nil)
+
+	s.SetPoller(gen2, poller)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			s.SetAbsent(gen2, absentSet("r", fmt.Sprint(i)))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			for range s.Absent() {
+			}
+		}
+	}()
+	wg.Wait()
 }

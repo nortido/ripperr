@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -29,6 +31,15 @@ type State struct {
 	pageMu          sync.Mutex
 	pageOK          map[int]bool
 	serverErrs      map[string]serverErrMark
+	pollMu          sync.Mutex
+	pollStateMu     sync.Mutex
+	pollFn          func(context.Context) (int, error)
+	pollGen         uint32
+	pollSeq         uint64
+	pollAt          time.Time
+	pollCached      bool
+	pollResult      int
+	pollAbsent      map[string]struct{}
 }
 
 func NewState() *State {
@@ -434,4 +445,101 @@ func (s *State) ServerErrorMark(urlHash string) (storageModel.ErrorMark, bool) {
 	defer s.pageMu.Unlock()
 	m, ok := s.serverErrs[urlHash]
 	return storageModel.ErrorMark{Streak: m.count, CheckedAt: m.at}, ok
+}
+
+var ErrPollUnavailable = errors.New("runner is not ready")
+
+var pollMinGap = 5 * time.Second
+
+func (s *State) SetPoller(gen uint32, fn func(context.Context) (int, error)) {
+	if s == nil {
+		return
+	}
+	// замок поколения как у Begin: Reset между проверкой и записью оставил бы опрос мертвого поколения
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pollStateMu.Lock()
+	defer s.pollStateMu.Unlock()
+	if fn != nil {
+		if gen != s.gen.Load() {
+			return
+		}
+	} else if s.pollFn == nil || s.pollGen != gen {
+		return
+	}
+	s.pollFn = fn
+	s.pollGen = gen
+	s.pollSeq++
+	s.pollCached = false
+	// метки прежнего опроса не переживают смену опроса
+	s.pollAbsent = nil
+}
+
+func (s *State) SetAbsent(gen uint32, hashes map[string]struct{}) int {
+	if s == nil {
+		return 0
+	}
+	s.pollStateMu.Lock()
+	defer s.pollStateMu.Unlock()
+	if s.pollFn == nil || s.pollGen != gen {
+		return 0
+	}
+	flipped := 0
+	for h := range hashes {
+		if _, ok := s.pollAbsent[h]; !ok {
+			flipped++
+		}
+	}
+	for h := range s.pollAbsent {
+		if _, ok := hashes[h]; !ok {
+			flipped++
+		}
+	}
+	next := make(map[string]struct{}, len(hashes))
+	for h := range hashes {
+		next[h] = struct{}{}
+	}
+	s.pollAbsent = next
+	return flipped
+}
+
+func (s *State) Absent() map[string]struct{} {
+	if s == nil {
+		return nil
+	}
+	s.pollStateMu.Lock()
+	defer s.pollStateMu.Unlock()
+	return s.pollAbsent
+}
+
+func (s *State) PollNew(ctx context.Context) (int, error) {
+	if s == nil {
+		return 0, ErrPollUnavailable
+	}
+	s.pollMu.Lock()
+	defer s.pollMu.Unlock()
+	s.pollStateMu.Lock()
+	fn, seq := s.pollFn, s.pollSeq
+	if fn == nil {
+		s.pollStateMu.Unlock()
+		return 0, ErrPollUnavailable
+	}
+	if s.pollCached && time.Since(s.pollAt) < pollMinGap {
+		n := s.pollResult
+		s.pollStateMu.Unlock()
+		return n, nil
+	}
+	s.pollStateMu.Unlock()
+
+	n, err := fn(ctx)
+	if err != nil {
+		return n, err
+	}
+	s.pollStateMu.Lock()
+	defer s.pollStateMu.Unlock()
+	// SetPoller за время опроса сменил или снял опрос: результат старого в кэш не кладем
+	if s.pollSeq == seq {
+		s.pollCached, s.pollResult, s.pollAt = true, n, time.Now()
+	}
+	return n, nil
 }

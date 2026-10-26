@@ -142,6 +142,105 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 	return errorStreak, err
 }
 
+func (c *Client) AddNewRelease(ctx context.Context, e *storage.CheckLogEntry, firstCheck time.Time) (bool, error) {
+	// у статуса new checked_at хранит время первой проверки, а не последней.
+	// DO NOTHING без цели ловит и url_hash, и имя (check_log_item_name_uidx): ничего не перезаписываем
+	res, err := c.db.ExecContext(ctx,
+		`INSERT INTO check_log (checked_at, url_hash, item_name, item_url, tracker_type_id, status, new_category)
+		 SELECT ?, ?, ?, ?, ?, 'new', ? WHERE NOT EXISTS (SELECT 1 FROM history WHERE url_hash = ?)
+		 ON CONFLICT DO NOTHING`,
+		firstCheck.Unix(), e.URLHash, e.ItemName, e.ItemURL, e.TrackerTypeID, e.Category, e.URLHash)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (c *Client) NewReleaseHolds(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT c.url_hash, c.checked_at FROM check_log c
+		 WHERE c.status = 'new' AND NOT EXISTS (SELECT 1 FROM history h WHERE h.url_hash = c.url_hash)`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	holds := map[string]time.Time{}
+	for rows.Next() {
+		var hash string
+		var at int64
+		if err = rows.Scan(&hash, &at); err != nil {
+			return nil, err
+		}
+		holds[hash] = time.Unix(at, 0)
+	}
+	return holds, rows.Err()
+}
+
+func (c *Client) IsNewRelease(ctx context.Context, urlHash string) (bool, error) {
+	var ok bool
+	err := c.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM check_log c WHERE c.url_hash = ? AND c.status = 'new'
+		 AND NOT EXISTS (SELECT 1 FROM history h WHERE h.url_hash = c.url_hash))`, urlHash).Scan(&ok)
+	return ok, err
+}
+
+func (c *Client) KnownReleases(ctx context.Context) (hashes, names map[string]struct{}, err error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT url_hash, item_name FROM check_log UNION ALL SELECT url_hash, COALESCE(item_name, '') FROM history`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	hashes = map[string]struct{}{}
+	names = map[string]struct{}{}
+	for rows.Next() {
+		var hash, name string
+		if err = rows.Scan(&hash, &name); err != nil {
+			return nil, nil, err
+		}
+		hashes[hash] = struct{}{}
+		if folded := storage.FoldName(name); folded != "" {
+			names[folded] = struct{}{}
+		}
+	}
+	return hashes, names, rows.Err()
+}
+
+func (c *Client) DeleteNewRelease(ctx context.Context, urlHash string) error {
+	_, err := c.db.ExecContext(ctx,
+		`DELETE FROM check_log WHERE url_hash = ? AND status = 'new'
+		 AND NOT EXISTS (SELECT 1 FROM history WHERE history.url_hash = check_log.url_hash)`, urlHash)
+	return err
+}
+
+func (c *Client) ListedReleases(ctx context.Context) (names map[string]string, fresh map[string]struct{}, err error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT c.url_hash, c.item_name, c.status = 'new' AND h.url_hash IS NULL
+		 FROM check_log c LEFT JOIN history h ON h.url_hash = c.url_hash`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	names = map[string]string{}
+	fresh = map[string]struct{}{}
+	for rows.Next() {
+		var hash, name string
+		var isFresh bool
+		if err = rows.Scan(&hash, &name, &isFresh); err != nil {
+			return nil, nil, err
+		}
+		names[hash] = name
+		if isFresh {
+			fresh[hash] = struct{}{}
+		}
+	}
+	return names, fresh, rows.Err()
+}
+
+// у строки без истории категорию помнит опрос, история появится только после удачной проверки
+const categoryExpr = `CASE WHEN h.url_hash IS NULL THEN COALESCE(c.new_category, '') ELSE COALESCE(h.category_name, '') END`
+
 func checkLogFilterClause(f storage.CheckLogFilter) (join, clause string, args []any) {
 	join = ` LEFT JOIN history h ON h.url_hash = c.url_hash`
 	if f.IgnoredOnly {
@@ -168,7 +267,7 @@ func checkLogFilterClause(f storage.CheckLogFilter) (join, clause string, args [
 		args = append(args, f.TrackerID)
 	}
 	if f.Category != "" {
-		where = append(where, "h.category_name = ?")
+		where = append(where, categoryExpr+" = ?")
 		args = append(args, f.Category)
 	}
 	if f.ExcludeIgnored && !f.IgnoredOnly {
@@ -187,8 +286,11 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 	from := `check_log c`
 	join, clause, args := checkLogFilterClause(f)
 	countQ := "SELECT COUNT(*) FROM " + from + join
-	listQ := `SELECT c.id, c.checked_at, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
-	          COALESCE(h.category_name, ''), h.recheck_at, COALESCE(h.force_check, 0)
+	// у строки new без истории checked_at это время первой проверки: наружу она идет как recheck_at
+	const isNew = `(h.url_hash IS NULL AND c.status = 'new')`
+	const recheckExpr = `CASE WHEN ` + isNew + ` THEN c.checked_at ELSE h.recheck_at END`
+	listQ := `SELECT c.id, CASE WHEN ` + isNew + ` THEN 0 ELSE c.checked_at END, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
+	          ` + categoryExpr + `, ` + recheckExpr + `, COALESCE(h.force_check, 0)
 	          FROM ` + from + join
 	countQ += clause
 	listQ += clause
@@ -197,7 +299,7 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 	}
 	orderBy := " ORDER BY c.checked_at DESC"
 	if f.SortBy == "recheck" {
-		orderBy = " ORDER BY h.recheck_at IS NULL, h.recheck_at ASC"
+		orderBy = " ORDER BY " + recheckExpr + " IS NULL, " + recheckExpr + " ASC"
 	}
 	listQ += orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, f.Limit, f.Offset)
@@ -214,7 +316,9 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 		if err = rows.Scan(&e.ID, &checkedAt, &e.URLHash, &e.ItemName, &e.ItemURL, &e.TrackerTypeID, &e.Status, &e.Error, &e.ErrorStreak, &e.Category, &recheckAt, &e.ForceCheck); err != nil {
 			return nil, 0, err
 		}
-		e.CheckedAt = time.Unix(checkedAt, 0)
+		if checkedAt != 0 {
+			e.CheckedAt = time.Unix(checkedAt, 0)
+		}
 		e.RecheckAt = timeFromNull(recheckAt)
 		items = append(items, e)
 	}
