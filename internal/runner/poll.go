@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"ripperr/internal/helper"
@@ -45,6 +46,8 @@ func (h *handler) pollNew(ctx context.Context) (added int, err error) {
 	now := time.Now()
 	present := make(map[string]struct{})
 	presentNames := make(map[string]struct{})
+	catByName := make(map[string]string)
+	catByKey := make(map[string]string)
 	// дедупликация до фильтров, как в проходе: иначе опрос взял бы торрент, который проход отбросит
 	narrow := func(list []*model.Entry) []*model.Entry {
 		for _, e := range list {
@@ -56,6 +59,12 @@ func (h *handler) pollNew(ctx context.Context) (added int, err error) {
 		}
 		var kept []*model.Entry
 		for _, e := range helper.DedupeEntriesByName(list) {
+			if name := strings.TrimSpace(e.Name); name != "" {
+				catByName[name] = e.Category
+			}
+			if key, ok := h.pollURL[e.Hash]; ok {
+				catByKey[key] = e.Category
+			}
 			if !h.watched(e) {
 				continue
 			}
@@ -135,6 +144,26 @@ func (h *handler) pollNew(ctx context.Context) (added int, err error) {
 	if len(present) == 0 {
 		return added, nil
 	}
+
+	// ключа нет ни в одной карте: категорию не знаем, строку не трогаем
+	batch := make(map[string]string)
+	for key, cur := range listedFresh {
+		cat, ok := catByKey[key]
+		if !ok {
+			cat, ok = catByName[strings.TrimSpace(listedNames[key])]
+		}
+		if ok && cat != cur {
+			batch[key] = cat
+		}
+	}
+	updated := 0
+	if len(batch) > 0 {
+		var updErr error
+		if updated, updErr = h.storage.UpdateNewCategories(ctx, batch); updErr != nil {
+			logger.Error("update new release categories: " + updErr.Error())
+			updated = 0
+		}
+	}
 	presentURL := make(map[string]struct{})
 	for hash := range present {
 		if key, ok := h.pollURL[hash]; ok {
@@ -173,7 +202,7 @@ func (h *handler) pollNew(ctx context.Context) (added int, err error) {
 		}
 		absent[key] = struct{}{}
 	}
-	return added + removed + h.state.SetAbsent(h.gen, absent), nil
+	return added + removed + updated + h.state.SetAbsent(h.gen, absent), nil
 }
 
 func (h *handler) firstCheckAt(added *time.Time, now time.Time) time.Time {

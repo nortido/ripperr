@@ -59,6 +59,8 @@ type fakeClient struct {
 	addOpts     []model.ManagerAddFileOptions
 	convergeErr error
 	converges   []convergeCall
+	// вызывается из Exists под f.mu, так что сам фейк трогать не должен
+	existsHook func(hash string)
 }
 
 func newFakeClient() *fakeClient {
@@ -82,6 +84,9 @@ func (f *fakeClient) Exists(_ context.Context, hash string) (bool, error) {
 	defer f.mu.Unlock()
 	hash = strings.ToLower(hash)
 	f.calls = append(f.calls, "exists:"+hash)
+	if f.existsHook != nil {
+		f.existsHook(hash)
+	}
 	if err := f.existsErr[hash]; err != nil {
 		return false, err
 	}
@@ -1598,4 +1603,239 @@ func TestSweepReplaceSelectionPairNoConverge(t *testing.T) {
 		t.Errorf("resume calls = %v, want one", got)
 	}
 	assertPairGone(t, dir, hash)
+}
+
+func (f *fakeClient) markAbsent(hash string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.present, strings.ToLower(hash))
+}
+
+func seenFile(dir, hash string) string {
+	return filepath.Join(dir, strings.ToLower(hash)+".seen")
+}
+
+func sweepConvergeError(t *testing.T, ctx context.Context, dir string, fc *fakeClient, name string) ([]byte, model.ManagerAddFileOptions) {
+	t.Helper()
+	data, hash := buildNamedTestTorrent(t, name)
+	fc.markPresent(hash)
+	fc.convergeErr = fmt.Errorf("not settled yet")
+	opts := model.ManagerAddFileOptions{Hash: hash, Name: name, Stopped: true, FileSelection: []model.TorrentFile{{Path: "S/a", Wanted: true}}}
+	writePair(t, dir, data, opts)
+	New(dir, fc).SweepOnce(ctx)
+	if len(fc.converges) != 1 {
+		t.Fatalf("converge calls = %d, want 1", len(fc.converges))
+	}
+	assertPairRemains(t, dir, hash)
+	if _, err := os.Stat(seenFile(dir, hash)); err != nil {
+		t.Errorf("expected seen mark after converge error: %v", err)
+	}
+	return data, opts
+}
+
+func assertSeenGone(t *testing.T, dir, hash string) {
+	t.Helper()
+	if _, err := os.Stat(seenFile(dir, hash)); !os.IsNotExist(err) {
+		t.Errorf("expected seen mark removed, stat err = %v", err)
+	}
+}
+
+func TestSweepConvergeErrorThenUserRemovalNotReadded(t *testing.T) {
+	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
+	ctx := context.Background()
+	dir := t.TempDir()
+	fc := newFakeClient()
+	_, opts := sweepConvergeError(t, ctx, dir, fc, "seen-removed.txt")
+	hash := opts.Hash
+
+	pairs, broken, err := scanBlackholeDir(dir)
+	if err != nil || len(pairs) != 1 || len(broken) != 0 {
+		t.Errorf("scan with seen mark: pairs %d, broken %v, err %v; want 1 pair, no broken", len(pairs), broken, err)
+	}
+
+	fc.markAbsent(hash)
+	s := New(dir, fc)
+	s.SweepOnce(ctx)
+	if len(fc.addOpts) != 1 {
+		t.Fatalf("add attempts after user removal = %d, want 1 (no re-add)", len(fc.addOpts))
+	}
+	assertPairRemains(t, dir, hash)
+
+	s.SweepOnce(ctx)
+	if len(fc.addOpts) != 1 {
+		t.Errorf("add attempts = %d, want 1", len(fc.addOpts))
+	}
+	if fc.isPresent(hash) {
+		t.Error("torrent removed by the user must stay absent")
+	}
+	assertPairGone(t, dir, hash)
+	assertSeenGone(t, dir, hash)
+	assertNoCalls(t, fc, "discard:")
+}
+
+func TestSweepSeenPairPresentRetriesConvergeWithoutReadd(t *testing.T) {
+	withFastSettle(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	fc := newFakeClient()
+	_, opts := sweepConvergeError(t, ctx, dir, fc, "seen-retry.txt")
+	fc.convergeErr = nil
+
+	New(dir, fc).SweepOnce(ctx)
+
+	if len(fc.converges) != 2 {
+		t.Errorf("converge calls = %d, want 2", len(fc.converges))
+	}
+	if len(fc.addOpts) != 1 {
+		t.Errorf("add attempts = %d, want 1 (no re-add of a seen pair)", len(fc.addOpts))
+	}
+	if !fc.isPresent(opts.Hash) {
+		t.Error("torrent must stay in the client")
+	}
+	assertPairGone(t, dir, opts.Hash)
+	assertSeenGone(t, dir, opts.Hash)
+	assertNoCalls(t, fc, "discard:")
+}
+
+func TestSweepSeenMarkInvalidatedByRewrite(t *testing.T) {
+	withFastSettle(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	fc := newFakeClient()
+	data, opts := sweepConvergeError(t, ctx, dir, fc, "seen-rewrite.txt")
+	fc.markAbsent(opts.Hash)
+	s := New(dir, fc)
+	if err := s.Write(data, "", opts); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	ageJSON(t, dir, opts.Hash, 2*time.Hour)
+
+	s.SweepOnce(ctx)
+
+	if len(fc.addOpts) != 2 {
+		t.Errorf("add attempts = %d, want 2 (rewritten pair is re-added)", len(fc.addOpts))
+	}
+	if !fc.isPresent(opts.Hash) {
+		t.Error("rewritten pair must be re-added")
+	}
+	assertPairGone(t, dir, opts.Hash)
+	assertSeenGone(t, dir, opts.Hash)
+}
+
+func TestSweepSeenExistsErrorKeepsPair(t *testing.T) {
+	withFastSettle(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	fc := newFakeClient()
+	_, opts := sweepConvergeError(t, ctx, dir, fc, "seen-exists-err.txt")
+	fc.existsErr[opts.Hash] = fmt.Errorf("client timeout")
+
+	New(dir, fc).SweepOnce(ctx)
+
+	if len(fc.addOpts) != 1 || len(fc.converges) != 1 {
+		t.Errorf("add attempts = %d, converges = %d, want 1 and 1", len(fc.addOpts), len(fc.converges))
+	}
+	assertPairRemains(t, dir, opts.Hash)
+	assertNoCalls(t, fc, "discard:")
+}
+
+func TestSweepSeenAbsentThenPresentNoDrop(t *testing.T) {
+	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
+	ctx := context.Background()
+	dir := t.TempDir()
+	fc := newFakeClient()
+	_, opts := sweepConvergeError(t, ctx, dir, fc, "seen-flap.txt")
+	hash := opts.Hash
+	s := New(dir, fc)
+
+	fc.markAbsent(hash)
+	s.SweepOnce(ctx)
+	fc.markPresent(hash)
+	s.SweepOnce(ctx)
+	if len(fc.converges) != 2 {
+		t.Errorf("converge calls = %d, want 2 (present again goes to converge)", len(fc.converges))
+	}
+	assertPairRemains(t, dir, hash)
+
+	// присутствие сбрасывает подтверждение: одного тика без торрента снова мало
+	fc.markAbsent(hash)
+	s.SweepOnce(ctx)
+	assertPairRemains(t, dir, hash)
+	if len(fc.addOpts) != 1 {
+		t.Errorf("add attempts = %d, want 1", len(fc.addOpts))
+	}
+	assertNoCalls(t, fc, "discard:")
+}
+
+func TestSweepSeenPairRewrittenBeforeDropKept(t *testing.T) {
+	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
+	ctx := context.Background()
+	dir := t.TempDir()
+	fc := newFakeClient()
+	data, opts := sweepConvergeError(t, ctx, dir, fc, "seen-race.txt")
+	hash := opts.Hash
+	s := New(dir, fc)
+	fc.markAbsent(hash)
+	s.SweepOnce(ctx)
+
+	// писатель обновил пару между сканом и удалением
+	fc.existsHook = func(string) {
+		fc.existsHook = nil
+		if err := New(dir, newFakeClient()).Write(data, "", opts); err != nil {
+			t.Errorf("Write: %v", err)
+		}
+		ageJSON(t, dir, hash, 2*time.Hour)
+	}
+	s.SweepOnce(ctx)
+
+	assertPairRemains(t, dir, hash)
+	if len(fc.addOpts) != 1 {
+		t.Errorf("add attempts = %d, want 1", len(fc.addOpts))
+	}
+	assertNoCalls(t, fc, "discard:")
+}
+
+func TestRemoveBlackholePairRemovesSeenMark(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, newFakeClient())
+	data, hash := buildNamedTestTorrent(t, "seen-remove.txt")
+	if err := s.Write(data, "", model.ManagerAddFileOptions{Hash: hash}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := os.WriteFile(seenFile(dir, hash), []byte("1"), 0o600); err != nil {
+		t.Fatalf("write seen: %v", err)
+	}
+
+	s.Remove(hash)
+
+	assertPairGone(t, dir, hash)
+	assertSeenGone(t, dir, hash)
+}
+
+func TestSweepSeenPresentAtSettleRecheckKept(t *testing.T) {
+	withFastSettle(t)
+	withConfirmAbsentAfter(t, 0)
+	ctx := context.Background()
+	dir := t.TempDir()
+	fc := newFakeClient()
+	_, opts := sweepConvergeError(t, ctx, dir, fc, "seen-recheck.txt")
+	hash := opts.Hash
+	s := New(dir, fc)
+	fc.markAbsent(hash)
+	s.SweepOnce(ctx)
+
+	fc.existsSeq[hash] = []bool{false, true}
+	s.SweepOnce(ctx)
+
+	assertPairRemains(t, dir, hash)
+	if _, err := os.Stat(seenFile(dir, hash)); err != nil {
+		t.Errorf("expected seen mark to remain: %v", err)
+	}
+	if len(fc.addOpts) != 1 {
+		t.Errorf("add attempts = %d, want 1", len(fc.addOpts))
+	}
+	assertNoCalls(t, fc, "discard:")
 }

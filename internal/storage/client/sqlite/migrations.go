@@ -73,6 +73,10 @@ WHERE id IN (
 		name:  "new release category",
 		apply: addNewCategory,
 	},
+	{
+		name:  "exact item name index",
+		apply: exactItemNameIndex,
+	},
 }
 
 func (c *Client) Bootstrap(ctx context.Context) error {
@@ -149,5 +153,22 @@ func addNewCategory(ctx context.Context, _ *Client, tx *sql.Tx) error {
 		return nil
 	}
 	_, err := tx.ExecContext(ctx, `ALTER TABLE check_log ADD COLUMN new_category TEXT`)
+	return err
+}
+
+func exactItemNameIndex(ctx context.Context, _ *Client, tx *sql.Tx) error {
+	// регистр больше не склеиваем: Foo и foo с разными URL держат по строке.
+	// Данные уже уникальны по LOWER(TRIM), так что точный индекс строится без чистки
+	var cols int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('check_log')`).Scan(&cols); err != nil {
+		return err
+	}
+	if cols == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS check_log_item_name_uidx`); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS check_log_item_name_exact_uidx ON check_log (TRIM(item_name)) WHERE TRIM(item_name) <> ''`)
 	return err
 }

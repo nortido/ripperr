@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -434,7 +435,7 @@ func TestPollNewMarksAbsent(t *testing.T) {
 	p2, p3 := storagePkg.URLHash(u2), storagePkg.URLHash(u3)
 	store := &fakeStorage{
 		listedNames: map[string]string{"p1": "Show A", p2: "Old Name", p3: "Third", "x": "Gone", "n": "Gone new"},
-		listedFresh: map[string]struct{}{p3: {}, "n": {}},
+		listedFresh: map[string]string{p3: "tv", "n": ""},
 		knownHashes: map[string]struct{}{p3: {}},
 		knownNames:  []string{"Show A", "Old Name", "Third", "Gone", "Gone new"},
 	}
@@ -503,7 +504,7 @@ func TestPollNewAbsentGuards(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			store := &fakeStorage{
 				listedNames: map[string]string{"x": "Gone"},
-				listedFresh: map[string]struct{}{"x": {}},
+				listedFresh: map[string]string{"x": ""},
 				listedErr:   c.listedErr,
 			}
 			mgr := c.mgr
@@ -529,7 +530,7 @@ type pollOrderStorage struct {
 	log *[]string
 }
 
-func (s pollOrderStorage) ListedReleases(ctx context.Context) (map[string]string, map[string]struct{}, error) {
+func (s pollOrderStorage) ListedReleases(ctx context.Context) (map[string]string, map[string]string, error) {
 	*s.log = append(*s.log, "listed")
 	return s.pollStorage.ListedReleases(ctx)
 }
@@ -556,5 +557,128 @@ func TestPollNewReadsRowsBeforeList(t *testing.T) {
 	}
 	if !slices.Equal(log, []string{"listed", "list"}) {
 		t.Fatalf("calls %v, want [listed list]", log)
+	}
+}
+
+func TestPollNewUpdatesListedCategory(t *testing.T) {
+	const url = "https://example.com/t/1"
+	k := storagePkg.URLHash(url)
+	store := &fakeStorage{
+		knownHashes: map[string]struct{}{k: {}},
+		knownNames:  []string{"Show S01"},
+		listedNames: map[string]string{k: "Show S01"},
+		listedFresh: map[string]string{k: ""},
+	}
+	list := []*model.Entry{pollEntry("h1", "Show S01", "tv", url, time.Now().Add(-time.Hour))}
+	h, _ := newPollHandler(t, store, &pollManager{brief: true, list: list}, pollConfig())
+	n, err := h.pollNew(context.Background())
+	if err != nil || n != 1 {
+		t.Fatalf("pollNew = %d, %v, want 1, nil", n, err)
+	}
+	if !maps.Equal(store.newCats, map[string]string{k: "tv"}) {
+		t.Fatalf("newCats = %v, want {%s: tv}", store.newCats, k)
+	}
+}
+
+func TestPollNewCategoryGuards(t *testing.T) {
+	const url = "https://example.com/t/1"
+	k := storagePkg.URLHash(url)
+	added := time.Now().Add(-time.Hour)
+	cases := []struct {
+		name      string
+		mgr       pollManager
+		fresh     map[string]string
+		names     map[string]string
+		newCatErr error
+		wantN     int
+		wantCalls int
+		wantCats  map[string]string
+	}{
+		{
+			name:  "same category",
+			mgr:   pollManager{brief: true, list: []*model.Entry{pollEntry("h1", "Show S01", "tv", url, added)}},
+			fresh: map[string]string{k: "tv"},
+			names: map[string]string{k: "Show S01"},
+		},
+		{
+			name:      "renamed torrent updates by url",
+			mgr:       pollManager{list: []*model.Entry{pollEntry("h1", "Renamed", "tv", url, added)}},
+			fresh:     map[string]string{k: "movies"},
+			names:     map[string]string{k: "Old name"},
+			wantN:     1,
+			wantCalls: 1,
+			wantCats:  map[string]string{k: "tv"},
+		},
+		{
+			name:  "partial list",
+			mgr:   pollManager{brief: true, partial: true, list: []*model.Entry{pollEntry("h1", "Show S01", "tv", url, added)}},
+			fresh: map[string]string{k: ""},
+			names: map[string]string{k: "Show S01"},
+		},
+		{
+			name:  "empty list",
+			mgr:   pollManager{brief: true},
+			fresh: map[string]string{k: ""},
+			names: map[string]string{k: "Show S01"},
+		},
+		{
+			name:      "update error does not fail the poll",
+			mgr:       pollManager{brief: true, list: []*model.Entry{pollEntry("h1", "Show S01", "tv", url, added)}},
+			fresh:     map[string]string{k: ""},
+			names:     map[string]string{k: "Show S01"},
+			newCatErr: errors.New("db"),
+			wantCalls: 1,
+		},
+		{
+			name:  "row not fresh",
+			mgr:   pollManager{brief: true, list: []*model.Entry{pollEntry("h1", "Show S01", "tv", url, added)}},
+			names: map[string]string{k: "Show S01"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &fakeStorage{
+				knownHashes: map[string]struct{}{k: {}},
+				knownNames:  []string{"Show S01"},
+				listedNames: c.names,
+				listedFresh: c.fresh,
+				newCatErr:   c.newCatErr,
+			}
+			mgr := c.mgr
+			h, _ := newPollHandler(t, store, &mgr, pollConfig())
+			n, err := h.pollNew(context.Background())
+			if err != nil || n != c.wantN {
+				t.Fatalf("pollNew = %d, %v, want %d, nil", n, err, c.wantN)
+			}
+			if store.newCatCalls != c.wantCalls {
+				t.Fatalf("UpdateNewCategories calls = %d, want %d", store.newCatCalls, c.wantCalls)
+			}
+			if !maps.Equal(store.newCats, c.wantCats) {
+				t.Fatalf("newCats = %v, want %v", store.newCats, c.wantCats)
+			}
+		})
+	}
+}
+
+func TestPollNewKeepsCategoryWithoutMatch(t *testing.T) {
+	const url = "https://example.com/t/1"
+	k := storagePkg.URLHash(url)
+	store := &fakeStorage{
+		knownHashes: map[string]struct{}{k: {}},
+		knownNames:  []string{"Foo"},
+		listedNames: map[string]string{k: "Foo"},
+		listedFresh: map[string]string{k: "tv"},
+	}
+	list := []*model.Entry{pollEntry("h1", "foo", "movies", "", time.Now().Add(-time.Hour))}
+	h, _ := newPollHandler(t, store, &pollManager{brief: true, list: list}, pollConfig())
+	n, err := h.pollNew(context.Background())
+	if err != nil || n != 0 {
+		t.Fatalf("pollNew = %d, %v, want 0, nil", n, err)
+	}
+	if store.newCatCalls != 0 || len(store.newCats) != 0 {
+		t.Fatalf("calls = %d, newCats = %v, want no update", store.newCatCalls, store.newCats)
+	}
+	if len(store.droppedNew) != 0 {
+		t.Fatalf("dropped %v, want none", store.droppedNew)
 	}
 }

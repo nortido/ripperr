@@ -121,6 +121,29 @@ func TestAddCheckLogSameNameDifferentHashReplaces(t *testing.T) {
 	}
 }
 
+func TestAddCheckLogCaseVariantsCoexist(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	for _, e := range []storage.CheckLogEntry{
+		{URLHash: "h1", ItemName: "Foo", Status: "unchanged"},
+		{URLHash: "h2", ItemName: "foo", Status: "unchanged"},
+		{URLHash: "h1", ItemName: "Foo", Status: "unchanged"},
+	} {
+		if _, err := c.AddCheckLog(ctx, &e); err != nil {
+			t.Fatalf("add %s %q: %v", e.URLHash, e.ItemName, err)
+		}
+	}
+
+	entries, total, err := c.ListCheckLog(ctx, storage.CheckLogFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hashesOf(entries); total != 2 || !slices.Equal(got, []string{"h1", "h2"}) {
+		t.Fatalf("hashes=%v total=%d, want [h1 h2] total 2", got, total)
+	}
+}
+
 func TestListCheckLogFilters(t *testing.T) {
 	c := newTestClient(t)
 	ctx := t.Context()
@@ -1014,8 +1037,11 @@ func TestAddNewRelease(t *testing.T) {
 	if ok, err = c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "a", ItemName: "New one"}, first.Add(time.Hour)); err != nil || ok {
 		t.Fatalf("same hash: ok=%v err=%v, want false nil", ok, err)
 	}
-	if ok, err = c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "b", ItemName: " NEW ONE "}, first.Add(time.Hour)); err != nil || ok {
+	if ok, err = c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "b", ItemName: " New one "}, first.Add(time.Hour)); err != nil || ok {
 		t.Fatalf("same name other hash: ok=%v err=%v, want false nil", ok, err)
+	}
+	if ok, err = c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "c", ItemName: "NEW ONE"}, first.Add(time.Hour)); err != nil || !ok {
+		t.Fatalf("case variant other hash: ok=%v err=%v, want true nil", ok, err)
 	}
 	if err = c.AddItem(ctx, &storage.Item{URLHash: "h", Name: "Hist"}); err != nil {
 		t.Fatal(err)
@@ -1025,8 +1051,8 @@ func TestAddNewRelease(t *testing.T) {
 	}
 
 	var n int
-	if err = c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_log`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("check_log rows = %d err=%v, want 1", n, err)
+	if err = c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_log`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("check_log rows = %d err=%v, want 2", n, err)
 	}
 	var name, url, status string
 	var at int64
@@ -1191,13 +1217,16 @@ func TestListedReleases(t *testing.T) {
 	if err := c.AddItem(ctx, &storage.Item{URLHash: "h1", Name: "Show A"}); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "n1", ItemName: "New one"}, at); err != nil || !ok {
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "n1", ItemName: "New one", Category: "tv"}, at); err != nil || !ok {
 		t.Fatalf("add n1: ok=%v err=%v", ok, err)
 	}
 	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "nh", ItemName: "NH"}, at); err != nil || !ok {
 		t.Fatalf("add nh: ok=%v err=%v", ok, err)
 	}
 	if err := c.AddItem(ctx, &storage.Item{URLHash: "nh", Name: "NH"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.db.ExecContext(ctx, `INSERT INTO check_log (url_hash, item_name, status) VALUES ('nn', 'No category', 'new')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "e1", ItemName: "Err one", Status: "error"}); err != nil {
@@ -1212,15 +1241,12 @@ func TestListedReleases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantNames := map[string]string{"h1": "Show A", "n1": "New one", "nh": "NH", "e1": "Err one"}
+	wantNames := map[string]string{"h1": "Show A", "n1": "New one", "nh": "NH", "nn": "No category", "e1": "Err one"}
 	if !maps.Equal(names, wantNames) {
 		t.Fatalf("names = %v, want %v", names, wantNames)
 	}
-	if len(fresh) != 1 {
-		t.Fatalf("fresh = %v, want only n1", fresh)
-	}
-	if _, ok := fresh["n1"]; !ok {
-		t.Fatalf("fresh = %v, want n1", fresh)
+	if wantFresh := map[string]string{"n1": "tv", "nn": ""}; !maps.Equal(fresh, wantFresh) {
+		t.Fatalf("fresh = %v, want %v", fresh, wantFresh)
 	}
 }
 
@@ -1310,5 +1336,51 @@ func TestListCheckLogNewReleaseCategory(t *testing.T) {
 	}
 	if got := categories(storage.CheckLogFilter{Category: "movies"}); len(got) != 0 {
 		t.Fatalf("filter movies for NULL history category = %v, want none", got)
+	}
+}
+
+func TestUpdateNewCategories(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	at := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	if _, err := c.db.ExecContext(ctx, `INSERT INTO check_log (url_hash, item_name, status) VALUES ('n1', 'No category', 'new')`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "n2", ItemName: "Has category", Category: "tv"}, at); err != nil || !ok {
+		t.Fatalf("add n2: ok=%v err=%v", ok, err)
+	}
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "nh", ItemName: "With history", Category: "movies"}, at); err != nil || !ok {
+		t.Fatalf("add nh: ok=%v err=%v", ok, err)
+	}
+	if err := c.AddItem(ctx, &storage.Item{URLHash: "nh", Name: "With history", Category: "anime"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "u1", ItemName: "Checked", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cats := map[string]string{"n1": "tv", "n2": "tv", "nh": "tv", "u1": "tv"}
+	n, err := c.UpdateNewCategories(ctx, cats)
+	if err != nil || n != 1 {
+		t.Fatalf("UpdateNewCategories = %d, %v, want 1, nil", n, err)
+	}
+	entries, _, err := c.ListCheckLog(ctx, storage.CheckLogFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]string, len(entries))
+	for _, e := range entries {
+		got[e.URLHash] = e.Category
+	}
+	if want := map[string]string{"n1": "tv", "n2": "tv", "nh": "anime", "u1": ""}; !maps.Equal(got, want) {
+		t.Fatalf("categories = %v, want %v", got, want)
+	}
+	var raw string
+	if err = c.db.QueryRowContext(ctx, `SELECT new_category FROM check_log WHERE url_hash = 'nh'`).Scan(&raw); err != nil || raw != "movies" {
+		t.Fatalf("nh new_category = %q, %v, want movies", raw, err)
+	}
+	if n, err = c.UpdateNewCategories(ctx, cats); err != nil || n != 0 {
+		t.Fatalf("repeat = %d, %v, want 0, nil", n, err)
 	}
 }

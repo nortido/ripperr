@@ -340,8 +340,9 @@ func TestBrowserPayload(t *testing.T) {
 	n := New(Config{}, "")
 	ev := n.localize(UpdatedEvent("Some.Release", "https://example.com/t1", ""))
 	title, body, url := decodePayload(t, browserPayload(ev))
-	if url != "/"+ev.AppPath || title != subjectLine(ev) || body != ev.plain() {
-		t.Errorf("payload = %q %q %q, want %q %q %q", title, body, url, subjectLine(ev), ev.plain(), "/"+ev.AppPath)
+	wantTitle, wantBody := "Release updated", "Some Release"
+	if url != "/"+ev.AppPath || title != wantTitle || body != wantBody {
+		t.Errorf("payload = %q %q %q, want %q %q %q", title, body, url, wantTitle, wantBody, "/"+ev.AppPath)
 	}
 
 	if _, _, url := decodePayload(t, browserPayload(n.localize(TestEvent("")))); url != "/" {
@@ -396,5 +397,86 @@ func TestBrowserUnreadableRowWarnsOnce(t *testing.T) {
 	n.HasTransport()
 	if got := countLogs("notify: browser") - before; got != 2 {
 		t.Fatalf("Warn entries after recovery and new failure = %d, want 2", got)
+	}
+}
+
+func pushOf(t *testing.T, lang string, ev Event) (title, body string) {
+	t.Helper()
+	title, body, _ = decodePayload(t, browserPayload(New(Config{Language: lang}, "").localize(ev)))
+	return title, body
+}
+
+func TestBrowserPayloadShortText(t *testing.T) {
+	digestItems := []MirrorDigestItem{{Tracker: "rutracker", Kind: DigestRemove, Host: strings.Repeat("h", 160), Reason: DigestReasonDead}}
+	digest := MirrorDigestEvent(digestItems)
+	tests := []struct {
+		name      string
+		lang      string
+		ev        Event
+		wantTitle string
+		wantBody  string
+	}{
+		{"updated ru", "ru", UpdatedEvent("Some.Release.2024.1080p.mkv", "u", ""), "Раздача обновлена", "Some Release 2024 1080p"},
+		{"updated en", "en", UpdatedEvent("Some.Release.2024.1080p.mkv", "u", ""), "Release updated", "Some Release 2024 1080p"},
+		{"broken ru", "ru", BrokenEvent("Show.S01", "u", 5), "Раздача в игноре", "Show S01\nОшибок подряд: 5"},
+		{"broken en", "en", BrokenEvent("Show.S01", "u", 5), "Release ignored", "Show S01\nErrors in a row: 5"},
+		{"check failed ru", "ru", CheckFailedEvent("Game.v1.0.iso", "u", "HTTP 503"), "Ошибка проверки", "Game v1.0\nHTTP 503"},
+		{"check failed en", "en", CheckFailedEvent("Game.v1.0.iso", "u", "HTTP 503"), "Check failed", "Game v1.0\nHTTP 503"},
+		{"tracker down ru", "ru", TrackerDownEvent("rutracker", "timeout"), "Трекер rutracker недоступен: timeout", "Проверки этого трекера приостановлены."},
+		{"tracker up ru", "ru", TrackerUpEvent("rutracker"), "Трекер rutracker снова доступен, проверки возобновлены.", ""},
+		{"test ru", "ru", TestEvent(""), "проверка связи", ""},
+		{"test en", "en", TestEvent(""), "connectivity test", ""},
+		{"raw event keeps name", "en", Event{Kind: KindUpdated, Text: "Hello:", Subject: "A.B"}, "Hello", "A B"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			title, body := pushOf(t, tc.lang, tc.ev)
+			if title != tc.wantTitle || body != tc.wantBody {
+				t.Errorf("push = %q %q, want %q %q", title, body, tc.wantTitle, tc.wantBody)
+			}
+		})
+	}
+
+	t.Run("long first line", func(t *testing.T) {
+		full := New(Config{}, "").localize(digest).Text
+		if len([]rune(full)) <= maxSubject {
+			t.Fatalf("digest text = %d runes, want > %d", len([]rune(full)), maxSubject)
+		}
+		title, body := pushOf(t, "en", digest)
+		if len([]rune(title)) != maxSubject || !strings.HasPrefix(full, title) || body != full {
+			t.Errorf("title = %d runes %q, body = %q, want %d rune title and body %q", len([]rune(title)), title, body, maxSubject, full)
+		}
+	})
+}
+
+func TestBrowserPayloadCleansName(t *testing.T) {
+	tests := []struct{ name, want string }{
+		{"A.B.MKV", "A B MKV"},
+		{"DD5.1.H.264", "DD5.1 H 264"},
+		{"Mr. Robot", "Mr. Robot"},
+		{"name.tar.gz", "name tar"},
+		{".mkv", ".mkv"},
+		{"Фильм.2024.mkv", "Фильм 2024"},
+		{"v1.2.3", "v1.2.3"},
+		{"Movie.2019.1080p", "Movie 2019 1080p"},
+		{"  Show.S01.1080p  ", "Show S01 1080p"},
+	}
+	for _, tc := range tests {
+		_, body := pushOf(t, "en", UpdatedEvent(tc.name, "u", ""))
+		if body != tc.want {
+			t.Errorf("body for %q = %q, want %q", tc.name, body, tc.want)
+		}
+	}
+}
+
+func TestBrowserPayloadStripsApprovedExtensions(t *testing.T) {
+	exts := strings.Fields(`mkv mp4 m4v avi mov wmv flv webm mpg mpeg m2ts mts ts vob ogv 3gp rmvb divx flac mp3 m4a m4b aac ac3 dts wav ape alac ogg opus wma wv dsf dff aiff mka srt ass ssa sub idx sup vtt iso img bin cue mdf mds nrg vhd vmdk zip rar 7z tar gz tgz bz2 xz zst cab nsp nsz xci xcz nro cia 3ds wbfs wux rvz gcm chd cso pbp exe msi dmg pkg deb rpm appimage apk ipa pdf epub mobi azw3 fb2 djvu cbz cbr jpg png`)
+	if len(exts) != 95 {
+		t.Fatalf("extension list = %d words, want 95", len(exts))
+	}
+	for _, ext := range exts {
+		if _, body := pushOf(t, "en", UpdatedEvent("x."+ext, "u", "")); body != "x" {
+			t.Errorf("body for x.%s = %q, want x", ext, body)
+		}
 	}
 }

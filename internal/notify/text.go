@@ -35,6 +35,11 @@ const (
 	msgDigestConfirm  = "digest_confirm"
 	msgReasonDead     = "reason_dead"
 	msgReasonJackett  = "reason_jackett"
+
+	msgPushUpdated     = "push_updated"
+	msgPushBroken      = "push_broken"
+	msgPushCheckFailed = "push_check_failed"
+	msgPushStreak      = "push_streak"
 )
 
 type MirrorDigestItem struct {
@@ -58,6 +63,11 @@ var messages = map[string]map[string]string{
 		msgDigestConfirm:  "%s: new mirror %s awaits confirmation",
 		msgReasonDead:     " (not responding)",
 		msgReasonJackett:  " (not in the Jackett list)",
+
+		msgPushUpdated:     "Release updated",
+		msgPushBroken:      "Release ignored",
+		msgPushCheckFailed: "Check failed",
+		msgPushStreak:      "Errors in a row: %s",
 	},
 	LangRU: {
 		msgUpdated:        "Раздача обновлена в torrent-клиенте:",
@@ -75,6 +85,11 @@ var messages = map[string]map[string]string{
 		msgDigestConfirm:  "%s: новое зеркало %s ждет подтверждения",
 		msgReasonDead:     " (не отвечает)",
 		msgReasonJackett:  " (нет в списке Jackett)",
+
+		msgPushUpdated:     "Раздача обновлена",
+		msgPushBroken:      "Раздача в игноре",
+		msgPushCheckFailed: "Ошибка проверки",
+		msgPushStreak:      "Ошибок подряд: %s",
 	},
 }
 
@@ -139,6 +154,7 @@ func (n *Notifier) localize(ev Event) Event {
 	if ev.msg != "" {
 		ev.Text = ev.render(lang)
 	}
+	ev.lang = lang
 	ev.linkLabel = messages[lang][msgAppLink]
 	return ev
 }

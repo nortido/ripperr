@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -59,8 +60,50 @@ type fakeStorage struct {
 	newAdds     []newAdd
 	newAddErr   error
 	listedNames map[string]string
-	listedFresh map[string]struct{}
+	listedFresh map[string]string
 	listedErr   error
+	newCats     map[string]string
+	newCatCalls int
+	newCatErr   error
+	settings    *fakeSettings
+}
+
+type fakeSettings struct {
+	mu      sync.Mutex
+	vals    map[string]json.RawMessage
+	saves   int
+	getErr  error
+	saveErr error
+}
+
+func (f *fakeStorage) GetSetting(_ context.Context, key string) (json.RawMessage, bool, error) {
+	if f.settings == nil {
+		return nil, false, nil
+	}
+	f.settings.mu.Lock()
+	defer f.settings.mu.Unlock()
+	if f.settings.getErr != nil {
+		return nil, false, f.settings.getErr
+	}
+	raw, ok := f.settings.vals[key]
+	return raw, ok, nil
+}
+
+func (f *fakeStorage) SaveSetting(_ context.Context, key string, value json.RawMessage) error {
+	if f.settings == nil {
+		return nil
+	}
+	f.settings.mu.Lock()
+	defer f.settings.mu.Unlock()
+	if f.settings.saveErr != nil {
+		return f.settings.saveErr
+	}
+	if f.settings.vals == nil {
+		f.settings.vals = map[string]json.RawMessage{}
+	}
+	f.settings.vals[key] = slices.Clone(value)
+	f.settings.saves++
+	return nil
 }
 
 type newAdd struct {
@@ -143,8 +186,20 @@ func (f *fakeStorage) KnownReleases(context.Context) (hashes, names map[string]s
 	return hashes, names, nil
 }
 
-func (f *fakeStorage) ListedReleases(context.Context) (names map[string]string, fresh map[string]struct{}, err error) {
+func (f *fakeStorage) ListedReleases(context.Context) (names, fresh map[string]string, err error) {
 	return f.listedNames, f.listedFresh, f.listedErr
+}
+
+func (f *fakeStorage) UpdateNewCategories(_ context.Context, cats map[string]string) (int, error) {
+	f.newCatCalls++
+	if f.newCatErr != nil {
+		return 0, f.newCatErr
+	}
+	if f.newCats == nil {
+		f.newCats = map[string]string{}
+	}
+	maps.Copy(f.newCats, cats)
+	return len(cats), nil
 }
 
 func (f *fakeStorage) AddNewRelease(_ context.Context, e *storageModel.CheckLogEntry, firstCheck time.Time) (bool, error) {
@@ -3042,6 +3097,7 @@ func serverErrHandler(threshold int) (*handler, *byURLTracker, *streakStorage) {
 		codes:       map[string]int{},
 	}
 	store := &streakStorage{streaks: map[string]int{}}
+	store.settings = &fakeSettings{}
 	h := &handler{
 		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1, ErrorStreakThreshold: threshold, ListRefreshPerDay: 2},
 		storage:        store,
@@ -3050,6 +3106,7 @@ func serverErrHandler(threshold int) (*handler, *byURLTracker, *streakStorage) {
 		mx:             helper.KeyedMutex{},
 		state:          NewState(),
 	}
+	h.loadServerErrs(context.Background())
 	return h, tr, store
 }
 
@@ -3521,5 +3578,187 @@ func TestPushReadsHoldsBeforeList(t *testing.T) {
 	}
 	if !slices.Equal(log, []string{"holds", "list"}) {
 		t.Fatalf("calls %v, want [holds list]", log)
+	}
+}
+
+func savedServerErrs(t *testing.T, s *fakeSettings) map[string]struct{ Count int } {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]struct{ Count int }{}
+	raw, ok := s.vals["runner_server_errors"]
+	if !ok {
+		return out
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("saved marks are not JSON: %v: %s", err, raw)
+	}
+	return out
+}
+
+func settingSaves(s *fakeSettings) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves
+}
+
+func TestServerErrorMarksSaved(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	if n := settingSaves(store.settings); n != 2 {
+		t.Fatalf("saves = %d, want 2 (one per counted 5xx)", n)
+	}
+	got := savedServerErrs(t, store.settings)
+	if _, ok := got["A"]; ok || got["B"].Count != 2 || len(got) != 1 {
+		t.Fatalf("saved marks = %+v, want only B with count 2", got)
+	}
+}
+
+func restartedHandler(h *handler, tr *byURLTracker) *handler {
+	return &handler{config: h.config, storage: h.storage, manager: &fakeManager{}, trackerService: tr, state: NewState()}
+}
+
+func TestServerErrorPauseSurvivesRestart(t *testing.T) {
+	h, tr, _ := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	h2 := restartedHandler(h, tr)
+	h2.loadServerErrs(context.Background())
+	if !h2.backedOff(&pushPass{}, releaseEntry("B")) {
+		t.Fatal("B must stay paused after a restart")
+	}
+	if h2.backedOff(&pushPass{}, releaseEntry("A")) {
+		t.Fatal("A had no mark, must not be paused")
+	}
+}
+
+func TestServerErrorNoSaveWithoutMark(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	for range 3 {
+		checkRelease(t, h, tr, "A", 0, nil)
+	}
+	if n := settingSaves(store.settings); n != 0 {
+		t.Fatalf("saves = %d, want 0: a success without a mark must not touch the DB", n)
+	}
+}
+
+func TestServerErrorSavedWithoutMarkAfterRecovery(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	checkRelease(t, h, tr, "A", 0, nil)
+	checkRelease(t, h, tr, "B", 503, nil)
+	checkRelease(t, h, tr, "B", 0, nil)
+	if n := settingSaves(store.settings); n != 2 {
+		t.Fatalf("saves = %d, want 2 (mark set, mark cleared)", n)
+	}
+	if got := savedServerErrs(t, store.settings); len(got) != 0 {
+		t.Fatalf("last saved marks = %+v, want none", got)
+	}
+}
+
+func TestServerErrorOutageSavesOnlyCounted(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	checkRelease(t, h, tr, "A", 0, nil)
+	for _, name := range []string{"B", "C", "D"} {
+		checkRelease(t, h, tr, name, 503, nil)
+	}
+	if n := settingSaves(store.settings); n != 1 {
+		t.Fatalf("saves = %d, want 1: uncounted outage errors must not save", n)
+	}
+}
+
+func TestDryRunServerErrorNeverSaves(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	checkRelease(t, h, tr, "A", 0, &dryReport{})
+	checkRelease(t, h, tr, "B", 503, &dryReport{})
+	checkRelease(t, h, tr, "B", 0, &dryReport{})
+	if n := settingSaves(store.settings); n != 0 {
+		t.Fatalf("saves = %d, want 0 for dry-run", n)
+	}
+}
+
+func TestServerErrorSaveFailureKeepsMemory(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	store.settings.saveErr = errors.New("disk full")
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	if !h.backedOff(&pushPass{}, releaseEntry("B")) {
+		t.Fatal("a failed save must not drop the in-memory pause")
+	}
+}
+
+func TestLoadServerErrsReadErrorRetries(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	h2 := restartedHandler(h, tr)
+	store.settings.getErr = errors.New("db locked")
+	h2.loadServerErrs(context.Background())
+	if h2.backedOff(&pushPass{}, releaseEntry("B")) {
+		t.Fatal("read error: nothing to restore")
+	}
+	store.settings.getErr = nil
+	h2.loadServerErrs(context.Background())
+	if !h2.backedOff(&pushPass{}, releaseEntry("B")) {
+		t.Fatal("the next load must retry after a read error")
+	}
+}
+
+func TestLoadServerErrsBadJSONIgnored(t *testing.T) {
+	h0, tr, store := serverErrHandler(3)
+	h := restartedHandler(h0, tr)
+	store.settings.vals = map[string]json.RawMessage{serverErrsSetting: json.RawMessage(`{bad`)}
+	h.loadServerErrs(context.Background())
+	if _, ok := h.state.ServerErrorMark("B"); ok {
+		t.Fatal("bad JSON must restore nothing")
+	}
+	store.settings.vals[serverErrsSetting] = json.RawMessage(`{"B":{"count":2,"at":"` + time.Now().Format(time.RFC3339Nano) + `"}}`)
+	h.loadServerErrs(context.Background())
+	if _, ok := h.state.ServerErrorMark("B"); ok {
+		t.Fatal("a bad load still counts as loaded, the second load is ignored")
+	}
+}
+
+func TestServerErrorNoSaveBeforeRestore(t *testing.T) {
+	h, tr, store := serverErrHandler(3)
+	for range 2 {
+		checkRelease(t, h, tr, "A", 0, nil)
+		checkRelease(t, h, tr, "B", 503, nil)
+	}
+	stored := string(store.settings.vals[serverErrsSetting])
+	saves := settingSaves(store.settings)
+
+	h2 := restartedHandler(h, tr)
+	store.settings.getErr = errors.New("db locked")
+	h2.loadServerErrs(context.Background())
+	checkRelease(t, h2, tr, "A", 0, nil)
+	checkRelease(t, h2, tr, "C", 503, nil)
+	if n := settingSaves(store.settings); n != saves {
+		t.Fatalf("saves = %d, want %d: no write before the stored marks are restored", n, saves)
+	}
+	if got := string(store.settings.vals[serverErrsSetting]); got != stored {
+		t.Fatalf("stored marks changed to %s, want %s", got, stored)
+	}
+
+	store.settings.getErr = nil
+	h2.loadServerErrs(context.Background())
+	for _, name := range []string{"B", "C"} {
+		if _, ok := h2.state.ServerErrorMark(name); !ok {
+			t.Fatalf("%s mark missing after the restore", name)
+		}
+	}
+	checkRelease(t, h2, tr, "A", 0, nil)
+	checkRelease(t, h2, tr, "C", 503, nil)
+	got := savedServerErrs(t, store.settings)
+	if got["B"].Count != 2 || got["C"].Count != 2 {
+		t.Fatalf("saved marks = %+v, want B 2 and C 2", got)
 	}
 }

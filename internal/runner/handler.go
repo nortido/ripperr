@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -72,8 +73,11 @@ type storage interface {
 	NewReleaseHolds(ctx context.Context) (map[string]time.Time, error)
 	DeleteNewRelease(ctx context.Context, urlHash string) error
 	KnownReleases(ctx context.Context) (hashes, names map[string]struct{}, err error)
-	ListedReleases(ctx context.Context) (names map[string]string, fresh map[string]struct{}, err error)
+	ListedReleases(ctx context.Context) (names, fresh map[string]string, err error)
+	UpdateNewCategories(ctx context.Context, cats map[string]string) (int, error)
 	AddNewRelease(ctx context.Context, e *storageModel.CheckLogEntry, firstCheck time.Time) (bool, error)
+	GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error)
+	SaveSetting(ctx context.Context, key string, value json.RawMessage) error
 }
 
 type handler struct {
@@ -150,6 +154,7 @@ func (h *handler) Run(ctx context.Context) {
 		return h.pollNew(pctx)
 	})
 	defer h.state.SetPoller(h.gen, nil)
+	h.loadServerErrs(ctx)
 	h.initTrackerChannels()
 	for ttid := range h.idx {
 		go h.trackerWorker(ctx, ttid, cherr)
@@ -820,13 +825,15 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			return nil
 		}
 		if rep == nil && serverError(err) {
-			h.state.PageServerError(ttid, e.URLHash, time.Now())
+			if h.state.PageServerError(ttid, e.URLHash, time.Now()) {
+				h.saveServerErrs(ctx)
+			}
 		}
 		h.logCheckStreak(ctx, e, ttid, "error", err.Error(), isTrackerWide(err), rep)
 		return
 	}
-	if rep == nil {
-		h.state.PageOK(ttid, e.URLHash)
+	if rep == nil && h.state.PageOK(ttid, e.URLHash) {
+		h.saveServerErrs(ctx)
 	}
 	if pc.dateMissing {
 		if rep == nil {
@@ -1233,4 +1240,28 @@ func trackerLabel(ttid int) string {
 		return key
 	}
 	return "unknown"
+}
+
+func (h *handler) loadServerErrs(ctx context.Context) {
+	if h.state == nil || h.storage == nil {
+		return
+	}
+	raw, ok, err := h.storage.GetSetting(ctx, serverErrsSetting)
+	if err != nil {
+		// не загружено: следующий Run попробует снова, отметки в памяти при слиянии главнее
+		logger.Warn(fmt.Sprintf("server error marks: load: %v", err))
+		return
+	}
+	if !ok {
+		raw = nil
+	}
+	if err := h.state.RestoreServerErrors(raw, time.Now()); err != nil {
+		logger.Warn(fmt.Sprintf("server error marks: bad stored value ignored: %v", err))
+	}
+}
+
+func (h *handler) saveServerErrs(ctx context.Context) {
+	if err := h.state.SaveServerErrors(ctx, time.Now(), h.storage.SaveSetting); err != nil {
+		logger.Warn(fmt.Sprintf("server error marks: save: %v", err))
+	}
 }

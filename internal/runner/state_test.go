@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -769,4 +770,179 @@ func TestSetAbsent(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+type saveRec struct {
+	calls int
+	key   string
+	raw   json.RawMessage
+}
+
+func (r *saveRec) save(_ context.Context, key string, raw json.RawMessage) error {
+	r.calls++
+	r.key, r.raw = key, raw
+	return nil
+}
+
+func TestStateServerErrorReturnValues(t *testing.T) {
+	s := NewState()
+	now := time.Now()
+	if s.PageServerError(1, "a", now) {
+		t.Fatal("5xx with unknown tracker state did not count")
+	}
+	if s.PageOK(1, "a") {
+		t.Fatal("PageOK without a mark cleared nothing")
+	}
+	if !s.PageServerError(1, "a", now) {
+		t.Fatal("5xx after a success counts")
+	}
+	if !s.PageOK(1, "a") {
+		t.Fatal("PageOK must report the cleared mark")
+	}
+}
+
+func TestStateRestoreServerErrorsTTL(t *testing.T) {
+	now := time.Now()
+	raw := func(m map[string]serverErrJSON) json.RawMessage {
+		b, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	s := NewState()
+	err := s.RestoreServerErrors(raw(map[string]serverErrJSON{
+		"young":  {Count: 2, At: now.Add(-serverErrTTL + time.Hour)},
+		"old":    {Count: 2, At: now.Add(-serverErrTTL - time.Hour)},
+		"zero":   {Count: 0, At: now},
+		"noTime": {Count: 3},
+	}), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := s.ServerErrorMark("young"); !ok || m.Streak != 2 {
+		t.Fatalf("young = %+v ok = %v, want count 2", m, ok)
+	}
+	for _, h := range []string{"old", "zero", "noTime"} {
+		if _, ok := s.ServerErrorMark(h); ok {
+			t.Fatalf("%s must not be restored", h)
+		}
+	}
+}
+
+func TestStateRestoreServerErrorsOnce(t *testing.T) {
+	now := time.Now()
+	s := NewState()
+	s.PageOK(1, "x")
+	s.PageServerError(1, "a", now)
+	first := json.RawMessage(`{"a":{"count":9,"at":"` + now.Format(time.RFC3339Nano) + `"},"b":{"count":1,"at":"` + now.Format(time.RFC3339Nano) + `"}}`)
+	if err := s.RestoreServerErrors(first, now); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := s.ServerErrorMark("a"); m.Streak != 1 {
+		t.Fatalf("a = %d, a mark already in memory must not be overwritten", m.Streak)
+	}
+	if _, ok := s.ServerErrorMark("b"); !ok {
+		t.Fatal("b must be restored")
+	}
+	second := json.RawMessage(`{"c":{"count":1,"at":"` + now.Format(time.RFC3339Nano) + `"}}`)
+	if err := s.RestoreServerErrors(second, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.ServerErrorMark("c"); ok {
+		t.Fatal("a second restore must be ignored")
+	}
+}
+
+func TestStateRestoreServerErrorsBadJSON(t *testing.T) {
+	now := time.Now()
+	s := NewState()
+	if err := s.RestoreServerErrors(json.RawMessage(`{bad`), now); err == nil {
+		t.Fatal("bad JSON must return an error")
+	}
+	good := json.RawMessage(`{"a":{"count":1,"at":"` + now.Format(time.RFC3339Nano) + `"}}`)
+	if err := s.RestoreServerErrors(good, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.ServerErrorMark("a"); ok {
+		t.Fatal("after a bad restore the later one is ignored")
+	}
+}
+
+func TestStateServerErrorsPersistNilSafe(t *testing.T) {
+	var s *State
+	if err := s.RestoreServerErrors(json.RawMessage(`{}`), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec := &saveRec{}
+	if err := s.SaveServerErrors(context.Background(), time.Now(), rec.save); err != nil || rec.calls != 0 {
+		t.Fatalf("nil state: err = %v calls = %d, want none", err, rec.calls)
+	}
+}
+
+func TestStateSaveServerErrorsPrunes(t *testing.T) {
+	now := time.Now()
+	s := NewState()
+	_ = s.RestoreServerErrors(nil, now)
+	s.PageOK(1, "x")
+	s.PageServerError(1, "old", now.Add(-serverErrTTL-time.Hour))
+	s.PageOK(1, "x")
+	s.PageServerError(1, "young", now)
+	rec := &saveRec{}
+	if err := s.SaveServerErrors(context.Background(), now, rec.save); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]serverErrJSON
+	if err := json.Unmarshal(rec.raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if rec.key != serverErrsSetting || len(got) != 1 || got["young"].Count != 1 {
+		t.Fatalf("key = %q saved = %+v, want only young", rec.key, got)
+	}
+	if _, ok := s.ServerErrorMark("old"); ok {
+		t.Fatal("the old mark must be pruned from memory too")
+	}
+}
+
+func TestStateSaveServerErrorsOrdered(t *testing.T) {
+	s := NewState()
+	now := time.Now()
+	_ = s.RestoreServerErrors(nil, now)
+	var last atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.PageOK(1, "x")
+			s.PageServerError(1, "h", now)
+			_ = s.SaveServerErrors(context.Background(), now, func(_ context.Context, _ string, raw json.RawMessage) error {
+				var m map[string]serverErrJSON
+				if err := json.Unmarshal(raw, &m); err != nil {
+					return err
+				}
+				if int32(m["h"].Count) < last.Load() {
+					t.Errorf("worker %d stored an older snapshot after a newer one", i)
+				}
+				last.Store(int32(m["h"].Count))
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+}
+
+func TestStateSaveServerErrorsWaitsForRestore(t *testing.T) {
+	now := time.Now()
+	s := NewState()
+	s.PageOK(1, "x")
+	s.PageServerError(1, "a", now)
+	rec := &saveRec{}
+	if err := s.SaveServerErrors(context.Background(), now, rec.save); err != nil || rec.calls != 0 {
+		t.Fatalf("err = %v calls = %d, want no save before a restore", err, rec.calls)
+	}
+	_ = s.RestoreServerErrors(nil, now)
+	if err := s.SaveServerErrors(context.Background(), now, rec.save); err != nil || rec.calls != 1 {
+		t.Fatalf("err = %v calls = %d, want one save after a restore", err, rec.calls)
+	}
 }

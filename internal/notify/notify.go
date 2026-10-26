@@ -100,6 +100,7 @@ type Event struct {
 	args      []string
 	digest    []MirrorDigestItem
 	linkLabel string
+	lang      string
 }
 
 const (

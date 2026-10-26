@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -31,6 +32,8 @@ type State struct {
 	pageMu          sync.Mutex
 	pageOK          map[int]bool
 	serverErrs      map[string]serverErrMark
+	errsRestored    bool
+	errsSaveMu      sync.Mutex
 	pollMu          sync.Mutex
 	pollStateMu     sync.Mutex
 	pollFn          func(context.Context) (int, error)
@@ -399,14 +402,24 @@ func (s *State) TryLockTorrent(hash string) (unlock func(), ok bool) {
 	}
 }
 
+const serverErrsSetting = "runner_server_errors"
+
+// два backoffCap: релиз с отметкой перепроверяется в пределах суток, так что стареют только пропавшие релизы или долгий простой
+const serverErrTTL = 2 * backoffCap
+
 type serverErrMark struct {
 	count int
 	at    time.Time
 }
 
-func (s *State) PageServerError(ttid int, urlHash string, now time.Time) {
+type serverErrJSON struct {
+	Count int       `json:"count"`
+	At    time.Time `json:"at"`
+}
+
+func (s *State) PageServerError(ttid int, urlHash string, now time.Time) (counted bool) {
 	if s == nil || urlHash == "" {
-		return
+		return false
 	}
 	s.pageMu.Lock()
 	defer s.pageMu.Unlock()
@@ -417,16 +430,18 @@ func (s *State) PageServerError(ttid int, urlHash string, now time.Time) {
 		}
 		m := s.serverErrs[urlHash]
 		s.serverErrs[urlHash] = serverErrMark{count: m.count + 1, at: now}
+		counted = true
 	}
 	if s.pageOK == nil {
 		s.pageOK = make(map[int]bool)
 	}
 	s.pageOK[ttid] = false
+	return counted
 }
 
-func (s *State) PageOK(ttid int, urlHash string) {
+func (s *State) PageOK(ttid int, urlHash string) (cleared bool) {
 	if s == nil {
-		return
+		return false
 	}
 	s.pageMu.Lock()
 	defer s.pageMu.Unlock()
@@ -434,7 +449,71 @@ func (s *State) PageOK(ttid int, urlHash string) {
 		s.pageOK = make(map[int]bool)
 	}
 	s.pageOK[ttid] = true
+	_, cleared = s.serverErrs[urlHash]
 	delete(s.serverErrs, urlHash)
+	return cleared
+}
+
+func (s *State) RestoreServerErrors(raw json.RawMessage, now time.Time) error {
+	if s == nil {
+		return nil
+	}
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+	// флаг ставим и при битом JSON: повторная загрузка не должна затирать свежие отметки
+	if s.errsRestored {
+		return nil
+	}
+	s.errsRestored = true
+	if len(raw) == 0 {
+		return nil
+	}
+	var stored map[string]serverErrJSON
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return err
+	}
+	for hash, m := range stored {
+		if hash == "" || m.Count < 1 || m.At.IsZero() || now.Sub(m.At) > serverErrTTL {
+			continue
+		}
+		if _, ok := s.serverErrs[hash]; ok {
+			continue
+		}
+		if s.serverErrs == nil {
+			s.serverErrs = make(map[string]serverErrMark)
+		}
+		s.serverErrs[hash] = serverErrMark{count: m.Count, at: m.At}
+	}
+	return nil
+}
+
+func (s *State) SaveServerErrors(ctx context.Context, now time.Time, save func(context.Context, string, json.RawMessage) error) error {
+	if s == nil {
+		return nil
+	}
+	// замок держим и на сохранении: иначе старый снимок мог бы лечь в БД после нового
+	s.errsSaveMu.Lock()
+	defer s.errsSaveMu.Unlock()
+	s.pageMu.Lock()
+	// пока сохраненные отметки не загружены, снимок только из памяти затер бы их в БД
+	if !s.errsRestored {
+		s.pageMu.Unlock()
+		return nil
+	}
+	out := make(map[string]serverErrJSON, len(s.serverErrs))
+	for hash, m := range s.serverErrs {
+		if now.Sub(m.at) > serverErrTTL {
+			delete(s.serverErrs, hash)
+			continue
+		}
+		out[hash] = serverErrJSON{Count: m.count, At: m.at}
+	}
+	s.pageMu.Unlock()
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+	return save(ctx, serverErrsSetting, raw)
 }
 
 func (s *State) ServerErrorMark(urlHash string) (storageModel.ErrorMark, bool) {

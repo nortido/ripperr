@@ -117,10 +117,11 @@ func (c *Client) UpdateItem(ctx context.Context, item *storage.Item) (err error)
 
 func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) (int, error) {
 	// арбитр upsert это url_hash, поэтому строка с тем же именем под другим хешем (релиз
-	// переехал в новую тему) споткнется о check_log_item_name_uidx. Сносим ее заранее
+	// переехал в новую тему) споткнется о check_log_item_name_exact_uidx. Сносим ее заранее,
+	// имя сравниваем точно: Foo и foo с разными URL это две строки
 	if strings.TrimSpace(entry.ItemName) != "" {
 		if _, err := c.db.ExecContext(ctx,
-			`DELETE FROM check_log WHERE LOWER(TRIM(item_name)) = LOWER(TRIM(?)) AND url_hash <> ?`,
+			`DELETE FROM check_log WHERE TRIM(item_name) = TRIM(?) AND url_hash <> ?`,
 			entry.ItemName, entry.URLHash); err != nil {
 			return 0, err
 		}
@@ -144,7 +145,7 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 
 func (c *Client) AddNewRelease(ctx context.Context, e *storage.CheckLogEntry, firstCheck time.Time) (bool, error) {
 	// у статуса new checked_at хранит время первой проверки, а не последней.
-	// DO NOTHING без цели ловит и url_hash, и имя (check_log_item_name_uidx): ничего не перезаписываем
+	// DO NOTHING без цели ловит и url_hash, и точное имя (check_log_item_name_exact_uidx): ничего не перезаписываем
 	res, err := c.db.ExecContext(ctx,
 		`INSERT INTO check_log (checked_at, url_hash, item_name, item_url, tracker_type_id, status, new_category)
 		 SELECT ?, ?, ?, ?, ?, 'new', ? WHERE NOT EXISTS (SELECT 1 FROM history WHERE url_hash = ?)
@@ -214,28 +215,56 @@ func (c *Client) DeleteNewRelease(ctx context.Context, urlHash string) error {
 	return err
 }
 
-func (c *Client) ListedReleases(ctx context.Context) (names map[string]string, fresh map[string]struct{}, err error) {
+func (c *Client) ListedReleases(ctx context.Context) (names, fresh map[string]string, err error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT c.url_hash, c.item_name, c.status = 'new' AND h.url_hash IS NULL
+		`SELECT c.url_hash, c.item_name, c.status = 'new' AND h.url_hash IS NULL, COALESCE(c.new_category, '')
 		 FROM check_log c LEFT JOIN history h ON h.url_hash = c.url_hash`)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	names = map[string]string{}
-	fresh = map[string]struct{}{}
+	fresh = map[string]string{}
 	for rows.Next() {
-		var hash, name string
+		var hash, name, category string
 		var isFresh bool
-		if err = rows.Scan(&hash, &name, &isFresh); err != nil {
+		if err = rows.Scan(&hash, &name, &isFresh, &category); err != nil {
 			return nil, nil, err
 		}
 		names[hash] = name
 		if isFresh {
-			fresh[hash] = struct{}{}
+			fresh[hash] = category
 		}
 	}
 	return names, fresh, rows.Err()
+}
+
+func (c *Client) UpdateNewCategories(ctx context.Context, cats map[string]string) (int, error) {
+	if len(cats) == 0 {
+		return 0, nil
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	total := 0
+	for hash, cat := range cats {
+		res, execErr := tx.ExecContext(ctx,
+			`UPDATE check_log SET new_category = ?
+			 WHERE url_hash = ? AND status = 'new' AND COALESCE(new_category, '') <> ?
+			 AND NOT EXISTS (SELECT 1 FROM history WHERE history.url_hash = check_log.url_hash)`, cat, hash, cat)
+		if execErr != nil {
+			return 0, execErr
+		}
+		n, rowsErr := res.RowsAffected()
+		if rowsErr != nil {
+			return 0, rowsErr
+		}
+		total += int(n)
+	}
+	return total, tx.Commit()
 }
 
 // у строки без истории категорию помнит опрос, история появится только после удачной проверки

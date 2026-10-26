@@ -60,10 +60,6 @@ func main() {
 		return
 	}
 	baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
-	if err := settings.ValidateMirrorSource(baseCfg.MirrorSource); err != nil {
-		logger.Error("MIRROR_SOURCE: " + err.Error())
-		return
-	}
 	logger.SetLevel(baseCfg.Log.Level)
 
 	dbConn, err := connectDB(ctx, baseCfg)
@@ -383,6 +379,12 @@ func validateEffective(base, cfg config.App) error {
 	if cfg.Runner.DownloadProxy == base.Runner.DownloadProxy {
 		if err := settings.ValidateDownloadProxy(cfg.Runner.DownloadProxy); err != nil {
 			return errors.New("RUNNER_DOWNLOAD_PROXY: " + err.Error())
+		}
+	}
+	// как прокси: env проверяем, только пока он в силе. Direct не в счет
+	if cfg.MirrorSource.Type == base.MirrorSource.Type && strings.TrimSpace(cfg.MirrorSource.URL) == strings.TrimSpace(base.MirrorSource.URL) {
+		if err := settings.ValidateMirrorSource(cfg.MirrorSource); err != nil {
+			return errors.New("MIRROR_SOURCE: " + err.Error())
 		}
 	}
 	return nil

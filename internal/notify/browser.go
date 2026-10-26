@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"ripperr/internal/helper"
 	"ripperr/internal/system/logger"
@@ -49,8 +50,79 @@ func (n *Notifier) browserReady() bool {
 	return len(devices) > 0
 }
 
+var pushExts = func() map[string]bool {
+	set := map[string]bool{}
+	for _, e := range strings.Fields(`mkv mp4 m4v avi mov wmv flv webm mpg mpeg m2ts mts ts vob ogv 3gp rmvb divx flac mp3 m4a m4b aac ac3 dts wav ape alac ogg opus wma wv dsf dff aiff mka srt ass ssa sub idx sup vtt iso img bin cue mdf mds nrg vhd vmdk zip rar 7z tar gz tgz bz2 xz zst cab nsp nsz xci xcz nro cia 3ds wbfs wux rvz gcm chd cso pbp exe msi dmg pkg deb rpm appimage apk ipa pdf epub mobi azw3 fb2 djvu cbz cbr jpg png`) {
+		set[e] = true
+	}
+	return set
+}()
+
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func pushName(s string) string {
+	s = strings.TrimSpace(s)
+	// расширение режем только из списка и только строчное: ".MKV" остается как есть
+	if i := strings.LastIndexByte(s, '.'); i > 0 && pushExts[s[i+1:]] {
+		s = s[:i]
+	}
+	r := []rune(s)
+	for i := 1; i < len(r)-1; i++ {
+		if r[i] != '.' || !isWordRune(r[i-1]) || !isWordRune(r[i+1]) {
+			continue
+		}
+		// "5.1" и "v1.2.3" это версии, их точки не трогаем: после цифры дальше идет не буква и не цифра
+		if unicode.IsDigit(r[i-1]) && unicode.IsDigit(r[i+1]) && (i+2 >= len(r) || !isWordRune(r[i+2])) {
+			continue
+		}
+		r[i] = ' '
+	}
+	return strings.TrimSpace(string(r))
+}
+
+func joinLines(parts ...string) string {
+	kept := parts[:0:0]
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+func pushText(ev Event) (title, body string) {
+	m := messages[NormalizeLanguage(ev.lang)]
+	name := pushName(ev.Subject)
+	reason := ""
+	switch ev.msg {
+	case msgUpdated:
+		return m[msgPushUpdated], name
+	case msgBroken:
+		if len(ev.args) > 0 {
+			reason = fmt.Sprintf(m[msgPushStreak], ev.args[0])
+		}
+		return m[msgPushBroken], joinLines(name, reason)
+	case msgCheckFailed:
+		if len(ev.args) > 0 {
+			reason = ev.args[0]
+		}
+		return m[msgPushCheckFailed], joinLines(name, reason)
+	}
+	text := strings.TrimPrefix(strings.TrimSpace(ev.Text), subjectHead)
+	first, rest, _ := strings.Cut(text, "\n")
+	first = strings.TrimSuffix(strings.TrimSpace(first), ":")
+	title = helper.Substr(strings.ReplaceAll(first, "\r", " "), 0, maxSubject)
+	if len([]rune(first)) > maxSubject {
+		rest = text
+	}
+	return title, joinLines(strings.TrimSpace(rest), name)
+}
+
 func browserPayload(ev Event) []byte {
-	msg := browserMessage{Title: subjectLine(ev), Body: helper.Substr(ev.plain(), 0, maxPushBody), URL: "/"}
+	title, body := pushText(ev)
+	msg := browserMessage{Title: title, Body: helper.Substr(body, 0, maxPushBody), URL: "/"}
 	if ev.AppPath != "" {
 		msg.URL = "/" + ev.AppPath
 	}

@@ -254,3 +254,40 @@ func TestValidateEffectiveChecksSchedule(t *testing.T) {
 		t.Fatalf("bad refresh per day must fail, got %v", err)
 	}
 }
+
+func TestValidateEffectiveStopsOnBadEnvMirror(t *testing.T) {
+	base := effectiveCfg(60, "")
+	base.MirrorSource = config.MirrorSource{Type: "custom", URL: " https://mirror.example/list "}
+	cfg := base
+	cfg.MirrorSource.URL = "https://mirror.example/list"
+	err := validateEffective(base, cfg)
+	if err == nil || !strings.HasPrefix(err.Error(), "MIRROR_SOURCE: ") {
+		t.Fatalf("bad env mirror in effect must fail with prefix, got %v", err)
+	}
+	base.MirrorSource = config.MirrorSource{Type: "bogus"}
+	err = validateEffective(base, base)
+	if err == nil || !strings.HasPrefix(err.Error(), "MIRROR_SOURCE: ") {
+		t.Fatalf("bad env mirror type in effect must fail with prefix, got %v", err)
+	}
+}
+
+func TestValidateEffectiveStoredMirrorOverridesBadEnv(t *testing.T) {
+	base := effectiveCfg(60, "")
+	base.MirrorSource = config.MirrorSource{Type: "custom", URL: "https://mirror.example/list"}
+	cfg := base
+	cfg.MirrorSource.URL = "https://mirror.example/{path}"
+	if err := validateEffective(base, cfg); err != nil {
+		t.Fatalf("stored mirror url overrides bad env, got %v", err)
+	}
+	base.MirrorSource = config.MirrorSource{Type: "bogus"}
+	cfg.MirrorSource = config.MirrorSource{Type: "github"}
+	if err := validateEffective(base, cfg); err != nil {
+		t.Fatalf("stored mirror type overrides bad env, got %v", err)
+	}
+	base.MirrorSource = config.MirrorSource{Type: "custom", URL: "https://mirror.example/list"}
+	cfg.MirrorSource = base.MirrorSource
+	cfg.MirrorSource.Direct = true
+	if err := validateEffective(base, cfg); err == nil {
+		t.Fatal("Direct alone must not skip checking a bad env mirror")
+	}
+}

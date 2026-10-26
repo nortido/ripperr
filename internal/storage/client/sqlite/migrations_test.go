@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,5 +314,63 @@ func TestAddNewCategorySkipsWithoutCheckLog(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatal("check_log was created by step 5")
+	}
+}
+
+func TestMigrateExactNameIndex(t *testing.T) {
+	ctx := t.Context()
+	db := newRawDB(t)
+	c := New(db, testBox(t))
+	if err := c.migrate(ctx, migrations[:5]); err != nil {
+		t.Fatalf("migrate to 5: %v", err)
+	}
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "Foo", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	checkIndexes := func(stage string) {
+		t.Helper()
+		var exact, old int
+		if err := db.QueryRow(`SELECT COALESCE(SUM(name = 'check_log_item_name_exact_uidx'), 0), COALESCE(SUM(name = 'check_log_item_name_uidx'), 0) FROM sqlite_master WHERE type = 'index'`).Scan(&exact, &old); err != nil {
+			t.Fatalf("%s: sqlite_master: %v", stage, err)
+		}
+		if exact != 1 || old != 0 {
+			t.Fatalf("%s: exact index=%d old index=%d, want 1 and 0", stage, exact, old)
+		}
+	}
+
+	if err := c.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap from 5: %v", err)
+	}
+	if got := userVersion(t, db); got != len(migrations) {
+		t.Fatalf("user_version = %d, want %d", got, len(migrations))
+	}
+	checkIndexes("first run")
+	if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h2", ItemName: "foo", Status: "unchanged"}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM check_log`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("check_log rows = %d err=%v, want 2", n, err)
+	}
+	_, err := db.Exec(`INSERT INTO check_log (url_hash, item_name, status) VALUES ('h3', ' Foo ', 'unchanged')`)
+	if err == nil || !strings.Contains(err.Error(), "UNIQUE constraint") {
+		t.Fatalf("insert exact trimmed twin: err=%v, want UNIQUE constraint", err)
+	}
+
+	// 5 это обычный повтор шага, 1 это повтор после decrypt-secrets
+	for _, from := range []int{5, 1} {
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", from)); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Bootstrap(ctx); err != nil {
+			t.Fatalf("bootstrap rerun from %d: %v", from, err)
+		}
+		if got := userVersion(t, db); got != len(migrations) {
+			t.Fatalf("user_version after rerun from %d = %d, want %d", from, got, len(migrations))
+		}
+		checkIndexes(fmt.Sprintf("rerun from %d", from))
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM check_log`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("check_log rows after reruns = %d err=%v, want 2", n, err)
 	}
 }

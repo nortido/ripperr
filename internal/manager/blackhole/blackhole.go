@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,7 +52,8 @@ type client interface {
 type Store struct {
 	dir    string
 	client client
-	// новый хеш замены -> когда старый впервые не нашелся; трогает только горутина подметания
+	// хеш пары -> когда впервые не нашелся старый торрент замены или торрент помеченной пары;
+	// трогает только горутина подметания
 	absentSeen map[string]time.Time
 }
 
@@ -150,6 +152,34 @@ func removeBlackholePair(dir, hash string) {
 	torrentPath, jsonPath := blackholePaths(dir, hash)
 	_ = os.Remove(torrentPath)
 	_ = os.Remove(jsonPath)
+	_ = os.Remove(seenPath(dir, hash))
+}
+
+func seenPath(dir, hash string) string {
+	return filepath.Join(dir, strings.ToLower(hash)+".seen")
+}
+
+func (s *Store) markSeen(p blackholePair) {
+	if p.modTime.IsZero() {
+		return
+	}
+	// в метке mtime этого .json: любая новая запись пары меняет mtime, и старая метка
+	// к ней уже не подходит, даже если Write прошел параллельно с подметанием
+	if err := writeFileAtomic(seenPath(s.dir, p.hash), []byte(strconv.FormatInt(p.modTime.UnixNano(), 10))); err != nil {
+		logger.Warn(fmt.Sprintf("blackhole sweep: mark %s (%s) as seen: %v", p.opts.Name, p.hash, err))
+	}
+}
+
+func seenMarked(dir string, p blackholePair) bool {
+	if p.modTime.IsZero() {
+		return false
+	}
+	raw, err := os.ReadFile(seenPath(dir, p.hash))
+	if err != nil {
+		return false
+	}
+	mark, err := strconv.ParseInt(string(raw), 10, 64)
+	return err == nil && mark == p.modTime.UnixNano()
 }
 
 func (s *Store) Remove(hash string) {
@@ -376,6 +406,12 @@ func (s *Store) SweepOnce(ctx context.Context) {
 			s.finishReplace(ctx, p, prevAbsent)
 			continue
 		}
+		// торрент из помеченной пары уже был в клиенте, и раз его там нет, его убрал
+		// пользователь: добавлять заново нельзя
+		if seenMarked(s.dir, p) {
+			s.sweepSeen(ctx, p, prevAbsent)
+			continue
+		}
 		addErr := s.readd(ctx, p)
 		switch {
 		case addErr == nil:
@@ -386,6 +422,7 @@ func (s *Store) SweepOnce(ctx context.Context) {
 		case errors.Is(addErr, model.ErrAlreadyAdded):
 			if s.Settled(ctx, p.hash) {
 				if err := s.converge(ctx, p); err != nil {
+					s.markSeen(p)
 					logger.Warn(fmt.Sprintf("blackhole sweep: converge %s (%s) failed: %v, keeping pair", p.opts.Name, p.hash, err))
 					continue
 				}
@@ -396,6 +433,51 @@ func (s *Store) SweepOnce(ctx context.Context) {
 			logger.Warn(fmt.Sprintf("blackhole sweep: re-add %s (%s) failed: %v", p.opts.Name, p.hash, addErr))
 		}
 	}
+}
+
+func (s *Store) sweepSeen(ctx context.Context, p blackholePair, prevAbsent map[string]time.Time) {
+	present, err := s.client.Exists(ctx, p.hash)
+	if err != nil {
+		logger.Warn(fmt.Sprintf("blackhole sweep: %s (%s): presence check failed: %v, keeping pair", p.opts.Name, p.hash, err))
+		return
+	}
+	if present {
+		if s.Settled(ctx, p.hash) {
+			if err = s.converge(ctx, p); err != nil {
+				logger.Warn(fmt.Sprintf("blackhole sweep: converge %s (%s) failed: %v, keeping pair", p.opts.Name, p.hash, err))
+				return
+			}
+			logger.Info(fmt.Sprintf("blackhole sweep: %s (%s) already added", p.opts.Name, p.hash))
+			removeBlackholePair(s.dir, p.hash)
+		}
+		return
+	}
+	first, seen := prevAbsent[p.hash]
+	if !seen {
+		s.absentSeen[p.hash] = time.Now()
+		logger.Info(fmt.Sprintf("blackhole sweep: %s (%s) gone from the client after a converge error, confirming on the next sweep", p.opts.Name, p.hash))
+		return
+	}
+	if time.Since(first) < confirmAbsentAfter {
+		s.absentSeen[p.hash] = first
+		return
+	}
+	if err = sleepCtx(ctx, SettleDelay); err != nil {
+		return
+	}
+	if present, err = s.client.Exists(ctx, p.hash); err != nil || present {
+		logger.Warn(fmt.Sprintf("blackhole sweep: %s (%s) not confirmed absent (present %v, err %v), keeping pair", p.opts.Name, p.hash, present, err))
+		return
+	}
+	// писатель мог переписать пару после скана, новую запись удалять нельзя
+	_, jsonPath := blackholePaths(s.dir, p.hash)
+	info, err := os.Stat(jsonPath)
+	if err != nil || !info.ModTime().Equal(p.modTime) {
+		logger.Info(fmt.Sprintf("blackhole sweep: %s (%s) pair changed during the sweep (err %v), keeping it", p.opts.Name, p.hash, err))
+		return
+	}
+	logger.Info(fmt.Sprintf("blackhole sweep: %s (%s) removed from the client, dropping pair without re-add", p.opts.Name, p.hash))
+	removeBlackholePair(s.dir, p.hash)
 }
 
 func (s *Store) readd(ctx context.Context, p blackholePair) error {
