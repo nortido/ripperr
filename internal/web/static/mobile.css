@@ -210,6 +210,10 @@ html.mobile-layout .page-size-select {
     white-space: nowrap;
   }
 
+  .mobile-header-actions .is-off {
+    display: none;
+  }
+
   .mobile-header.has-actions .mobile-header-brand-text {
     display: none;
   }
@@ -438,22 +442,14 @@ html.mobile-layout .run-status {
 
 html.mobile-layout .page-header-run-group {
   width: 100%;
-  justify-content: stretch;
   gap: 8px;
   --btn-h-md: 40px;
 }
 
-html.mobile-layout .page-header-run-group .btn-primary,
-html.mobile-layout .page-header-run-group .btn-restart,
-html.mobile-layout .page-header-run-group .btn-outline {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-/* длинная подпись перезапуска переносится, чтобы три кнопки влезли в строку */
-html.mobile-layout .page-header-run-group .btn-restart {
-  white-space: normal;
-  line-height: 1.1;
+/* на 340px с обычными отступами «Проверить сейчас» не влезает в половину строки */
+html.mobile-layout .page-header-run-group .btn {
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
 html.mobile-layout .card-header {

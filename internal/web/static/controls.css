@@ -101,21 +101,6 @@
   }
 }
 
-.btn-restart {
-  color: var(--restart);
-  border-color: var(--restart);
-  background: var(--restart-bg);
-}
-
-@media (hover: hover) {
-  .btn-restart:hover:not(:disabled) {
-    background: var(--restart);
-    color: #fff;
-    border-color: var(--restart);
-    box-shadow: 0 4px 14px rgba(234, 88, 12, 0.3);
-  }
-}
-
 .btn-outline {
   color: var(--hue-green);
   border-color: var(--hue-green);
@@ -159,11 +144,25 @@
   height: var(--btn-icon-sm);
 }
 
+/* колонки 1fr растут до самой широкой кнопки, все кнопки одной ширины */
 .page-header-run-group {
-  display: inline-flex;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  /* без этого блок в строке шапки сжимается и колонки расходятся по ширине */
+  min-width: max-content;
+}
+
+.page-header-run-group > #dash-run-btn,
+.page-header-run-group > #dash-stop-btn {
+  grid-area: 1 / 2;
+}
+
+.page-header-run-group > .is-off {
+  visibility: hidden;
 }
 
 .btn-stop {
@@ -187,18 +186,6 @@
     background: var(--hue-red);
     border-color: var(--hue-red);
     box-shadow: 0 4px 14px rgba(220, 38, 38, 0.3);
-  }
-}
-
-.btn-stop-label {
-  display: none;
-  font-size: 15px;
-  font-weight: 500;
-}
-
-@media (min-width: 901px) {
-  .btn-stop-label {
-    display: inline;
   }
 }
 
