@@ -46,9 +46,22 @@ html.mobile-layout .table-dash-releases .col-name {
   height: auto;
   border: none;
   line-height: 1.35;
-  font-size: 17px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 400;
   margin-bottom: 2px;
+}
+
+/* у ссылки свой вес 500 из tables.css, на телефоне он делал список жирным */
+html.mobile-layout .table-dash-releases .release-link {
+  font-weight: 400;
+}
+
+html.mobile-layout body {
+  font-size: 15px;
+}
+
+html.mobile-layout .card-title {
+  font-size: 16px;
 }
 
 html.mobile-layout .table-dash-releases .release-title-wrap {
@@ -117,8 +130,8 @@ html.mobile-layout .table-dash-releases .col-actions {
 }
 
 html.mobile-layout .table-dash-releases .release-actions {
-  --btn-h-sm: 35px;
-  --btn-icon-sm: 19px;
+  --btn-h-sm: 32px;
+  --btn-icon-sm: 18px;
   justify-content: center;
   gap: 14px;
 }
@@ -261,7 +274,7 @@ html.mobile-layout .content {
 
 /* на телефоне вертикальные отступы съедали верх экрана: заголовок без лишнего интерлиньяжа, промежутки меньше */
 html.mobile-layout .page-title {
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.2;
   margin-bottom: 4px;
 }
@@ -451,7 +464,7 @@ html.mobile-layout .table th,
 html.mobile-layout .table td {
   padding: 0 10px;
   height: 48px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 html.mobile-layout .table .col-name {
@@ -616,7 +629,7 @@ html.mobile-layout .custom-select-trigger,
 html.mobile-layout .custom-select-option,
 html.mobile-layout .form-switch,
 html.mobile-layout .tracker-row-name {
-  font-size: 16px;
+  font-size: 15px;
 }
 
 html.mobile-layout .btn-sm,
@@ -632,7 +645,7 @@ html.mobile-layout .stat-label,
 html.mobile-layout .card-footer,
 html.mobile-layout .table-dash-releases .col-time,
 html.mobile-layout .table-dash-releases .plan-recheck-cell {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 /* подпись поля в виде заголовка раздела остается размера соседних заголовков */
@@ -648,13 +661,13 @@ html.mobile-layout .select-compact {
 html.mobile-layout .tracker-badge,
 html.mobile-layout .tracker-row-domain,
 html.mobile-layout .chip-hint {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 html.mobile-layout .hist-filter-panel-title,
 html.mobile-layout .hist-filter-row,
 html.mobile-layout .hist-filter-option {
-  font-size: 16px;
+  font-size: 15px;
 }
 
 html.mobile-layout .hist-filter-group-label,
@@ -681,7 +694,7 @@ html.mobile-layout .table-dash-releases .tracker-badge {
 html.mobile-layout .nav-link {
   min-height: 52px;
   gap: 14px;
-  font-size: 17px;
+  font-size: 16px;
 }
 
 html.mobile-layout .nav-icon,
@@ -896,7 +909,7 @@ html.mobile-layout .onb-go {
 }
 
 html.mobile-layout .onb-title {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 html.mobile-layout .onb-hint {
