@@ -126,6 +126,21 @@ func (m *pollManager) AttachComment(context.Context, string, string, func(contex
 	return nil
 }
 
+func (m *pollManager) DeletesFiles(context.Context, model.ManagerDeleteOptions) bool {
+	m.t.Error("poll called DeletesFiles")
+	return false
+}
+
+func (m *pollManager) Remove(context.Context, []model.ManagerDeleteOptions) ([]string, error) {
+	m.t.Error("poll called Remove")
+	return nil, nil
+}
+
+func (m *pollManager) Add(context.Context, []byte, model.ManagerAddFileOptions) error {
+	m.t.Error("poll called Add")
+	return nil
+}
+
 type pollTracker struct {
 	fakeTracker
 	t   *testing.T

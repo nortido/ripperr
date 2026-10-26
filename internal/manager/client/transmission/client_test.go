@@ -321,6 +321,12 @@ func TestMapEntry(t *testing.T) {
 	if e.MaxSeedingTime != 0 {
 		t.Error("MaxSeedingTime should always be zero")
 	}
+	if e.ContentPath != "/downloads/movies/movie" {
+		t.Errorf("ContentPath: got %q", e.ContentPath)
+	}
+	if got := c.mapEntry(&rpcTorrent{Name: "movie"}).ContentPath; got != "" {
+		t.Errorf("ContentPath without download dir: got %q, want empty", got)
+	}
 	// остановлен и докачан: PausedMaxRatio перекрывает seedRatioMode
 	if e.MaxRatio != 0.5 {
 		t.Errorf("expected paused max ratio override, got %v", e.MaxRatio)

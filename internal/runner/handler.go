@@ -35,8 +35,9 @@ const (
 )
 
 var (
-	errSkipped     = errors.New("skipped")
-	errTorrentBusy = errors.New("torrent is checking, moving or has an error, update postponed")
+	errSkipped       = errors.New("skipped")
+	errTorrentBusy   = errors.New("torrent is checking, moving or has an error, update postponed")
+	errRemovedByUser = errors.New("torrent removed by user")
 )
 
 type trackerService interface {
@@ -56,6 +57,9 @@ type manager interface {
 	// от magnet-пар, записанных прежней версией
 	SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	AttachComment(ctx context.Context, hash, comment string, fetch func(context.Context) ([]byte, error)) error
+	DeletesFiles(ctx context.Context, opts model.ManagerDeleteOptions) bool
+	Remove(ctx context.Context, targets []model.ManagerDeleteOptions) (accepted []string, err error)
+	Add(ctx context.Context, data []byte, opts model.ManagerAddFileOptions) error
 }
 
 type storage interface {
@@ -65,6 +69,8 @@ type storage interface {
 	AllItems(ctx context.Context) (map[string]*runnerModel.HistoryItem, error)
 	GetIgnoreSet(ctx context.Context) (map[string]struct{}, error)
 	DeleteItem(ctx context.Context, urlHash string) error
+	DeleteIgnore(ctx context.Context, hash string) error
+	ResetErrorStreak(ctx context.Context, urlHash string) error
 	PurgeDuplicateNames(ctx context.Context, live map[string][]string) error
 	SetForceCheck(ctx context.Context, urlHash string, force bool) (bool, error)
 	ErrorMarks(ctx context.Context) (map[string]storageModel.ErrorMark, error)
@@ -154,6 +160,24 @@ func (h *handler) Run(ctx context.Context) {
 		return h.pollNew(pctx)
 	})
 	defer h.state.SetPoller(h.gen, nil)
+	h.state.SetReleaseActions(h.gen, &ReleaseActions{
+		Removal: func(reqCtx context.Context, urlHash string) (RemovalInfo, error) {
+			rctx, stop := runBound(ctx, reqCtx)
+			defer stop()
+			return h.removalInfo(rctx, urlHash)
+		},
+		Remove: func(reqCtx context.Context, req RemoveRequest) error {
+			rctx, stop := runBound(ctx, reqCtx)
+			defer stop()
+			return h.removeRelease(rctx, req)
+		},
+		Add: func(reqCtx context.Context, req AddRequest) (AddResult, error) {
+			rctx, stop := runBound(ctx, reqCtx)
+			defer stop()
+			return h.addRelease(rctx, req)
+		},
+	})
+	defer h.state.SetReleaseActions(h.gen, nil)
 	h.loadServerErrs(ctx)
 	h.initTrackerChannels()
 	for ttid := range h.idx {
@@ -427,6 +451,7 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 }
 
 func (h *handler) collectEntries(ctx context.Context) (rawEntries, entries []*model.Entry, adopted map[*model.Entry]struct{}, partial bool, err error) {
+	listedAt := time.Now()
 	rawEntries, err = h.manager.GetEntries(ctx, model.FilterOptions{})
 	if err != nil {
 		if !errors.Is(err, model.ErrPartialList) {
@@ -437,6 +462,12 @@ func (h *handler) collectEntries(ctx context.Context) (rawEntries, entries []*mo
 		partial = true
 		err = nil
 	}
+	listed := make([]string, 0, len(rawEntries))
+	for _, e := range rawEntries {
+		listed = append(listed, e.Hash)
+	}
+	// торрент снова в клиенте (добавили руками): метка удаления больше не держит его проверку
+	h.state.ClearRemoved(listedAt, listed)
 	// те же указатели идут дальше в дедупликацию, очередь и чистку истории.
 	// Усыновляем все: чистке нужен адрес каждого
 	adopted = make(map[*model.Entry]struct{})
@@ -805,6 +836,10 @@ func (h *handler) getHistory(ctx context.Context, link string, dry bool, items m
 
 func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dryReport) (err error) {
 	var tc client.IClient
+	if rep == nil && h.state.Removed(e.Hash) {
+		logger.Info(fmt.Sprint("removed by user, skipped: ", e.Name))
+		return nil
+	}
 	// лок на трекер: разные трекеры идут параллельно, записи одного трекера по очереди
 	mu := h.mx.Mutex(ttid)
 	mu.Lock()
@@ -866,6 +901,10 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		return nil
 	}
 	if err = h.submitLocked(ctx, ttid, tc, e, rep); err != nil {
+		if errors.Is(err, errRemovedByUser) {
+			logger.Info(fmt.Sprint("removed by user, skipped: ", e.Name))
+			return nil
+		}
 		if errors.Is(err, context.Canceled) {
 			logger.Info("processing interrupted")
 			return nil
@@ -952,6 +991,10 @@ func (h *handler) logCheckStreak(ctx context.Context, e *model.Entry, ttid int, 
 			msg += ": " + errMsg
 		}
 		logger.Info(msg)
+		return
+	}
+	// проверка, начатая до удаления, не должна вернуть строку и слать уведомления
+	if h.state.Removed(e.Hash) {
 		return
 	}
 	metrics.Checks.Inc(trackerLabel(ttid), status)
@@ -1063,6 +1106,10 @@ func (h *handler) submitLocked(ctx context.Context, ttid int, tc client.IClient,
 	// замена и дописывание комментария одного торрента не пересекаются, это же держит web-перекачка
 	if rep == nil {
 		defer h.state.LockTorrent(e.Hash)()
+		// удаление могло пройти, пока ждали замок: заменять уже нечего
+		if h.state.Removed(e.Hash) {
+			return errRemovedByUser
+		}
 	}
 	return h.submit(ctx, ttid, tc, e, rep)
 }
@@ -1169,6 +1216,10 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur
 	if readErr != nil {
 		logger.Warn(fmt.Sprintf("release times of %s not read: %v", e.Name, readErr))
 		samples = nil
+	}
+	// все вызовы идут не в dry-run. Удаление во время проверки: SaveItem вставил бы строку без торрента
+	if h.state.Removed(e.Hash) {
+		return
 	}
 	if err = h.storage.SaveItem(ctx, &runnerModel.HistoryItem{
 		TrackerTypeID: ttid,

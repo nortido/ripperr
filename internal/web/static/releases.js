@@ -4,6 +4,7 @@ import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardF
 import { confirmDialog } from './confirm.js';
 import { hydrateIcons, ICONS, icon } from './icons.js';
 import { historyFiltered, historyState } from './state.js';
+import { openRowMenu } from './rowmenu.js';
 import { formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, statusIcon, trackerBadgeHtml } from './util.js';
 
 export let planForceLocal = Object.create(null);
@@ -112,18 +113,124 @@ export function syncPlanForceLocal(items) {
   });
 }
 
-export function redownloadButtonHtml(hash, absent) {
-  const btnTitle = absent ? t('dash.absentTitle') : t('dash.redownload');
-  const off = absent ? html` disabled` : '';
-  return html`<button type="button" class="btn btn-icon-only btn-redownload btn-action-redownload" title="${btnTitle}" aria-label="${btnTitle}" data-hash="${hash}"${off}><span data-icon="download"></span></button>`;
+export function moreButtonHtml(hash, absent) {
+  const btnTitle = t('dash.more');
+  const absentAttr = absent ? html` data-absent="1"` : '';
+  return html`<button type="button" class="btn btn-icon-only btn-more btn-action-more" title="${btnTitle}" aria-label="${btnTitle}" aria-haspopup="menu" aria-expanded="false" data-hash="${hash}"${absentAttr}><span data-icon="moreVertical"></span></button>`;
 }
 
-// в покое стрелка вниз, чтобы не путать с 'Обновить'; на время запроса подобранный под вращение rotateCw
-function setRedownloadIcon(btn, name) {
+function setMoreIcon(btn, name) {
   const iconEl = btn.querySelector('[data-icon]');
   if (!iconEl) return;
   iconEl.setAttribute('data-icon', name);
   iconEl.innerHTML = ICONS[name];
+}
+
+function releaseRow(hash) {
+  // фоновое обновление могло перерисовать таблицу, пока шел запрос или диалог,
+  // поэтому строку каждый раз ищем заново по хэшу
+  return document.querySelector('tr[data-release-hash="' + CSS.escape(hash) + '"]');
+}
+
+function setReleaseBusy(hash, on, icon) {
+  const row = releaseRow(hash);
+  if (!row) return;
+  row.classList.toggle('is-redownloading', on);
+  if (on) {
+    row.querySelectorAll('button:not(:disabled)').forEach(function (b) {
+      b.disabled = true;
+      b.dataset.busyOff = '1';
+    });
+  } else {
+    row.querySelectorAll('button[data-busy-off]').forEach(function (b) {
+      b.disabled = false;
+      delete b.dataset.busyOff;
+    });
+  }
+  const more = row.querySelector('.btn-action-more');
+  if (more) {
+    more.classList.toggle('is-spinning', on);
+    setMoreIcon(more, on ? icon || 'rotateCw' : 'moreVertical');
+  }
+}
+
+function focusMoreButton(hash) {
+  const row = releaseRow(hash);
+  const more = row && row.querySelector('.btn-action-more');
+  if (more) more.focus({ preventScroll: true });
+}
+
+const REMOVE_ERROR_KEYS = {
+  torrent_busy: 'dash.redownloadBusy',
+  replace_pending: 'dash.removePending',
+  torrents_changed: 'dash.removeChanged',
+  files_not_allowed: 'dash.removeFilesDenied',
+  remove_unconfirmed: 'dash.removeUnconfirmed',
+  partial_list: 'dash.partialList',
+  runner_unavailable: 'dash.runnerNotReady',
+  timeout: 'dash.timeout',
+};
+
+function removeErrorText(err) {
+  const key = REMOVE_ERROR_KEYS[err.code];
+  return key ? t(key) : err.message;
+}
+
+async function redownloadRelease(hash, name) {
+  const ok = await confirmDialog({
+    text: t('dash.redownloadConfirm', { name: name }),
+    confirmLabel: t('dash.redownloadAction'),
+    danger: true,
+  });
+  if (!ok) return;
+  setReleaseBusy(hash, true);
+  try {
+    await fetchJSON('/api/history/' + encodeURIComponent(hash) + '/redownload', {
+      method: 'POST',
+    });
+    showToast(t('dash.redownloadDone'), 'success');
+    await loadDashboard();
+  } catch (err) {
+    showToast(err.code === 'torrent_busy' ? t('dash.redownloadBusy') : err.message, 'error');
+    setReleaseBusy(hash, false);
+  }
+}
+
+async function removeRelease(hash, name) {
+  const base = '/api/history/' + encodeURIComponent(hash) + '/remove';
+  setReleaseBusy(hash, true, 'loader');
+  let info;
+  try {
+    info = await fetchJSON(base);
+  } catch (err) {
+    showToast(removeErrorText(err), 'error', { title: t('dash.removeFailedTitle') });
+    setReleaseBusy(hash, false);
+    return;
+  }
+  setReleaseBusy(hash, false);
+  focusMoreButton(hash);
+  const count = info.torrents || 0;
+  let text;
+  if (count === 0) text = t('dash.removeConfirmGone', { name: name });
+  else if (count === 1) text = t('dash.removeConfirm', { name: name });
+  else text = t('dash.removeConfirmMany', { name: name, count: count });
+  if (!info.files) text += '\n' + t('dash.removeKeepsFiles');
+  const opts = { text: text, confirmLabel: t('common.remove'), danger: true };
+  if (info.files) opts.checkLabel = t('dash.removeWithFiles');
+  const res = await confirmDialog(opts);
+  if (!res) return;
+  setReleaseBusy(hash, true, 'loader');
+  try {
+    await fetchJSON(base, {
+      method: 'POST',
+      body: JSON.stringify({ files: !!info.files && !!res.checked, torrents: count }),
+    });
+    showToast(t('dash.removeDone'), 'success');
+    await loadDashboard();
+  } catch (err) {
+    showToast(removeErrorText(err), 'error', { title: t('dash.removeFailedTitle') });
+    setReleaseBusy(hash, false);
+  }
 }
 
 export function planForceButtonHtml(hash, forced) {
@@ -249,7 +356,7 @@ export function buildReleaseRows(histItems) {
     const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
     const absentLabel = item.absent ? html`<span class="release-absent" title="${t('dash.absentTitle')}">${t('dash.absent')}</span>` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
-    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}${absentLabel}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${redownloadEnabled ? redownloadButtonHtml(urlHash, item.absent) : ''}${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button></div></td></tr>`);
+    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}${absentLabel}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button>${moreButtonHtml(urlHash, item.absent)}</div></td></tr>`);
   });
   return html`${rows}`;
 }
@@ -393,49 +500,32 @@ export function bindDashboardReleaseRows(root) {
     });
   });
 
-  el.querySelectorAll('.btn-redownload').forEach(function (btn) {
-    if (btn.dataset.redownloadBound) return;
-    btn.dataset.redownloadBound = '1';
-    btn.addEventListener('click', async function () {
+  el.querySelectorAll('.btn-action-more').forEach(function (btn) {
+    if (btn.dataset.moreBound) return;
+    btn.dataset.moreBound = '1';
+    btn.addEventListener('click', function () {
       const hash = btn.getAttribute('data-hash');
       if (!hash) return;
-      const row = btn.closest('tr');
-      const ignoreBtn = row && row.querySelector('[data-name]');
+      const ignoreBtn = btn.closest('tr').querySelector('[data-name]');
       const name = (ignoreBtn && ignoreBtn.getAttribute('data-name')) || hash;
-      const ok = await confirmDialog({
-        text: t('dash.redownloadConfirm', { name: name }),
-        confirmLabel: t('dash.redownloadAction'),
+      const absent = btn.getAttribute('data-absent') === '1';
+      const items = [];
+      if (redownloadEnabled) {
+        items.push({
+          label: t('dash.redownloadAction'),
+          icon: 'download',
+          title: absent ? t('dash.absentTitle') : t('dash.redownload'),
+          disabled: absent,
+          onSelect: function () { redownloadRelease(hash, name); },
+        });
+      }
+      items.push({
+        label: t('common.remove'),
+        icon: 'trash',
         danger: true,
+        onSelect: function () { removeRelease(hash, name); },
       });
-      if (!ok) return;
-      const reEnable = [];
-      if (row) {
-        row.querySelectorAll('button').forEach(function (b) {
-          if (!b.disabled) {
-            reEnable.push(b);
-            b.disabled = true;
-          }
-        });
-        row.classList.add('is-redownloading');
-      } else {
-        btn.disabled = true;
-      }
-      setRedownloadIcon(btn, 'rotateCw');
-      btn.classList.add('is-spinning');
-      try {
-        await fetchJSON('/api/history/' + encodeURIComponent(hash) + '/redownload', {
-          method: 'POST',
-        });
-        showToast(t('dash.redownloadDone'), 'success');
-        await loadDashboard();
-      } catch (err) {
-        showToast(err.code === 'torrent_busy' ? t('dash.redownloadBusy') : err.message, 'error');
-        btn.classList.remove('is-spinning');
-        setRedownloadIcon(btn, 'download');
-        if (row) row.classList.remove('is-redownloading');
-        reEnable.forEach(function (b) { b.disabled = false; });
-        if (!row) btn.disabled = false;
-      }
+      openRowMenu(btn, items);
     });
   });
 

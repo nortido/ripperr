@@ -138,3 +138,24 @@ type pushStateResp struct {
 	PublicKey string           `json:"public_key"`
 	Devices   []pushDeviceResp `json:"devices"`
 }
+
+type addOptionsResp struct {
+	Mode    string   `json:"mode"`
+	Options []string `json:"options"`
+	Any     bool     `json:"any"`
+}
+
+type addReleaseResp struct {
+	OK        bool `json:"ok"`
+	Unignored bool `json:"unignored"`
+}
+
+type removalResp struct {
+	Torrents int  `json:"torrents"`
+	Files    bool `json:"files"`
+}
+
+type releaseErrResp struct {
+	Error string `json:"error"`
+	Code  string `json:"code,omitempty"`
+}

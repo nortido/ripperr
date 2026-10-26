@@ -140,6 +140,10 @@ html.mobile-layout .table-dash-releases td {
   display: block;
 }
 
+html.mobile-layout .row-menu-item {
+  min-height: 44px;
+}
+
 html.mobile-layout .card-footer {
   flex-wrap: wrap;
   gap: 10px;
@@ -436,11 +440,20 @@ html.mobile-layout .page-header-run-group {
   width: 100%;
   justify-content: stretch;
   gap: 8px;
+  --btn-h-md: 40px;
 }
 
 html.mobile-layout .page-header-run-group .btn-primary,
+html.mobile-layout .page-header-run-group .btn-restart,
+html.mobile-layout .page-header-run-group .btn-outline {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* длинная подпись перезапуска переносится, чтобы три кнопки влезли в строку */
 html.mobile-layout .page-header-run-group .btn-restart {
-  flex: 1;
+  white-space: normal;
+  line-height: 1.1;
 }
 
 html.mobile-layout .card-header {
@@ -812,6 +825,8 @@ html.mobile-layout .hint-toggle {
 html.mobile-layout .modal-overlay {
   padding: 0;
   align-items: stretch;
+  /* окна живут в <body> вне .app: масштаб страницы им задаем сами, иначе они крупнее ее */
+  zoom: var(--page-scale, 1);
 }
 
 html.mobile-layout .modal {
@@ -824,7 +839,7 @@ html.mobile-layout .modal {
 }
 
 html.mobile-layout .modal-head {
-  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-top: calc(8px + env(safe-area-inset-top));
 }
 
 html.mobile-layout .modal-foot {
@@ -834,7 +849,7 @@ html.mobile-layout .modal-foot {
 /* полноэкранный диалог начинается под верхней полосой. Логотип и копии кнопок
    страницы при открытом диалоге не нажимаются, бургер сначала закрывает диалог */
 html.mobile-layout .modal-overlay:not(.confirm-overlay) {
-  top: calc(56px * var(--page-scale, 1));
+  top: 56px;
 }
 
 html.mobile-layout .modal-overlay:not(.confirm-overlay) > .modal {
@@ -842,7 +857,7 @@ html.mobile-layout .modal-overlay:not(.confirm-overlay) > .modal {
 }
 
 html.mobile-layout .modal-overlay:not(.confirm-overlay) .modal-head {
-  padding-top: 12px;
+  padding-top: 8px;
 }
 
 html.mobile-layout body:has(.modal-overlay:not(.confirm-overlay)) .mobile-header-brand,

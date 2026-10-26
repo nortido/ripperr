@@ -145,10 +145,11 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 
 func (c *Client) AddNewRelease(ctx context.Context, e *storage.CheckLogEntry, firstCheck time.Time) (bool, error) {
 	// у статуса new checked_at хранит время первой проверки, а не последней.
-	// DO NOTHING без цели ловит и url_hash, и точное имя (check_log_item_name_exact_uidx): ничего не перезаписываем
+	// DO NOTHING без цели ловит и url_hash, и точное имя (check_log_item_name_exact_uidx): ничего не перезаписываем.
+	// appeared_at по часам SQLite, как checked_at в AddCheckLog: дашборд сравнивает их между собой
 	res, err := c.db.ExecContext(ctx,
-		`INSERT INTO check_log (checked_at, url_hash, item_name, item_url, tracker_type_id, status, new_category)
-		 SELECT ?, ?, ?, ?, ?, 'new', ? WHERE NOT EXISTS (SELECT 1 FROM history WHERE url_hash = ?)
+		`INSERT INTO check_log (checked_at, url_hash, item_name, item_url, tracker_type_id, status, new_category, appeared_at)
+		 SELECT ?, ?, ?, ?, ?, 'new', ?, unixepoch() WHERE NOT EXISTS (SELECT 1 FROM history WHERE url_hash = ?)
 		 ON CONFLICT DO NOTHING`,
 		firstCheck.Unix(), e.URLHash, e.ItemName, e.ItemURL, e.TrackerTypeID, e.Category, e.URLHash)
 	if err != nil {
@@ -326,7 +327,9 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 	if err := c.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	orderBy := " ORDER BY c.checked_at DESC"
+	// новая строка идет по времени появления: ее checked_at это будущая первая проверка.
+	// id DESC держит порядок внутри одной секунды и между страницами
+	orderBy := " ORDER BY CASE WHEN " + isNew + " THEN COALESCE(c.appeared_at, c.checked_at) ELSE c.checked_at END DESC, c.id DESC"
 	if f.SortBy == "recheck" {
 		orderBy = " ORDER BY " + recheckExpr + " IS NULL, " + recheckExpr + " ASC"
 	}

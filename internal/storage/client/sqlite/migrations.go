@@ -77,6 +77,10 @@ WHERE id IN (
 		name:  "exact item name index",
 		apply: exactItemNameIndex,
 	},
+	{
+		name:  "new release appeared at",
+		apply: addAppearedAt,
+	},
 }
 
 func (c *Client) Bootstrap(ctx context.Context) error {
@@ -170,5 +174,25 @@ func exactItemNameIndex(ctx context.Context, _ *Client, tx *sql.Tx) error {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS check_log_item_name_exact_uidx ON check_log (TRIM(item_name)) WHERE TRIM(item_name) <> ''`)
+	return err
+}
+
+func addAppearedAt(ctx context.Context, _ *Client, tx *sql.Tx) error {
+	var cols, have int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(name = 'appeared_at'), 0) FROM pragma_table_info('check_log')`).Scan(&cols, &have); err != nil {
+		return err
+	}
+	if cols == 0 {
+		return nil
+	}
+	if have == 0 {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE check_log ADD COLUMN appeared_at INTEGER`); err != nil {
+			return err
+		}
+	}
+	// повтор после decrypt-secrets: колонка уже есть, но строки new от сборки без нее
+	// могли остаться пустыми. Поэтому время дописываем на каждом запуске и только в NULL
+	_, err := tx.ExecContext(ctx, `UPDATE check_log SET appeared_at = unixepoch()
+WHERE appeared_at IS NULL AND status = 'new' AND NOT EXISTS (SELECT 1 FROM history h WHERE h.url_hash = check_log.url_hash)`)
 	return err
 }

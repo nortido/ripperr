@@ -66,6 +66,8 @@ type fakeStorage struct {
 	newCatCalls int
 	newCatErr   error
 	settings    *fakeSettings
+	unignored   []string
+	streakReset []string
 }
 
 type fakeSettings struct {
@@ -158,6 +160,16 @@ func (f *fakeStorage) GetIgnoreSet(context.Context) (map[string]struct{}, error)
 
 func (f *fakeStorage) DeleteItem(_ context.Context, urlHash string) error {
 	f.deleted = append(f.deleted, urlHash)
+	return nil
+}
+
+func (f *fakeStorage) DeleteIgnore(_ context.Context, hash string) error {
+	f.unignored = append(f.unignored, hash)
+	return nil
+}
+
+func (f *fakeStorage) ResetErrorStreak(_ context.Context, urlHash string) error {
+	f.streakReset = append(f.streakReset, urlHash)
 	return nil
 }
 
@@ -270,6 +282,18 @@ func (f *fakeManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFil
 }
 
 func (f *fakeManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
+	return nil
+}
+
+func (f *fakeManager) DeletesFiles(context.Context, model.ManagerDeleteOptions) bool {
+	return false
+}
+
+func (f *fakeManager) Remove(context.Context, []model.ManagerDeleteOptions) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeManager) Add(context.Context, []byte, model.ManagerAddFileOptions) error {
 	return nil
 }
 

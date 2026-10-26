@@ -265,6 +265,10 @@ func (c *Client) mapEntry(t *rpcTorrent) *model.Entry {
 		// error 3: локальная ошибка (нет данных, диск отключен), 1-2: проверка
 		Unhealthy: t.Error == 3 || t.Status == 1 || t.Status == 2,
 	}
+	// пустой каталог оставляет путь пустым: иначе "/Name" сошел бы за известное место
+	if t.DownloadDir != "" {
+		res.ContentPath = t.DownloadDir + "/" + t.Name
+	}
 	// соглашение qBittorrent: -1 без ограничения, -2 глобальный лимит клиента
 	switch t.SeedRatioMode {
 	case 1:

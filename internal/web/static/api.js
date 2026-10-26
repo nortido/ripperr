@@ -67,7 +67,9 @@ export async function fetchJSON(url, options = {}) {
   return data;
 }
 
-let currentToast = null;
+const TOAST_MAX = 3;
+const toasts = [];
+const mobileToasts = window.matchMedia('(max-width: 900px)');
 let lastFocusOutsideToast = null;
 
 // кнопка тоста после клика получает фокус, а потом тост удаляется: вернуть фокус надо на прежний элемент
@@ -82,7 +84,17 @@ document.addEventListener('focusout', function (e) {
 function removeToast(entry) {
   clearTimeout(entry.timer);
   entry.el.remove();
-  if (currentToast === entry) currentToast = null;
+  const i = toasts.indexOf(entry);
+  if (i >= 0) toasts.splice(i, 1);
+}
+
+function scheduleHide(entry, ms) {
+  clearTimeout(entry.timer);
+  entry.timer = setTimeout(function () {
+    entry.el.style.transition = 'opacity 0.2s';
+    entry.el.style.opacity = '0';
+    entry.timer = setTimeout(function () { removeToast(entry); }, 200);
+  }, ms);
 }
 
 function reportUIError(text) {
@@ -106,14 +118,16 @@ function iconButton(className, name, label) {
 
 function addToastControls(entry, message, type) {
   const el = entry.el;
-  const text = el.querySelector('.toast-text');
+  const text = el.querySelector('.toast-msg');
   const actions = document.createElement('div');
   actions.className = 'toast-actions';
   const close = iconButton('toast-close', 'x', t('common.close'));
   actions.appendChild(close);
   el.appendChild(actions);
   close.addEventListener('click', function () { removeToast(entry); });
-  if (text.scrollHeight > text.clientHeight + 1) {
+  // на мобильном у тоста с заголовком пояснение скрыто, открыть его можно только шевроном
+  const titledMobile = mobileToasts.matches && el.querySelector('.toast-title') !== null;
+  if (titledMobile || text.scrollHeight > text.clientHeight + 1) {
     el.classList.add('is-long');
     const expand = iconButton('toast-expand', 'chevron', t('toast.expand'));
     expand.setAttribute('aria-expanded', 'false');
@@ -144,7 +158,44 @@ function addToastControls(entry, message, type) {
   hydrateIcons(actions);
 }
 
-export function showToast(message, type) {
+function swipeToDismiss(entry) {
+  const el = entry.el;
+  let start = null;
+  let dx = 0;
+  let dy = 0;
+  function reset() {
+    el.style.transition = 'transform 0.15s ease';
+    el.style.transform = '';
+    start = null;
+  }
+  el.addEventListener('pointerdown', function (e) {
+    if (e.pointerType !== 'touch' || e.target.closest('button')) return;
+    start = { x: e.clientX, y: e.clientY, drag: false };
+    dx = 0;
+    dy = 0;
+  });
+  el.addEventListener('pointermove', function (e) {
+    if (!start) return;
+    dx = e.clientX - start.x;
+    dy = Math.min(e.clientY - start.y, 0);
+    if (!start.drag) {
+      if (Math.abs(dx) < 8 && -dy < 8) return;
+      start.drag = true;
+      el.setPointerCapture(e.pointerId);
+      el.style.transition = 'none';
+    }
+    el.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+  });
+  el.addEventListener('pointerup', function () {
+    if (!start) return;
+    if (!start.drag) start = null;
+    else if (Math.abs(dx) >= 40 || -dy >= 40) removeToast(entry);
+    else reset();
+  });
+  el.addEventListener('pointercancel', function () { if (start) reset(); });
+}
+
+export function showToast(message, type, opts) {
   if (authRedirecting && type === 'error') return;
   if (type === 'error') reportUIError(message);
   const container = document.getElementById('toast-container');
@@ -152,22 +203,47 @@ export function showToast(message, type) {
     type === 'success' ? 'toast-success' :
     type === 'error' ? 'toast-error' :
     'toast-info';
-  if (currentToast) removeToast(currentToast);
+  const icon =
+    type === 'success' ? 'check' :
+    type === 'error' ? 'warning' :
+    'info';
+  const limit = mobileToasts.matches ? 1 : TOAST_MAX;
+  while (toasts.length >= limit) removeToast(toasts[0]);
   const el = document.createElement('div');
   el.className = 'toast ' + cls;
+  const badge = document.createElement('span');
+  badge.className = 'toast-icon';
+  badge.setAttribute('data-icon', icon);
+  el.appendChild(badge);
+  hydrateIcons(el);
   const text = document.createElement('div');
   text.className = 'toast-text';
-  text.textContent = message;
+  if (opts && opts.title) {
+    const title = document.createElement('div');
+    title.className = 'toast-title';
+    title.textContent = opts.title;
+    text.appendChild(title);
+  }
+  const msg = document.createElement('div');
+  msg.className = 'toast-msg';
+  msg.textContent = message;
+  text.appendChild(msg);
   el.appendChild(text);
   const entry = { el: el, timer: null };
-  currentToast = entry;
+  toasts.push(entry);
   container.appendChild(el);
   addToastControls(entry, message, type);
-  entry.timer = setTimeout(function () {
-    el.style.opacity = '0';
-    el.style.transition = 'opacity 0.2s';
-    entry.timer = setTimeout(function () { removeToast(entry); }, 200);
-  }, 4500);
+  el.addEventListener('pointerenter', function (e) {
+    if (e.pointerType !== 'mouse') return;
+    clearTimeout(entry.timer);
+    el.style.opacity = '';
+  });
+  el.addEventListener('pointerleave', function (e) {
+    if (e.pointerType !== 'mouse' || el.classList.contains('is-expanded')) return;
+    scheduleHide(entry, 2000);
+  });
+  if (mobileToasts.matches) swipeToDismiss(entry);
+  scheduleHide(entry, type === 'error' ? 7000 : 4000);
 }
 
 

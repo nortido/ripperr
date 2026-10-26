@@ -164,7 +164,7 @@ func TestListMapsEntries(t *testing.T) {
 		st := ids[e.Hash]
 		want := states[st]
 		if e.Name != "n"+st || e.URL != "https://tracker.example/viewtopic.php?t=12345" || e.TopicID != "12345" ||
-			e.Category != "movies" || e.SavePath != "/data/"+st || e.Tag != "" || e.Timestamp == nil || e.Timestamp.Unix() != 1700000000 {
+			e.Category != "movies" || e.SavePath != "/data/"+st || e.ContentPath != "/data/"+st+"/n"+st || e.Tag != "" || e.Timestamp == nil || e.Timestamp.Unix() != 1700000000 {
 			t.Errorf("%s: bad entry %+v", st, e)
 		}
 		if e.Stopped != want.stopped || e.Unhealthy != want.unhealthy {

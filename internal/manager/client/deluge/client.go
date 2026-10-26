@@ -145,6 +145,9 @@ func (c *Client) mapEntry(id string, st *torrentStatus) *model.Entry {
 		Stopped:   st.State == statePaused,
 		Unhealthy: st.State == stateError || st.State == stateChecking || st.State == stateMoving || st.State == stateAllocating,
 	}
+	if st.SavePath != "" {
+		e.ContentPath = st.SavePath + "/" + st.Name
+	}
 	if e.Stopped && st.Progress >= 100 {
 		e.MaxRatio = c.config.PausedMaxRatio
 	}

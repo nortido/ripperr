@@ -9,6 +9,8 @@ var (
 	ErrReplacePending     = errors.New("previous replace not finished")
 	ErrCommentUnsupported = errors.New("client cannot set torrent comment")
 	ErrExportUnsupported  = errors.New("client cannot export torrent")
+	ErrFilesNotAllowed    = errors.New("deleting files is not allowed for this torrent")
+	ErrRemoveUnconfirmed  = errors.New("client still lists the removed torrent")
 )
 
 type FilterOptions struct {

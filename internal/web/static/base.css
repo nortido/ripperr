@@ -65,6 +65,7 @@
   --focus-outline: #047857;
   --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06);
   --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.1);
+  --shadow-toast: 0 14px 44px rgba(0, 0, 0, 0.18), 0 3px 10px rgba(0, 0, 0, 0.08);
   --shadow-primary: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --seg-track-bg: rgba(0, 0, 0, 0.11);
   --seg-thumb-bg: #ffffff;
@@ -154,6 +155,7 @@
   /* размытой тени на темном фоне не видно, карточку отделяет блик сверху */
   --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-dropdown: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-toast: 0 18px 56px rgba(0, 0, 0, 0.7), 0 4px 16px rgba(0, 0, 0, 0.45);
   --shadow-primary: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --seg-track-bg: rgba(255, 255, 255, 0.08);
   --seg-thumb-bg: rgba(255, 255, 255, 0.12);
@@ -176,6 +178,7 @@
   --table-stripe: rgba(255, 255, 255, 0.025);
   --shadow-card: none;
   --shadow-dropdown: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  --shadow-toast: 0 18px 56px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 *, *::before, *::after {
@@ -228,11 +231,11 @@ a {
 
 /* zoom, потому что transform делает элемент содержащим блоком для fixed-потомков
    (шторка, шапка, подложка) и они отрываются от вьюпорта */
-/* класс есть только на экранах уже 360px, --page-scale там w/360. Через
-   calc(100% / scale) ширину не считаем: Chrome то отдает 100% уже под zoom,
+/* класс есть на всех мобильных ширинах, JS кладет --page-scale и --page-width (= w / scale).
+   Через calc(100% / scale) ширину не считаем: Chrome то отдает 100% уже под zoom,
    то нет, и деление срабатывает дважды */
 .app.page-scaled {
-  width: 360px;
+  width: var(--page-width, 360px);
   zoom: var(--page-scale, 1);
   min-height: calc(100vh / var(--page-scale, 1));
   min-height: calc(100dvh / var(--page-scale, 1));

@@ -232,6 +232,7 @@ func (c *Client) mapEntry(t *qbt.Torrent, p *qbt.TorrentProperties) (res *model.
 		MaxRatio:       t.MaxRatio,
 		MaxSeedingTime: t.MaxSeedingTime,
 		SavePath:       t.SavePath,
+		ContentPath:    t.ContentPath,
 		Stopped:        isStopped(t.State),
 		Unhealthy:      isChecking(t.State) || t.State == qbt.TorrentStateError || t.State == qbt.TorrentStateMissingFiles || t.State == qbt.TorrentStateMoving,
 	}

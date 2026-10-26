@@ -810,3 +810,11 @@ func TestList_NarrowSkipsDroppedProperties(t *testing.T) {
 		}
 	}
 }
+
+func TestMapEntry_ContentPath(t *testing.T) {
+	c := &Client{}
+	e := c.mapEntry(&qbt.Torrent{Name: "Renamed", SavePath: "/data/tv", ContentPath: "/data/tv/Show S01"}, &qbt.TorrentProperties{})
+	if e.ContentPath != "/data/tv/Show S01" {
+		t.Fatalf("ContentPath = %q, want the client content path", e.ContentPath)
+	}
+}

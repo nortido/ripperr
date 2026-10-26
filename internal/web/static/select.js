@@ -132,16 +132,20 @@ export function initCustomSelect(selectEl) {
     // тело диалога прокручивается и обрезало список, поэтому в диалоге панель
     // фиксированная по координатам кнопки и не выше свободного места
     const room = Math.max(120, (up ? spaceAbove : spaceBelow) - 12);
+    // на мобильном окно под zoom страницы: координаты экрана делим на масштаб, иначе их умножит zoom
+    const z = document.documentElement.classList.contains('mobile-layout')
+      ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--page-scale')) || 1
+      : 1;
     panel.style.position = 'fixed';
-    panel.style.left = rect.left + 'px';
+    panel.style.left = rect.left / z + 'px';
     panel.style.right = 'auto';
-    panel.style.width = rect.width + 'px';
-    panel.style.maxHeight = Math.min(320, room) + 'px';
+    panel.style.width = rect.width / z + 'px';
+    panel.style.maxHeight = Math.min(320, room / z) + 'px';
     if (up) {
       panel.style.top = 'auto';
-      panel.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+      panel.style.bottom = (window.innerHeight - rect.top + 4) / z + 'px';
     } else {
-      panel.style.top = (rect.bottom + 4) + 'px';
+      panel.style.top = (rect.bottom + 4) / z + 'px';
       panel.style.bottom = 'auto';
     }
   }

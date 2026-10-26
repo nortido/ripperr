@@ -29,8 +29,20 @@ export function confirmDialog(opts) {
     okBtn.type = 'button';
     okBtn.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
     okBtn.textContent = opts.confirmLabel;
+    box.append(text);
+    let checkEl = null;
+    if (opts.checkLabel) {
+      const wrap = document.createElement('label');
+      wrap.className = 'form-switch confirm-check';
+      checkEl = document.createElement('input');
+      checkEl.type = 'checkbox';
+      const checkText = document.createElement('span');
+      checkText.textContent = opts.checkLabel;
+      wrap.append(checkEl, checkText);
+      box.append(wrap);
+    }
     foot.append(cancelBtn, okBtn);
-    box.append(text, foot);
+    box.append(foot);
     overlay.appendChild(box);
 
     // inert ставим только там, где его еще не было, и снимаем только свой
@@ -74,7 +86,7 @@ export function confirmDialog(opts) {
     stack.push(entry);
 
     cancelBtn.addEventListener('click', function () { finish(false); });
-    okBtn.addEventListener('click', function () { finish(true); });
+    okBtn.addEventListener('click', function () { finish(checkEl ? { checked: checkEl.checked } : true); });
     // как у диалога трекера: подложка закрывает, только если и нажатие, и отпускание были на ней
     // второй клик быстрого двойного по кнопке, открывшей вопрос, попадает уже на подложку
     // и сразу отменял бы его. Первые 300 мс подложку не слушаем, Escape и "Отмена" работают

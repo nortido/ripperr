@@ -42,14 +42,16 @@ export function startTour(steps, opts) {
   }
 
   // CSS zoom на .app: Chrome и Firefox отдают getBoundingClientRect уже в координатах окна, а
-  // старые движки нет. Сверяем реальную ширину .app с заявленными 360px и умножаем только при расхождении.
+  // старые движки нет. Сверяем реальную ширину .app с заявленной --page-width и умножаем только при расхождении.
   function zoomFactor(target) {
     const app = target.closest('.app.page-scaled');
     if (!app) return 1;
-    const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--page-scale')) || 1;
+    const style = getComputedStyle(document.documentElement);
+    const scale = parseFloat(style.getPropertyValue('--page-scale')) || 1;
     if (scale === 1) return 1;
+    const pageW = parseFloat(style.getPropertyValue('--page-width')) || 360;
     const w = app.getBoundingClientRect().width;
-    return Math.abs(w - 360) < Math.abs(w - 360 * scale) ? scale : 1;
+    return Math.abs(w - pageW) < Math.abs(w - pageW * scale) ? scale : 1;
   }
 
   function finish(reason) {

@@ -6,6 +6,7 @@ type Entry struct {
 	Hash           string
 	Category       string
 	SavePath       string
+	ContentPath    string
 	Tag            string
 	URL            string
 	TopicID        string

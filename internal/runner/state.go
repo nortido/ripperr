@@ -43,6 +43,11 @@ type State struct {
 	pollCached      bool
 	pollResult      int
 	pollAbsent      map[string]struct{}
+	actionsMu       sync.Mutex
+	actions         *ReleaseActions
+	actionsGen      uint32
+	removedMu       sync.Mutex
+	removed         map[string]time.Time
 }
 
 func NewState() *State {

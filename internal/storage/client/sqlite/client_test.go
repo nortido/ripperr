@@ -1025,6 +1025,62 @@ func TestListCheckLogNewReleaseHold(t *testing.T) {
 	}
 }
 
+func TestListCheckLogNewSortsByAppearance(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+	base := time.Now().Truncate(time.Second)
+
+	setChecked := func(hash string, at time.Time) {
+		t.Helper()
+		if _, err := c.db.ExecContext(ctx, `UPDATE check_log SET checked_at = ? WHERE url_hash = ?`, at.Unix(), hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checked := func(hash string, at time.Time) {
+		t.Helper()
+		if err := c.AddItem(ctx, &storage.Item{URLHash: hash, Name: hash}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: hash, ItemName: hash, Status: "unchanged"}); err != nil {
+			t.Fatal(err)
+		}
+		setChecked(hash, at)
+	}
+	addNew := func(hash string, first time.Time) {
+		t.Helper()
+		if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: hash, ItemName: hash}, first); err != nil || !ok {
+			t.Fatalf("AddNewRelease %s: ok=%v err=%v", hash, ok, err)
+		}
+	}
+	checked("c_old", base.Add(-3*time.Hour))
+	checked("c_tie", base.Add(-3*time.Hour))
+	addNew("n1", base.Add(24*time.Hour))
+	addNew("n2", base.Add(time.Minute))
+	addNew("n3", base.Add(24*time.Hour))
+	checked("n3", base.Add(-time.Hour))
+	checked("c_new", base.Add(time.Hour))
+
+	entries, _, err := c.ListCheckLog(ctx, storage.CheckLogFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, e := range entries {
+		order = append(order, e.URLHash)
+	}
+	want := []string{"c_new", "n2", "n1", "n3", "c_tie", "c_old"}
+	if !slices.Equal(order, want) {
+		t.Fatalf("default order = %v, want %v", order, want)
+	}
+	n1 := entries[2]
+	if n1.RecheckAt == nil || !n1.RecheckAt.Equal(base.Add(24*time.Hour)) {
+		t.Fatalf("n1.RecheckAt = %v, want %v", n1.RecheckAt, base.Add(24*time.Hour))
+	}
+	if !n1.CheckedAt.IsZero() {
+		t.Fatalf("n1.CheckedAt = %v, want zero", n1.CheckedAt)
+	}
+}
+
 func TestAddNewRelease(t *testing.T) {
 	c := newTestClient(t)
 	ctx := t.Context()

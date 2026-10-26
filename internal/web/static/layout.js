@@ -3,10 +3,10 @@ import { syncNameFilterLayout } from './namefilter.js';
 export const THEME_KEY = 'ripperr-theme';
 export const SIDEBAR_COLLAPSED_KEY = 'ripperr-sidebar-collapsed';
 export const PAGE_SCALE_BASE = 360;
-// масштаб ограничен только сверху: выше 1 на 880px выходил zoom 1.83 и заголовок в 44px.
-// Снизу нельзя, макет на 360px не тянется и влезает в экран только при w/360.
-// С базой 480px на iPhone (393px) все ужималось до 82%, текст 12px читался как 10
-export const PAGE_SCALE_MAX = 1;
+// масштаб ограничен сверху: выше 1 на 880px выходил zoom 1.83 и заголовок в 44px.
+// 0.94 дает вид экрана шире на 6%. Снизу нельзя, макет на 360px не тянется
+// и влезает в экран только при w/360
+export const MOBILE_PAGE_SCALE = 0.94;
 export const MOBILE_LAYOUT_MAX = 900;
 export let layoutWasMobile = false;
 
@@ -190,20 +190,18 @@ export function applyMobileLayout() {
   const mobile = w > 0 && w < MOBILE_LAYOUT_MAX;
   const layoutChanged = mobile !== layoutWasMobile;
   if (mobile) {
-    const scale = w / PAGE_SCALE_BASE;
-    document.documentElement.classList.add('mobile-layout');
-    if (scale < PAGE_SCALE_MAX) {
-      app.classList.add('page-scaled');
-      // на корне, чтобы значение пережило перерисовку .app
-      document.documentElement.style.setProperty('--page-scale', String(scale));
-    } else {
-      app.classList.remove('page-scaled');
-      document.documentElement.style.removeProperty('--page-scale');
-    }
+    const scale = Math.min(w / PAGE_SCALE_BASE, MOBILE_PAGE_SCALE);
+    const root = document.documentElement;
+    root.classList.add('mobile-layout');
+    app.classList.add('page-scaled');
+    // на корне, чтобы значения пережили перерисовку .app
+    root.style.setProperty('--page-scale', String(scale));
+    root.style.setProperty('--page-width', (w / scale) + 'px');
   } else {
     document.documentElement.classList.remove('mobile-layout');
     app.classList.remove('page-scaled');
     document.documentElement.style.removeProperty('--page-scale');
+    document.documentElement.style.removeProperty('--page-width');
   }
   layoutWasMobile = mobile;
   refreshSidebarLayout();

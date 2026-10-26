@@ -29,7 +29,7 @@ Pushover, a webhook or browser push notifications.
 - Fresh releases are checked often, old ones rarely. A topic that keeps failing goes to the ignore list.
 - Tracker mirrors: Ripperr picks a working domain and switches to another one when it fails.
 - FlareSolverr for sites behind Cloudflare, HTTP or SOCKS5 proxy for downloads.
-- Topics with a magnet link only: the `.torrent` is fetched from the DHT.
+- Topics with a magnet link only: Ripperr gets the `.torrent` from peers, found through the trackers in the magnet link.
 - Dry run: a full pass that changes nothing.
 - Web UI in English and Russian, works on phones.
 - One container, one SQLite file.
