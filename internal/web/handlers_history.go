@@ -86,6 +86,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	// метки ставит опрос, здесь только читаем один снимок на весь ответ
 	absent := s.runnerState.Absent()
+	colors := s.categoryColors(r.Context(), items)
 	out := make([]historyItemResp, len(items))
 	for i, e := range items {
 		recheckAt := ""
@@ -116,6 +117,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			RecheckAt:  recheckAt,
 			ForceCheck: e.ForceCheck,
 			Absent:     isAbsent,
+		}
+		if c, ok := colors[strings.TrimSpace(e.Category)]; ok {
+			out[i].CategoryColor = &c
 		}
 	}
 	writeJSON(w, http.StatusOK, historyResp{Items: out, Total: total})

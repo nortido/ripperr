@@ -80,21 +80,22 @@ type runResp struct {
 }
 
 type historyItemResp struct {
-	ID          int64  `json:"id"`
-	CheckedAt   string `json:"checked_at"`
-	URLHash     string `json:"url_hash"`
-	Name        string `json:"name"`
-	URL         string `json:"url"`
-	TrackerID   int    `json:"tracker_id"`
-	TrackerName string `json:"tracker_name"`
-	Status      string `json:"status"`
-	Error       string `json:"error"`
-	ErrorStreak int    `json:"error_streak"`
-	Category    string `json:"category"`
-	Broken      bool   `json:"broken"`
-	RecheckAt   string `json:"recheck_at"`
-	ForceCheck  bool   `json:"force_check"`
-	Absent      bool   `json:"absent"`
+	ID            int64  `json:"id"`
+	CheckedAt     string `json:"checked_at"`
+	URLHash       string `json:"url_hash"`
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	TrackerID     int    `json:"tracker_id"`
+	TrackerName   string `json:"tracker_name"`
+	Status        string `json:"status"`
+	Error         string `json:"error"`
+	ErrorStreak   int    `json:"error_streak"`
+	Category      string `json:"category"`
+	CategoryColor *int   `json:"category_color,omitempty"`
+	Broken        bool   `json:"broken"`
+	RecheckAt     string `json:"recheck_at"`
+	ForceCheck    bool   `json:"force_check"`
+	Absent        bool   `json:"absent"`
 }
 
 type historyResp struct {

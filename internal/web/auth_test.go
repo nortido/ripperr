@@ -28,7 +28,9 @@ type countingSettingStore struct {
 }
 
 func (c *countingSettingStore) GetSetting(ctx context.Context, key string) (json.RawMessage, bool, error) {
-	c.getSettingCalls++
+	if key == sqlite.SettingAuth {
+		c.getSettingCalls++
+	}
 	return c.fakeStore.GetSetting(ctx, key)
 }
 

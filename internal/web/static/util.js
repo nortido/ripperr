@@ -102,28 +102,53 @@ export function trackerDisplayDomain(tracker) {
   return tracker.domain || '';
 }
 
-export const TRACKER_HUE_COUNT = 6;
-
-// оттенки вручную: хеш сажал rutracker и teamhd на один цвет. Четырем частым трекерам
-// самые далекие друг от друга оттенки, а два похожих сине-зеленых достались редким.
-// 0 бирюзовый, 1 голубой, 2 синий, 3 фиолетовый, 4 янтарный, 5 розовый
-export const TRACKER_HUES = {
-  rutracker: 2,
-  nnm: 3,
+// у каждого трекера свой номер оттенка из 20, разнесены по кругу; свободные 5, 7, 9, 15
+// оставлены новым трекерам и неизвестным именам
+const TRACKER_HUES = {
+  rustorka: 0,
+  aniliberty: 1,
+  booktracker: 2,
+  tapochek: 3,
   kinozal: 4,
-  rutor: 0,
-  teamhd: 1,
+  riperam: 6,
+  newstudio: 8,
+  rutor: 10,
+  teamhd: 11,
+  selezen: 12,
+  toloka: 13,
+  rutracker: 14,
+  nnm: 16,
+  animelayer: 17,
+  anidub: 18,
 };
+const TRACKER_SPARE_HUES = [5, 7, 9, 15];
 
-export function trackerNameHueIndex(name) {
-  const known = TRACKER_HUES[(name || '').toLowerCase()];
-  if (known !== undefined) return known;
+// соседние номера категорий получают далекие оттенки
+const CATEGORY_HUE_ORDER = [0, 10, 5, 15, 3, 13, 8, 18, 1, 11, 6, 16, 4, 14, 9, 19, 2, 12, 7, 17];
+const CATEGORY_HUE_COUNT = CATEGORY_HUE_ORDER.length;
+
+function nameHash(name) {
   let h = 0;
   const s = name || '';
   for (let i = 0; i < s.length; i++) {
     h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   }
-  return Math.abs(h) % TRACKER_HUE_COUNT;
+  return Math.abs(h);
+}
+
+function badgeHue(index, offset) {
+  return (8 + 18 * index + offset) % 360;
+}
+
+function vanDerCorput(n) {
+  let v = 0;
+  let denom = 1;
+  while (n > 0) {
+    denom *= 2;
+    v += (n % 2) / denom;
+    n = Math.floor(n / 2);
+  }
+  return v;
 }
 
 export function loadStoredPageSize(fallback) {
@@ -147,11 +172,24 @@ export function pageSizeQueryLimit(size) {
 }
 
 
+function badgeHtml(label, tier, hue) {
+  // имя в title: в узкой колонке чип режется многоточием, иначе его не дочитать
+  return html`<span class="tracker-badge tracker-badge-${tier}" style="--badge-h:${hue}" title="${label}">${label}</span>`;
+}
+
 export function trackerBadgeHtml(name) {
   const label = name || t('common.emDash');
-  const idx = trackerNameHueIndex(label);
-  // имя в title: в узкой колонке чип режется многоточием, иначе его не дочитать
-  return html`<span class="tracker-badge tracker-badge-hue-${idx}" title="${label}">${label}</span>`;
+  let idx = TRACKER_HUES[label.toLowerCase()];
+  if (idx === undefined) idx = TRACKER_SPARE_HUES[nameHash(label) % TRACKER_SPARE_HUES.length];
+  return badgeHtml(label, 'a', badgeHue(idx, 0));
+}
+
+export function categoryChipHtml(name, colorIndex) {
+  const k = Number.isInteger(colorIndex) && colorIndex >= 0 ? colorIndex : nameHash(name) % CATEGORY_HUE_COUNT;
+  const round = Math.floor(k / CATEGORY_HUE_COUNT);
+  // после 20 категорий оттенки идут между уже занятыми
+  const hue = badgeHue(CATEGORY_HUE_ORDER[k % CATEGORY_HUE_COUNT], 18 * vanDerCorput(round));
+  return badgeHtml(name, round % 2 ? 'c' : 'b', hue);
 }
 
 

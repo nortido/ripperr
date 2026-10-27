@@ -1639,34 +1639,32 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
   vertical-align: middle;
 }
 
-.tracker-badge-hue-0 {
-  background: var(--tint-teal);
-  color: var(--hue-teal);
+.tracker-badge-a {
+  --badge-l: var(--badge-a-l);
+  --badge-c: var(--badge-a-c);
+  --badge-bl: var(--badge-a-bl);
+  --badge-ba: var(--badge-a-ba);
 }
 
-.tracker-badge-hue-1 {
-  background: var(--tint-cyan);
-  color: var(--hue-cyan);
+.tracker-badge-b {
+  --badge-l: var(--badge-b-l);
+  --badge-c: var(--badge-b-c);
+  --badge-bl: var(--badge-b-bl);
+  --badge-ba: var(--badge-b-ba);
 }
 
-.tracker-badge-hue-2 {
-  background: var(--tint-blue);
-  color: var(--hue-blue);
+.tracker-badge-c {
+  --badge-l: var(--badge-c-l);
+  --badge-c: var(--badge-c-c);
+  --badge-bl: var(--badge-c-bl);
+  --badge-ba: var(--badge-c-ba);
 }
 
-.tracker-badge-hue-3 {
-  background: var(--tint-violet);
-  color: var(--hue-violet);
-}
-
-.tracker-badge-hue-4 {
-  background: var(--tint-amber);
-  color: var(--hue-amber);
-}
-
-.tracker-badge-hue-5 {
-  background: var(--tint-pink);
-  color: var(--hue-pink);
+.tracker-badge-a,
+.tracker-badge-b,
+.tracker-badge-c {
+  color: oklch(var(--badge-l) var(--badge-c) var(--badge-h));
+  background: oklch(var(--badge-bl) var(--badge-c) var(--badge-h) / var(--badge-ba));
 }
 
 .text-muted {

@@ -5,7 +5,7 @@ import { confirmDialog } from './confirm.js';
 import { hydrateIcons, ICONS, icon } from './icons.js';
 import { historyFiltered, historyState } from './state.js';
 import { openRowMenu } from './rowmenu.js';
-import { formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, statusIcon, trackerBadgeHtml } from './util.js';
+import { categoryChipHtml, formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, statusIcon, trackerBadgeHtml } from './util.js';
 
 export let planForceLocal = Object.create(null);
 export let ignoreHashesCache = null;
@@ -325,7 +325,7 @@ export function releaseTimeCellHtml(item) {
 
 function categoryBadgeHtml(item) {
   const category = (item.category || '').trim();
-  return category ? trackerBadgeHtml(category) : '';
+  return category ? categoryChipHtml(category, item.category_color) : '';
 }
 
 function releaseMetaHtml(item) {

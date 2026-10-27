@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	SettingSchedule      = "schedule"
-	SettingTrackers      = "trackers"
-	SettingTrackersOrder = "trackers_order"
-	SettingIntegrations  = "integrations"
-	SettingAuth          = "auth"
+	SettingSchedule       = "schedule"
+	SettingTrackers       = "trackers"
+	SettingTrackersOrder  = "trackers_order"
+	SettingIntegrations   = "integrations"
+	SettingAuth           = "auth"
+	SettingCategoryColors = "category_colors"
 )
 
 type Client struct {

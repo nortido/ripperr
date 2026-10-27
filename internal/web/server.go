@@ -48,30 +48,31 @@ type eventStore interface {
 }
 
 type Server struct {
-	db           store
-	events       eventStore
-	reload       func()
-	effective    func() config.App
-	strict       func() (config.App, error)
-	runnerState  *runner.State
-	alerts       *breakeralerts.Registry
-	srv          *http.Server
-	authCache    authCache
-	authMu       sync.Mutex
-	loginFails   *loginThrottle
-	deviceFails  *loginThrottle
-	hashSlots    chan struct{}
-	listen       string
-	lnMu         sync.Mutex
-	ln           net.Listener
-	lnHost       string
-	closed       bool
-	done         chan struct{}
-	serveErr     chan error
-	uiEventMu    sync.Mutex
-	uiEventStart time.Time
-	uiEventCount int
-	clientProbe  clientProbeCache
+	db              store
+	events          eventStore
+	reload          func()
+	effective       func() config.App
+	strict          func() (config.App, error)
+	runnerState     *runner.State
+	alerts          *breakeralerts.Registry
+	srv             *http.Server
+	authCache       authCache
+	authMu          sync.Mutex
+	loginFails      *loginThrottle
+	deviceFails     *loginThrottle
+	hashSlots       chan struct{}
+	listen          string
+	lnMu            sync.Mutex
+	ln              net.Listener
+	lnHost          string
+	closed          bool
+	done            chan struct{}
+	serveErr        chan error
+	uiEventMu       sync.Mutex
+	uiEventStart    time.Time
+	uiEventCount    int
+	clientProbe     clientProbeCache
+	categoryColorMu sync.Mutex
 }
 
 func New(db store, reload func(), effective func() config.App, listen string, runnerState *runner.State, alerts *breakeralerts.Registry) *Server {
