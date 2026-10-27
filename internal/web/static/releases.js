@@ -3,7 +3,7 @@ import { bindErrorBadges } from './components.js';
 import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardFetchGen, setRunPending, updateRunStatusUI } from './dashboard.js';
 import { confirmDialog } from './confirm.js';
 import { hydrateIcons, ICONS, icon } from './icons.js';
-import { historyFiltered, historyState } from './state.js';
+import { historyFiltered, historyState, saveHistoryOffset } from './state.js';
 import { openRowMenu } from './rowmenu.js';
 import { categoryChipHtml, formatDateTime, formatTableTime, html, linkCell, pageSizeQueryLimit, statusIcon, trackerBadgeHtml } from './util.js';
 
@@ -364,19 +364,44 @@ export function buildReleaseRows(histItems) {
   return html`${rows}`;
 }
 
-export function updateDashboardPagination(el, history) {
-  const total = history.total || 0;
-  const from = total === 0 ? 0 : historyState.offset + 1;
-  const to = Math.min(historyState.offset + pageSizeQueryLimit(historyState.limit), total);
+let historyFull = { items: [], total: 0 };
+
+export function getHistoryFull() {
+  return historyFull;
+}
+
+// весь отфильтрованный список уже в браузере, страница это срез из него
+export function historyPage(history) {
+  if (history) historyFull = history;
+  const items = historyFull.items || [];
+  const total = items.length;
   const pageLimit = pageSizeQueryLimit(historyState.limit);
+  // сохраненная страница могла опустеть или прийти от другого размера страницы
+  let offset = Math.floor(historyState.offset / pageLimit) * pageLimit;
+  if (offset >= total) offset = total === 0 ? 0 : Math.floor((total - 1) / pageLimit) * pageLimit;
+  historyState.offset = offset;
+  saveHistoryOffset();
+  return {
+    items: items.slice(offset, offset + pageLimit),
+    total: total,
+    from: total === 0 ? 0 : offset + 1,
+    to: Math.min(offset + pageLimit, total),
+    first: offset <= 0,
+    last: offset + pageLimit >= total,
+  };
+}
+
+export function updateDashboardPagination(el, page) {
   const footerText = el.querySelector('.card-footer > .text-muted');
   if (footerText) {
-    footerText.textContent = t('dash.pagination', { from: from, to: to, total: total });
+    footerText.textContent = t('dash.pagination', { from: page.from, to: page.to, total: page.total });
   }
+  const first = el.querySelector('#hist-first');
   const prev = el.querySelector('#hist-prev');
   const next = el.querySelector('#hist-next');
-  if (prev) prev.disabled = historyState.offset <= 0;
-  if (next) next.disabled = historyState.offset + pageLimit >= total;
+  if (first) first.disabled = page.first;
+  if (prev) prev.disabled = page.first;
+  if (next) next.disabled = page.last;
 }
 
 export function updateForceAllButton(el, histItems) {
@@ -392,7 +417,8 @@ export function updateForceAllButton(el, histItems) {
 }
 
 export function updateDashboardTable(el, history) {
-  const histItems = history.items || [];
+  const page = historyPage(history);
+  const histItems = page.items;
   // переключатель сортировки в thead, а функция трогает только tbody,
   // поэтому заголовок колонки времени синхронизируем отдельно
   const theadRow = el.querySelector('.table-dash-releases thead tr');
@@ -407,8 +433,8 @@ export function updateDashboardTable(el, history) {
     hydrateIcons(tbody);
     bindDashboardReleaseRows(tbody);
   }
-  updateDashboardPagination(el, history);
-  updateForceAllButton(el, histItems);
+  updateDashboardPagination(el, page);
+  updateForceAllButton(el, historyFull.items);
 }
 
 export function bindDashboardReleaseRows(root) {

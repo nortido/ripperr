@@ -8,12 +8,12 @@ import { refreshLogs } from './logs.js';
 import { bindMobileNameSearch, bindNameFilter, buildMobileNameSearchSlot, buildNameColumnHeader, openNameFilterWrap } from './namefilter.js';
 import { bindOnboardingCard, maybeStartDashboardTour, onboardingCardHtml, refreshOnboarding } from './onboarding.js';
 import { createPoller } from './poller.js';
-import { bindDashboardReleaseRows, buildReleaseRows, buildTimeColumnHeader, isUrlIgnored, planItemForced, setCheckProgress, setIgnoreHashesCache, setRedownloadEnabled, syncPlanForceLocal, updateDashboardTable } from './releases.js';
+import { bindDashboardReleaseRows, buildReleaseRows, buildTimeColumnHeader, historyPage, isUrlIgnored, planItemForced, setCheckProgress, setIgnoreHashesCache, setRedownloadEnabled, syncPlanForceLocal, updateDashboardTable } from './releases.js';
 import { applyDashboardFilter, currentView } from './router.js';
 import { openCustomSelect } from './select.js';
 import { historyState } from './state.js';
 import { isTourOpen } from './tour.js';
-import { formatRunSlot, formatRunSlotTime, formatThenSlot, html, pageSizeQueryLimit } from './util.js';
+import { formatRunSlot, formatRunSlotTime, formatThenSlot, html, PAGE_SIZE_ALL, pageSizeQueryLimit } from './util.js';
 
 export const STOP_PENDING_MS = 90000;
 // сервер не сразу отчитается о прогоне: его надо подхватить и загрузить торренты.
@@ -307,9 +307,18 @@ export function buildHistoryFilterParams() {
   return q;
 }
 
-export function buildHistoryQuery() {
-  const limit = pageSizeQueryLimit(historyState.limit);
-  return '/api/history?limit=' + limit + '&offset=' + historyState.offset + buildHistoryFilterParams();
+// список грузится целиком, страницы листаются без запросов. Сервер отдает не больше
+// PAGE_SIZE_ALL за раз, остаток добираем следующими кусками
+export async function fetchHistoryAll() {
+  const params = buildHistoryFilterParams();
+  let items = [];
+  for (;;) {
+    const res = await fetchJSON('/api/history?limit=' + PAGE_SIZE_ALL + '&offset=' + items.length + params);
+    const got = (res && res.items) || [];
+    items = items.concat(got);
+    if (got.length < PAGE_SIZE_ALL || items.length >= ((res && res.total) || 0)) break;
+  }
+  return { items: items, total: items.length };
 }
 
 export function buildSortControls() {
@@ -354,7 +363,7 @@ export function nextRunStatCard(slots) {
 export async function fetchDashboardData() {
   const [status, history, summary, ignoreItems] = await Promise.all([
     fetchJSON('/api/status'),
-    fetchJSON(buildHistoryQuery()),
+    fetchHistoryAll(),
     fetchJSON('/api/history/summary'),
     fetchJSON('/api/ignore'),
   ]);
@@ -421,29 +430,35 @@ export async function reloadDashboardTable() {
   }
 }
 
+function bindPageButton(el, sel, target) {
+  const btn = el.querySelector(sel);
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    historyState.offset = target(pageSizeQueryLimit(historyState.limit));
+    updateDashboardTable(el);
+  });
+}
+
 export function renderDashboard(el, status, history, stats) {
   closePopovers();
   const nextRuns = status.next_runs || [];
 
-  const histItems = history.items || [];
-  const total = history.total || 0;
+  const page = historyPage(history);
+  const histItems = page.items;
   // флаг выставляем до сборки строк: кнопку «Перекачать» клиенты кроме qBittorrent не поддерживают
   setRedownloadEnabled(status.redownload);
   const tableCls = 'table table-dash-releases';
   const releaseRows = buildReleaseRows(histItems);
 
-  const from = total === 0 ? 0 : historyState.offset + 1;
-  const to = Math.min(historyState.offset + pageSizeQueryLimit(historyState.limit), total);
-  const pageLimit = pageSizeQueryLimit(historyState.limit);
   const filterHtml = buildHistFilters();
   const sortHtml = buildSortControls();
-  const nonIgnored = histItems.filter(function (item) { return !isUrlIgnored(item.url_hash); });
+  const nonIgnored = (history.items || []).filter(function (item) { return !isUrlIgnored(item.url_hash); });
   const allForced = nonIgnored.length > 0 && nonIgnored.every(function (item) { return planItemForced(item); });
   const forceAllTitle = allForced ? t('dash.forceAllClear') : t('dash.forceAll');
   const forceAllCls = 'btn btn-sm btn-ghost btn-icon btn-force-all' + (allForced ? ' is-active' : '');
   const mobileSearch = buildMobileNameSearchSlot();
 
-  el.innerHTML = html`<div class="page-header dash-page-header"><div class="page-header-row"><div class="dash-header-top"><h1 class="page-title">${t('dash.title')}</h1><div class="dash-header-status-block"><div class="run-status" id="dash-run-status"></div></div></div><div class="page-header-actions dash-header-actions"><div class="page-header-run-group"><button type="button" class="btn btn-outline" id="dash-add-btn"><span data-icon="plus"></span><span>${t('dash.addButton')}</span></button><button type="button" class="btn btn-stop${effectiveRunning(status.running) ? '' : ' is-off'}" id="dash-stop-btn" data-i18n-aria="dash.stopCheck" aria-label="${t('dash.stopCheck')}" title="${t('dash.stopCheck')}"><span data-icon="stop"></span><span class="btn-stop-label">${t('dash.stop')}</span></button><button type="button" class="btn btn-primary${effectiveRunning(status.running) ? ' is-off' : ''}" id="dash-run-btn">${t('dash.runCheck')}</button></div></div></div></div>${onboardingCardHtml()}${renderAlertsHtml(status.alerts || [])}<div class="stat-grid">${nextRunStatCard(nextRuns)}${statCard(stats.updated, t('dash.filter.updated'), 'check', 'green', 'updated')}${statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error')}${statCard(stats.ignored, t('dash.ignored'), 'eyeHidden', 'cyan', 'ignored')}</div><div class="card"><div class="card-header releases-card-header${mobileSearch.headerClass}"><div class="card-header-toolbar"><div class="card-header-toolbar-shift"><div class="card-header-left"><h2 class="card-title">${t('dash.releasesTitle')}</h2></div><div class="card-toolbar-pre-search">${sortHtml}<button type="button" class="${forceAllCls}" id="dash-force-all-btn" style="display:none" title="${forceAllTitle}" aria-label="${forceAllTitle}" aria-pressed="${allForced ? 'true' : 'false'}"><span data-icon="zapForceAll"></span></button></div></div><div class="card-toolbar-post-search">${mobileSearch.html}${filterHtml}</div></div></div><div class="card-body-flush"><div class="table-wrap"><table class="${tableCls}"><thead><tr>${buildNameColumnHeader()}<th class="col-tracker">${t('dash.col.tracker')}</th><th class="col-category">${t('dash.col.category')}</th><th class="col-status"><span class="th-label-full">${t('dash.col.status')}</span><span class="th-label-short">${t('dash.col.statusShort')}</span></th>${buildTimeColumnHeader()}<th class="col-actions"></th></tr></thead><tbody>${releaseRows}</tbody></table></div></div><div class="card-footer"><span class="text-muted">${t('dash.pagination', { from: from, to: to, total: total })}</span><div class="pagination-controls">${buildPageSizeSelect(historyState.limit)}<div class="btn-group pagination-nav">${paginationButtons('hist-prev', 'hist-next', historyState.offset <= 0, historyState.offset + pageLimit >= total)}</div></div></div>`;
+  el.innerHTML = html`<div class="page-header dash-page-header"><div class="page-header-row"><div class="dash-header-top"><h1 class="page-title">${t('dash.title')}</h1><div class="dash-header-status-block"><div class="run-status" id="dash-run-status"></div></div></div><div class="page-header-actions dash-header-actions"><div class="page-header-run-group"><button type="button" class="btn btn-outline" id="dash-add-btn"><span data-icon="plus"></span><span>${t('dash.addButton')}</span></button><button type="button" class="btn btn-stop${effectiveRunning(status.running) ? '' : ' is-off'}" id="dash-stop-btn" data-i18n-aria="dash.stopCheck" aria-label="${t('dash.stopCheck')}" title="${t('dash.stopCheck')}"><span data-icon="stop"></span><span class="btn-stop-label">${t('dash.stop')}</span></button><button type="button" class="btn btn-primary${effectiveRunning(status.running) ? ' is-off' : ''}" id="dash-run-btn">${t('dash.runCheck')}</button></div></div></div></div>${onboardingCardHtml()}${renderAlertsHtml(status.alerts || [])}<div class="stat-grid">${nextRunStatCard(nextRuns)}${statCard(stats.updated, t('dash.filter.updated'), 'check', 'green', 'updated')}${statCard(stats.errors, t('dash.errors'), 'warning', 'danger', 'error')}${statCard(stats.ignored, t('dash.ignored'), 'eyeClosed', 'cyan', 'ignored')}</div><div class="card"><div class="card-header releases-card-header${mobileSearch.headerClass}"><div class="card-header-toolbar"><div class="card-header-toolbar-shift"><div class="card-header-left"><h2 class="card-title">${t('dash.releasesTitle')}</h2></div><div class="card-toolbar-pre-search">${sortHtml}<button type="button" class="${forceAllCls}" id="dash-force-all-btn" style="display:none" title="${forceAllTitle}" aria-label="${forceAllTitle}" aria-pressed="${allForced ? 'true' : 'false'}"><span data-icon="zapForceAll"></span></button></div></div><div class="card-toolbar-post-search">${mobileSearch.html}${filterHtml}</div></div></div><div class="card-body-flush"><div class="table-wrap"><table class="${tableCls}"><thead><tr>${buildNameColumnHeader()}<th class="col-tracker">${t('dash.col.tracker')}</th><th class="col-category">${t('dash.col.category')}</th><th class="col-status"><span class="th-label-full">${t('dash.col.status')}</span><span class="th-label-short">${t('dash.col.statusShort')}</span></th>${buildTimeColumnHeader()}<th class="col-actions"></th></tr></thead><tbody>${releaseRows}</tbody></table></div></div><div class="card-footer"><span class="text-muted">${t('dash.pagination', { from: page.from, to: page.to, total: page.total })}</span><div class="pagination-controls">${buildPageSizeSelect(historyState.limit)}<div class="btn-group pagination-nav">${paginationButtons('hist-first', 'hist-prev', 'hist-next', page.first, page.last)}</div></div></div>`;
 
   hydrateIcons(el);
   bindDashboardAlerts(el);
@@ -482,7 +497,7 @@ export function renderDashboard(el, status, history, stats) {
   bindPageSizeSelect(el, function (size) {
     historyState.limit = size;
     historyState.offset = 0;
-    loadDashboard();
+    updateDashboardTable(el);
   });
 
   bindHistFilterSelect(el);
@@ -490,20 +505,9 @@ export function renderDashboard(el, status, history, stats) {
   bindMobileNameSearch(el);
   bindStatCardFilters(el);
 
-  const prev = el.querySelector('#hist-prev');
-  if (prev) {
-    prev.addEventListener('click', function () {
-      historyState.offset = Math.max(0, historyState.offset - pageSizeQueryLimit(historyState.limit));
-      loadDashboard();
-    });
-  }
-  const next = el.querySelector('#hist-next');
-  if (next) {
-    next.addEventListener('click', function () {
-      historyState.offset += pageSizeQueryLimit(historyState.limit);
-      loadDashboard();
-    });
-  }
+  bindPageButton(el, '#hist-first', function () { return 0; });
+  bindPageButton(el, '#hist-prev', function (step) { return Math.max(0, historyState.offset - step); });
+  bindPageButton(el, '#hist-next', function (step) { return historyState.offset + step; });
 
   bindDashboardReleaseRows(el);
 

@@ -229,8 +229,8 @@ export function initChipInput(chipEl, hintsEl, initialValues, suggestions, onCha
 }
 
 
-export function paginationButtons(prevId, nextId, prevDisabled, nextDisabled) {
-  return html`<button type="button" class="btn btn-sm btn-ghost btn-pagination" id="${prevId}"${prevDisabled ? ' disabled' : ''} aria-label="${t('common.pagePrev')}">‹</button><button type="button" class="btn btn-sm btn-ghost btn-pagination" id="${nextId}"${nextDisabled ? ' disabled' : ''} aria-label="${t('common.pageNext')}">›</button>`;
+export function paginationButtons(firstId, prevId, nextId, atStart, atEnd) {
+  return html`<button type="button" class="btn btn-sm btn-ghost btn-pagination" id="${firstId}"${atStart ? ' disabled' : ''} aria-label="${t('common.pageFirst')}" title="${t('common.pageFirst')}"><span data-icon="chevronsLeft"></span></button><button type="button" class="btn btn-sm btn-ghost btn-pagination" id="${prevId}"${atStart ? ' disabled' : ''} aria-label="${t('common.pagePrev')}"><span data-icon="chevronLeft"></span></button><button type="button" class="btn btn-sm btn-ghost btn-pagination" id="${nextId}"${atEnd ? ' disabled' : ''} aria-label="${t('common.pageNext')}"><span data-icon="chevronRight"></span></button>`;
 }
 
 export function buildPageSizeSelect(currentSize) {

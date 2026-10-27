@@ -4,7 +4,7 @@ import { hasUnsavedIntegrations, loadIntegrations } from './integrations.js';
 import { closeMobileMenu } from './layout.js';
 import { loadLogs, stopLogsPolling } from './logs.js';
 import { loadSchedule } from './schedule.js';
-import { historyState } from './state.js';
+import { historyState, loadHistoryOffset } from './state.js';
 import { closeTrackerDialog, hasUnsavedTrackers, loadTrackers } from './trackers.js';
 
 export const VIEW_HASH = {
@@ -37,7 +37,7 @@ export function parseHash() {
   if (main === 'ignore') {
     historyState.ignored = true;
     historyState.status = '';
-    historyState.offset = 0;
+    historyState.offset = loadHistoryOffset();
     if (location.hash !== '#dashboard?filter=ignored') {
       history.replaceState(null, '', '#dashboard?filter=ignored');
     }
@@ -58,12 +58,12 @@ export function parseHash() {
     }
     const name = params.get('name');
     historyState.name = name ? name.trim().slice(0, 200) : '';
-    historyState.offset = 0;
+    historyState.offset = loadHistoryOffset();
   } else if ((HASH_VIEW[main] || 'dashboard') === 'dashboard') {
     historyState.ignored = false;
     historyState.status = '';
     historyState.name = '';
-    historyState.offset = 0;
+    historyState.offset = loadHistoryOffset();
   }
   return HASH_VIEW[main] || 'dashboard';
 }

@@ -1,5 +1,5 @@
-import { fetchJSON, showToast } from './api.js';
-import { buildHistoryQuery, dashboardFetchGen, loadDashboard, nextDashboardFetchGen } from './dashboard.js';
+import { showToast } from './api.js';
+import { dashboardFetchGen, fetchHistoryAll, loadDashboard, nextDashboardFetchGen } from './dashboard.js';
 import { closeOpenHistFilterSelect } from './histfilter.js';
 import { hydrateIcons } from './icons.js';
 import { syncPlanForceLocal, updateDashboardTable } from './releases.js';
@@ -217,7 +217,7 @@ export async function applyNameFilter(value) {
   }
   const fetchGen = nextDashboardFetchGen();
   try {
-    const history = await fetchJSON(buildHistoryQuery());
+    const history = await fetchHistoryAll();
     if (fetchGen !== dashboardFetchGen) return;
     syncPlanForceLocal(history.items || []);
     updateDashboardTable(el, history);
