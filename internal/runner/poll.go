@@ -120,7 +120,7 @@ func (h *handler) pollNew(ctx context.Context) (added int, err error) {
 			h.pollSkip[e.Hash] = struct{}{}
 			continue
 		}
-		at := h.firstCheckAt(e.Timestamp, now)
+		at := h.slotAtOrAfter(now)
 		ok, addErr := h.storage.AddNewRelease(ctx, &storageModel.CheckLogEntry{
 			URLHash:       key,
 			ItemName:      e.Name,
@@ -203,17 +203,4 @@ func (h *handler) pollNew(ctx context.Context) (added int, err error) {
 		absent[key] = struct{}{}
 	}
 	return added + removed + updated + h.state.SetAbsent(h.gen, absent), nil
-}
-
-func (h *handler) firstCheckAt(added *time.Time, now time.Time) time.Time {
-	base := now
-	if added != nil && !added.IsZero() {
-		base = *added
-	}
-	at := h.slotAtOrAfter(base.AddDate(0, 0, h.recheckDays(added, now)))
-	// старый торрент взяли под слежку только сейчас: срок уже прошел, его проверит ближайший проход
-	if at.Before(now) {
-		return now
-	}
-	return at
 }

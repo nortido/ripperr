@@ -30,7 +30,6 @@ type releaseManager struct {
 	lists     [][]*model.Entry
 	listCalls int
 	partial   bool
-	noFiles   map[string]bool
 	removed   [][]model.ManagerDeleteOptions
 	accepted  []string
 	removeErr error
@@ -52,10 +51,6 @@ func (m *releaseManager) GetEntries(context.Context, model.FilterOptions) ([]*mo
 		return out, fmt.Errorf("%w: test", model.ErrPartialList)
 	}
 	return out, nil
-}
-
-func (m *releaseManager) DeletesFiles(_ context.Context, opts model.ManagerDeleteOptions) bool {
-	return !m.noFiles[opts.Hash]
 }
 
 func (m *releaseManager) Remove(_ context.Context, targets []model.ManagerDeleteOptions) ([]string, error) {
@@ -215,13 +210,12 @@ func TestRemoveReleaseFilesRefused(t *testing.T) {
 		name    string
 		targets []*model.Entry
 		others  []*model.Entry
-		noFiles map[string]bool
 		ok      bool
 	}{
 		{
-			name:    "policy denies one target",
+			name:    "two targets in different folders",
 			targets: []*model.Entry{relEntry("x", relURL, "/data/tv", "Show"), relEntry("y", relURL, "/data/tv2", "Show")},
-			noFiles: map[string]bool{"y": true},
+			ok:      true,
 		},
 		{
 			name:    "same root",
@@ -288,7 +282,7 @@ func TestRemoveReleaseFilesRefused(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mgr := &releaseManager{lists: [][]*model.Entry{append(slices.Clone(tc.targets), tc.others...)}, noFiles: tc.noFiles}
+			mgr := &releaseManager{lists: [][]*model.Entry{append(slices.Clone(tc.targets), tc.others...)}}
 			h, store, _ := newRemoveHandler(mgr)
 			err := h.removeRelease(context.Background(), RemoveRequest{URLHash: storagePkg.URLHash(relURL), Files: true, Torrents: len(tc.targets)})
 			if tc.ok {
@@ -362,21 +356,20 @@ func TestRemoveReleaseUnconfirmedKeepsRow(t *testing.T) {
 func TestRemovalInfo(t *testing.T) {
 	z := relEntry("z", otherURL, "/data/movies", "Film")
 	cases := []struct {
-		name    string
-		list    []*model.Entry
-		noFiles map[string]bool
-		want    RemovalInfo
+		name string
+		list []*model.Entry
+		want RemovalInfo
 	}{
 		{name: "gone", list: []*model.Entry{z}, want: RemovalInfo{Torrents: 0, Files: false}},
 		{name: "one", list: []*model.Entry{relEntry("x", relURL, "/data/tv", "Show"), z}, want: RemovalInfo{Torrents: 1, Files: true}},
 		{name: "two", list: []*model.Entry{relEntry("x", relURL, "/data/tv", "Show"), relEntry("y", relURL, "/data/tv", "Show"), z}, want: RemovalInfo{Torrents: 2, Files: true}},
-		{name: "policy", list: []*model.Entry{relEntry("x", relURL, "/data/tv", "Show"), relEntry("y", relURL, "/data/tv", "Show")}, noFiles: map[string]bool{"y": true}, want: RemovalInfo{Torrents: 2, Files: false}},
+		{name: "two targets alone", list: []*model.Entry{relEntry("x", relURL, "/data/tv", "Show"), relEntry("y", relURL, "/data/tv", "Show")}, want: RemovalInfo{Torrents: 2, Files: true}},
 		{name: "shared root", list: []*model.Entry{relEntry("x", relURL, "/data/tv", "Show"), relEntry("w", otherURL, "/data/tv", "show")}, want: RemovalInfo{Torrents: 1, Files: false}},
 		{name: "no url is other", list: []*model.Entry{relEntry("x", relURL, "/data/tv", "Show"), relEntry("w", "", "/data/tv/Show", "")}, want: RemovalInfo{Torrents: 1, Files: false}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mgr := &releaseManager{lists: [][]*model.Entry{tc.list}, noFiles: tc.noFiles}
+			mgr := &releaseManager{lists: [][]*model.Entry{tc.list}}
 			h, _, _ := newRemoveHandler(mgr)
 			got, err := h.removalInfo(context.Background(), storagePkg.URLHash(relURL))
 			if err != nil {

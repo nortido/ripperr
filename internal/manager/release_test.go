@@ -14,13 +14,13 @@ import (
 
 func assertNoClientChange(t *testing.T, stub *stubClient) {
 	t.Helper()
-	for _, c := range []string{"blackhole-remove", "discard", "delete", "wait-absent"} {
+	for _, c := range []string{"blackhole-remove", "discard", "delete", "purge", "wait-absent"} {
 		if slices.Contains(stub.calls, c) {
 			t.Errorf("calls = %v, want no %q", stub.calls, c)
 		}
 	}
-	if len(stub.deleteOpts) != 0 || len(stub.discardHashes) != 0 {
-		t.Errorf("delete %v, discard %v, want none", stub.deleteOpts, stub.discardHashes)
+	if len(stub.deleteOpts) != 0 || len(stub.discardHashes) != 0 || len(stub.purgeHashes) != 0 {
+		t.Errorf("delete %v, discard %v, purge %v, want none", stub.deleteOpts, stub.discardHashes, stub.purgeHashes)
 	}
 }
 
@@ -42,22 +42,41 @@ func TestRemoveDiscardsWithoutFilesWhenDeleteDisabled(t *testing.T) {
 	}
 }
 
-func TestRemoveWithFilesUsesDelete(t *testing.T) {
-	stub := &stubClient{deleteEnabled: true, deletesFiles: true, waitAbsent: true}
+func TestRemoveWithFilesPurges(t *testing.T) {
+	purgeErr := fmt.Errorf("timeout")
 	target := model.ManagerDeleteOptions{Hash: "aa", Name: "A", Category: "tv", DeleteFiles: true}
-	accepted, err := NewManager(stub).Remove(context.Background(), []model.ManagerDeleteOptions{target})
-	if err != nil {
-		t.Fatalf("Remove: %v", err)
+	tests := []struct {
+		name         string
+		stub         *stubClient
+		targets      []model.ManagerDeleteOptions
+		wantErr      error
+		wantAccepted []string
+		wantCalls    []string
+	}{
+		{"settings off", &stubClient{deleteEnabled: false, deletesFiles: false, waitAbsent: true}, []model.ManagerDeleteOptions{target}, nil, []string{"aa"}, []string{"blackhole-remove", "purge", "wait-absent"}},
+		{"error then absent", &stubClient{purgeErr: purgeErr, exists: false, waitAbsent: true}, []model.ManagerDeleteOptions{target}, nil, []string{"aa"}, []string{"blackhole-remove", "purge", "exists", "wait-absent"}},
+		{"error then present", &stubClient{purgeErr: purgeErr, exists: true, waitAbsent: true}, []model.ManagerDeleteOptions{target, {Hash: "bb", DeleteFiles: true}}, purgeErr, []string{}, []string{"blackhole-remove", "purge", "exists"}},
 	}
-	if !equalStrings(accepted, []string{"aa"}) {
-		t.Errorf("accepted = %v, want [aa]", accepted)
-	}
-	assertCalls(t, stub, "blackhole-remove", "delete", "wait-absent")
-	if len(stub.deleteOpts) != 1 || stub.deleteOpts[0] != target {
-		t.Errorf("deleteOpts = %v, want [%v]", stub.deleteOpts, target)
-	}
-	if len(stub.discardHashes) != 0 {
-		t.Errorf("discard %v, want none", stub.discardHashes)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			accepted, err := NewManager(tt.stub).Remove(context.Background(), tt.targets)
+			if tt.wantErr == nil && err != nil {
+				t.Fatalf("Remove: %v", err)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Remove error = %v, want %v", err, tt.wantErr)
+			}
+			if !equalStrings(accepted, tt.wantAccepted) {
+				t.Errorf("accepted = %v, want %v", accepted, tt.wantAccepted)
+			}
+			assertCalls(t, tt.stub, tt.wantCalls...)
+			if !equalStrings(tt.stub.purgeHashes, []string{"aa"}) {
+				t.Errorf("purge %v, want [aa]", tt.stub.purgeHashes)
+			}
+			if len(tt.stub.deleteOpts) != 0 || len(tt.stub.discardHashes) != 0 || tt.stub.deletesFilesCalls != 0 {
+				t.Errorf("delete %v, discard %v, DeletesFiles calls %d, want none", tt.stub.deleteOpts, tt.stub.discardHashes, tt.stub.deletesFilesCalls)
+			}
+		})
 	}
 }
 
@@ -70,7 +89,6 @@ func TestRemoveRefusesBeforeAnyChange(t *testing.T) {
 	}{
 		{"empty hash", &stubClient{waitAbsent: true}, []model.ManagerDeleteOptions{{Hash: "aa"}, {Hash: ""}}, nil},
 		{"pending replace", &stubClient{waitAbsent: true, pending: map[string]bool{"bb": true}}, []model.ManagerDeleteOptions{{Hash: "aa"}, {Hash: "bb"}}, model.ErrReplacePending},
-		{"files not allowed", &stubClient{waitAbsent: true, deleteEnabled: true, deletesFilesSeq: []bool{true, false}}, []model.ManagerDeleteOptions{{Hash: "aa", DeleteFiles: true}, {Hash: "bb", DeleteFiles: true}}, model.ErrFilesNotAllowed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -155,16 +173,4 @@ func TestAddUsesAddFromBufferOnly(t *testing.T) {
 		t.Errorf("addOpts = %+v, want %+v", stub.addOpts, opts)
 	}
 	assertCalls(t, stub, "add")
-}
-
-func TestManagerDeletesFilesDelegates(t *testing.T) {
-	for _, want := range []bool{true, false} {
-		stub := &stubClient{deletesFiles: want}
-		if got := NewManager(stub).DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: "aa", Category: "tv"}); got != want {
-			t.Errorf("DeletesFiles = %v, want %v", got, want)
-		}
-		if stub.deletesFilesCalls != 1 {
-			t.Errorf("client DeletesFiles calls = %d, want 1", stub.deletesFilesCalls)
-		}
-	}
 }

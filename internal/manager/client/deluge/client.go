@@ -50,7 +50,7 @@ const (
 	priorityNormal = 4
 )
 
-var listKeys = []string{"hash", "name", "comment", "save_path", "time_added", "state", "progress", "label"}
+var listKeys = []string{"hash", "name", "comment", "save_path", "time_added", "state", "progress", "label", "files"}
 
 type torrentStatus struct {
 	Hash           string       `json:"hash"`
@@ -85,6 +85,7 @@ var (
 		RemoveBlackholePair(hash string)
 		ConfirmSettled(ctx context.Context, hash string) bool
 		Discard(ctx context.Context, hash string) error
+		Purge(ctx context.Context, hash string) error
 		Resume(ctx context.Context, hash string) error
 		ReplacePending(hash string) bool
 		Files(ctx context.Context, hash string) ([]model.TorrentFile, error)
@@ -146,7 +147,12 @@ func (c *Client) mapEntry(id string, st *torrentStatus) *model.Entry {
 		Unhealthy: st.State == stateError || st.State == stateChecking || st.State == stateMoving || st.State == stateAllocating,
 	}
 	if st.SavePath != "" {
-		e.ContentPath = st.SavePath + "/" + st.Name
+		root := st.Name
+		// name у Deluge бывает отображаемым именем, папку на диске дает путь первого файла
+		if len(st.Files) > 0 {
+			root, _, _ = strings.Cut(strings.ReplaceAll(st.Files[0].Path, `\`, "/"), "/")
+		}
+		e.ContentPath = st.SavePath + "/" + root
 	}
 	if e.Stopped && st.Progress >= 100 {
 		e.MaxRatio = c.config.PausedMaxRatio
@@ -270,6 +276,18 @@ func (c *Client) DeletesFiles(_ context.Context, opts model.ManagerDeleteOptions
 func (c *Client) Discard(ctx context.Context, hash string) error {
 	logger.Info(fmt.Sprint("discarding torrent without files: ", hash))
 	ok, err := c.remove(ctx, hash, false)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("deluge: remove_torrent %s returned false", hash)
+	}
+	return nil
+}
+
+func (c *Client) Purge(ctx context.Context, hash string) error {
+	logger.Info(fmt.Sprint("deleting torrent with files: ", hash))
+	ok, err := c.remove(ctx, hash, true)
 	if err != nil {
 		return err
 	}

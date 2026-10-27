@@ -56,6 +56,8 @@ type stubClient struct {
 	discardErr         error
 	discardHashes      []string
 	discardCtxErr      error
+	purgeHashes        []string
+	purgeErr           error
 	resumeErr          error
 	resumeHashes       []string
 	files              []model.TorrentFile
@@ -183,6 +185,12 @@ func (s *stubClient) Discard(ctx context.Context, hash string) error {
 	s.discardHashes = append(s.discardHashes, hash)
 	s.discardCtxErr = ctx.Err()
 	return s.discardErr
+}
+
+func (s *stubClient) Purge(ctx context.Context, hash string) error {
+	s.calls = append(s.calls, "purge")
+	s.purgeHashes = append(s.purgeHashes, hash)
+	return s.purgeErr
 }
 
 func (s *stubClient) Resume(ctx context.Context, hash string) error {

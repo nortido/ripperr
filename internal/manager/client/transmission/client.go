@@ -129,6 +129,7 @@ var (
 		RemoveBlackholePair(hash string)
 		ConfirmSettled(ctx context.Context, hash string) bool
 		Discard(ctx context.Context, hash string) error
+		Purge(ctx context.Context, hash string) error
 		Resume(ctx context.Context, hash string) error
 		ReplacePending(hash string) bool
 	} = (*Client)(nil)
@@ -715,6 +716,15 @@ func (c *Client) Discard(ctx context.Context, hash string) error {
 	_, err := c.rpc.call(ctx, "torrent-remove", map[string]interface{}{
 		"ids":               []string{hash},
 		"delete-local-data": false,
+	})
+	return err
+}
+
+func (c *Client) Purge(ctx context.Context, hash string) error {
+	logger.Info(fmt.Sprint("deleting torrent with files: ", hash))
+	_, err := c.rpc.call(ctx, "torrent-remove", map[string]interface{}{
+		"ids":               []string{hash},
+		"delete-local-data": true,
 	})
 	return err
 }

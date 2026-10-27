@@ -349,6 +349,11 @@ func (c *Client) Discard(ctx context.Context, hash string) error {
 	return c.client.DeleteTorrentsCtx(ctx, []string{hash}, false)
 }
 
+func (c *Client) Purge(ctx context.Context, hash string) error {
+	logger.Info(fmt.Sprint("deleting torrent with files: ", hash))
+	return c.client.DeleteTorrentsCtx(ctx, []string{hash}, true)
+}
+
 func (c *Client) Resume(ctx context.Context, hash string) error {
 	// без recheck: остановленный при добавлении торрент еще не проверялся, и
 	// libtorrent проверит его на старте, а recheck сам запускает и потом

@@ -14,10 +14,6 @@ func (m *manager) Add(ctx context.Context, data []byte, opts model.ManagerAddFil
 	return m.client.AddFromBuffer(ctx, bytes.NewBuffer(data), opts)
 }
 
-func (m *manager) DeletesFiles(ctx context.Context, opts model.ManagerDeleteOptions) bool {
-	return m.client.DeletesFiles(ctx, opts)
-}
-
 func (m *manager) Remove(ctx context.Context, targets []model.ManagerDeleteOptions) (accepted []string, err error) {
 	for _, t := range targets {
 		switch {
@@ -25,8 +21,6 @@ func (m *manager) Remove(ctx context.Context, targets []model.ManagerDeleteOptio
 			return nil, errors.New("remove: empty torrent hash")
 		case m.client.ReplacePending(t.Hash):
 			return nil, fmt.Errorf("remove %s: %w", t.Hash, model.ErrReplacePending)
-		case t.DeleteFiles && !m.client.DeletesFiles(ctx, t):
-			return nil, fmt.Errorf("remove %s: %w", t.Hash, model.ErrFilesNotAllowed)
 		}
 	}
 	accepted = []string{}
@@ -36,7 +30,8 @@ func (m *manager) Remove(ctx context.Context, targets []model.ManagerDeleteOptio
 		m.client.RemoveBlackholePair(t.Hash)
 		var delErr error
 		if t.DeleteFiles {
-			delErr = m.client.Delete(ctx, t)
+			// ручное удаление идет мимо настроек: они только для замены, общую папку проверил runner
+			delErr = m.client.Purge(ctx, t.Hash)
 		} else {
 			delErr = m.client.Discard(ctx, t.Hash)
 		}

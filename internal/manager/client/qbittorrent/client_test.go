@@ -436,6 +436,43 @@ func TestDiscard_NeverDeletesFiles(t *testing.T) {
 	}
 }
 
+func TestPurge_DeletesFilesWhateverSettings(t *testing.T) {
+	cfgs := map[string]model.ManagerConfig{
+		"delete disabled":     {},
+		"category not listed": {DeleteEnabled: true, DeleteFilesEnabled: true, DeleteCategories: []string{"movies"}},
+	}
+	for name, cfg := range cfgs {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			got := map[string]string{}
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v2/torrents/delete", func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				mu.Lock()
+				got["hashes"] = r.FormValue("hashes")
+				got["deleteFiles"] = r.FormValue("deleteFiles")
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			cfg.Host = server.URL
+			c, err := New(cfg)
+			if err != nil {
+				t.Fatalf("unexpected error creating client: %v", err)
+			}
+			if err = c.Purge(context.Background(), "h1"); err != nil {
+				t.Fatalf("Purge: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if got["hashes"] != "h1" || got["deleteFiles"] != "true" {
+				t.Fatalf("expected hashes=h1 deleteFiles=true, got %+v", got)
+			}
+		})
+	}
+}
+
 func withFastCheckWait(t *testing.T, budget time.Duration) {
 	t.Helper()
 	origDelay, origBudget := checkWaitDelay, checkWaitBudget

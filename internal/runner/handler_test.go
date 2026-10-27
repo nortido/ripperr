@@ -285,10 +285,6 @@ func (f *fakeManager) SubmitMagnet(context.Context, string, model.ManagerAddFile
 	return nil
 }
 
-func (f *fakeManager) DeletesFiles(context.Context, model.ManagerDeleteOptions) bool {
-	return false
-}
-
 func (f *fakeManager) Remove(context.Context, []model.ManagerDeleteOptions) ([]string, error) {
 	return nil, nil
 }
@@ -2853,6 +2849,26 @@ func TestWorkerNoReleaseTimeWhenUnchanged(t *testing.T) {
 	}
 	if len(store.releases) != 0 {
 		t.Fatalf("release calls = %+v, want none", store.releases)
+	}
+}
+
+// дата темы на первой проверке тоже идет в прогноз: после первого обновления дат уже две
+func TestWorkerRecordsFirstPageDate(t *testing.T) {
+	d := time.Now().Add(-48 * time.Hour)
+	added := time.Now().Add(-2 * time.Hour)
+	h, store := newReleaseHandler(d)
+	e := &model.Entry{URL: "https://pick.example/t/1", Name: "test", URLHash: "abc", TopicID: "1", Timestamp: &added}
+	if err := h.worker(context.Background(), 1, e, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "unchanged" {
+		t.Fatalf("logs = %+v, want one unchanged", store.logs)
+	}
+	if len(store.releases) != 1 {
+		t.Fatalf("release calls = %+v, want one", store.releases)
+	}
+	if c := store.releases[0]; c.hash != "abc" || !c.at.Equal(d) || c.keep != 8 {
+		t.Fatalf("release call = %+v, want abc %v keep 8", c, d)
 	}
 }
 

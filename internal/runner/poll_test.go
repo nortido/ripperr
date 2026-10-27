@@ -126,11 +126,6 @@ func (m *pollManager) AttachComment(context.Context, string, string, func(contex
 	return nil
 }
 
-func (m *pollManager) DeletesFiles(context.Context, model.ManagerDeleteOptions) bool {
-	m.t.Error("poll called DeletesFiles")
-	return false
-}
-
 func (m *pollManager) Remove(context.Context, []model.ManagerDeleteOptions) ([]string, error) {
 	m.t.Error("poll called Remove")
 	return nil, nil
@@ -195,7 +190,9 @@ func TestPollNewListsNewRelease(t *testing.T) {
 	added := time.Now().Add(-time.Hour)
 	store := &fakeStorage{}
 	h, _ := newPollHandler(t, store, &pollManager{list: []*model.Entry{pollEntry("h1", "Show S01", "tv", url, added)}}, pollConfig())
+	before := time.Now()
 	n, err := h.pollNew(context.Background())
+	after := time.Now()
 	if err != nil || n != 1 {
 		t.Fatalf("pollNew = %d, %v, want 1, nil", n, err)
 	}
@@ -207,8 +204,14 @@ func TestPollNewListsNewRelease(t *testing.T) {
 	if got.entry != want {
 		t.Fatalf("row %+v, want %+v", got.entry, want)
 	}
-	if at := h.slotAtOrAfter(added.AddDate(0, 0, 3)); !got.at.Equal(at) {
-		t.Fatalf("first check %v, want %v", got.at, at)
+	assertNearestSlot(t, h, got.at, before, after)
+}
+
+// новый торрент из клиента идет в ближайший слот, а не через срок из настроек
+func assertNearestSlot(t *testing.T, h *handler, at, before, after time.Time) {
+	t.Helper()
+	if lo, hi := h.slotAtOrAfter(before), h.slotAtOrAfter(after); !at.Equal(lo) && !at.Equal(hi) {
+		t.Fatalf("first check %v, want nearest slot %v", at, lo)
 	}
 }
 
@@ -325,9 +328,7 @@ func TestPollNewOldTorrentDueNow(t *testing.T) {
 	if len(store.newAdds) != 1 {
 		t.Fatalf("inserted %d rows, want 1", len(store.newAdds))
 	}
-	if at := store.newAdds[0].at; at.Before(before) || at.After(after) {
-		t.Fatalf("first check %v, want within [%v, %v]", at, before, after)
-	}
+	assertNearestSlot(t, h, store.newAdds[0].at, before, after)
 }
 
 func TestPollNewNarrowsAndCaches(t *testing.T) {

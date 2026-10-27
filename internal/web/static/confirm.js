@@ -32,13 +32,25 @@ export function confirmDialog(opts) {
     box.append(text);
     let checkEl = null;
     if (opts.checkLabel) {
-      const wrap = document.createElement('label');
-      wrap.className = 'form-switch confirm-check';
+      const wrap = document.createElement('div');
+      wrap.className = 'confirm-check';
+      const sw = document.createElement('label');
+      sw.className = 'form-switch';
       checkEl = document.createElement('input');
       checkEl.type = 'checkbox';
+      checkEl.disabled = !!opts.checkDisabled;
       const checkText = document.createElement('span');
       checkText.textContent = opts.checkLabel;
-      wrap.append(checkEl, checkText);
+      sw.append(checkEl, checkText);
+      wrap.append(sw);
+      if (opts.checkHint) {
+        const hint = document.createElement('p');
+        hint.className = 'form-hint';
+        hint.id = textId + '-hint';
+        hint.textContent = opts.checkHint;
+        checkEl.setAttribute('aria-describedby', hint.id);
+        wrap.append(hint);
+      }
       box.append(wrap);
     }
     foot.append(cancelBtn, okBtn);

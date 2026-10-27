@@ -57,7 +57,6 @@ type manager interface {
 	// от magnet-пар, записанных прежней версией
 	SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	AttachComment(ctx context.Context, hash, comment string, fetch func(context.Context) ([]byte, error)) error
-	DeletesFiles(ctx context.Context, opts model.ManagerDeleteOptions) bool
 	Remove(ctx context.Context, targets []model.ManagerDeleteOptions) (accepted []string, err error)
 	Add(ctx context.Context, data []byte, opts model.ManagerAddFileOptions) error
 }
@@ -947,9 +946,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 	}
 	if rep == nil {
 		if pc.pageDated {
-			if relErr := h.storage.AddReleaseTime(ctx, e.URLHash, *pc.date, forecastSamples); relErr != nil {
-				logger.Warn(fmt.Sprintf("release time of %s not saved: %v", e.Name, relErr))
-			}
+			h.recordReleaseTime(ctx, e, *pc.date)
 		}
 		if err = h.saveHistory(ctx, ttid, e, pc.date, true); err != nil {
 			h.logCheck(ctx, e, ttid, "error", err.Error(), rep)
@@ -1086,9 +1083,19 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 		return
 	}
 	if rep == nil {
+		// первая проверка: дата темы это выход текущего релиза, с ней прогноз начнется после первого обновления
+		if !e.Update && pc.pageDated {
+			h.recordReleaseTime(ctx, e, *cur)
+		}
 		err = h.saveHistory(ctx, ttid, e, cur, false)
 	}
 	return
+}
+
+func (h *handler) recordReleaseTime(ctx context.Context, e *model.Entry, at time.Time) {
+	if err := h.storage.AddReleaseTime(ctx, e.URLHash, at, forecastSamples); err != nil {
+		logger.Warn(fmt.Sprintf("release time of %s not saved: %v", e.Name, err))
+	}
 }
 
 func (h *handler) getPage(ctx context.Context, ttid int, link string) (b *bytes.Buffer, err error) {

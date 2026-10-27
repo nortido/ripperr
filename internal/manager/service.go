@@ -29,6 +29,7 @@ type client interface {
 	RemoveBlackholePair(hash string)
 	ConfirmSettled(ctx context.Context, hash string) (settled bool)
 	Discard(ctx context.Context, hash string) error
+	Purge(ctx context.Context, hash string) error
 	Resume(ctx context.Context, hash string) error
 	ReplacePending(hash string) bool
 	Files(ctx context.Context, hash string) ([]model.TorrentFile, error)

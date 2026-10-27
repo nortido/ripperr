@@ -72,12 +72,13 @@ func rootsOverlap(a, b []string) bool {
 	return true
 }
 
-func (h *handler) filesDeletable(ctx context.Context, targets, others []*model.Entry) bool {
+func filesDeletable(targets, others []*model.Entry) bool {
 	if len(targets) == 0 {
 		return false
 	}
+	// настройки удаления правят только замену, ручное удаление сдерживает лишь общая папка
 	for _, t := range targets {
-		if (t.SavePath == "" && t.ContentPath == "") || !h.manager.DeletesFiles(ctx, deleteOptions(t, true)) {
+		if t.SavePath == "" && t.ContentPath == "" {
 			return false
 		}
 	}
@@ -103,7 +104,7 @@ func (h *handler) removalInfo(ctx context.Context, urlHash string) (RemovalInfo,
 	if err != nil {
 		return RemovalInfo{}, err
 	}
-	return RemovalInfo{Torrents: len(targets), Files: h.filesDeletable(ctx, targets, others)}, nil
+	return RemovalInfo{Torrents: len(targets), Files: filesDeletable(targets, others)}, nil
 }
 
 func (h *handler) removeRelease(ctx context.Context, req RemoveRequest) error {
@@ -149,7 +150,7 @@ func (h *handler) removeRelease(ctx context.Context, req RemoveRequest) error {
 		if len(cur) != len(targets) || len(seen) != len(locked) {
 			return ErrTorrentsChanged
 		}
-		if req.Files && !h.filesDeletable(ctx, cur, others) {
+		if req.Files && !filesDeletable(cur, others) {
 			return fmt.Errorf("remove %s: %w", req.URLHash, model.ErrFilesNotAllowed)
 		}
 		opts := make([]model.ManagerDeleteOptions, 0, len(cur))

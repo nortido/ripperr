@@ -214,9 +214,12 @@ async function removeRelease(hash, name) {
   if (count === 0) text = t('dash.removeConfirmGone', { name: name });
   else if (count === 1) text = t('dash.removeConfirm', { name: name });
   else text = t('dash.removeConfirmMany', { name: name, count: count });
-  if (!info.files) text += '\n' + t('dash.removeKeepsFiles');
-  const opts = { text: text, confirmLabel: t('common.remove'), danger: true };
-  if (info.files) opts.checkLabel = t('dash.removeWithFiles');
+  // тоггл виден всегда и всегда выключен: когда файлы удалить нельзя, он неактивен с причиной
+  const opts = { text: text, confirmLabel: t('common.remove'), danger: true, checkLabel: t('dash.removeWithFiles') };
+  if (!info.files) {
+    opts.checkDisabled = true;
+    opts.checkHint = count === 0 ? t('dash.removeFilesGone') : t('dash.removeFilesOff');
+  }
   const res = await confirmDialog(opts);
   if (!res) return;
   setReleaseBusy(hash, true, 'loader');

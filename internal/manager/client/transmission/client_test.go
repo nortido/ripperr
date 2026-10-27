@@ -788,6 +788,22 @@ func TestDiscard_NeverDeletesLocalData(t *testing.T) {
 	}
 }
 
+func TestPurge_DeletesLocalDataWhateverSettings(t *testing.T) {
+	stub := newStubServer(t, "/downloads")
+	stub.putTorrent(rpcTorrent{HashString: "h1", DownloadDir: "/elsewhere/movies"})
+	c := newTestClient(t, stub, model.ManagerConfig{})
+
+	if err := c.Purge(context.Background(), "h1"); err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if len(stub.removeCalls) != 1 || !idsAre(stub.removeCalls[0]["ids"], "h1") || stub.removeCalls[0]["delete-local-data"] != true {
+		t.Fatalf("expected one torrent-remove of h1 with delete-local-data=true, got %v", stub.removeCalls)
+	}
+	if slices.Contains(stub.methods, "torrent-get") {
+		t.Fatalf("Purge read torrents: %v", stub.methods)
+	}
+}
+
 func withFastCheckWait(t *testing.T, budget time.Duration) {
 	t.Helper()
 	origDelay, origBudget := checkWaitDelay, checkWaitBudget

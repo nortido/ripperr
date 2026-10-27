@@ -51,7 +51,8 @@ type ManagerDeleteOptions struct {
 	Hash     string
 	Category string
 	Name     string
-	// решение принимает вызывающий один раз, клиент может только сузить его своей проверкой
+	// решение принимает вызывающий: замена сужает его настройками клиента, а manager.Remove
+	// удаляет файлы без проверок, общую папку проверяет runner
 	DeleteFiles bool
 }
 

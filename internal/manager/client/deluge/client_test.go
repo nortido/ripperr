@@ -185,6 +185,32 @@ func TestListMapsEntries(t *testing.T) {
 	}
 }
 
+func TestListContentPathFromFiles(t *testing.T) {
+	cases := map[string]struct {
+		files []fakeFile
+		want  string
+	}{
+		"renamed folder": {[]fakeFile{{0, "Show.S01/e01.mkv"}, {1, "Show.S01/e02.mkv"}}, "/data/tv/Show.S01"},
+		"backslashes":    {[]fakeFile{{0, `Show.S01\e01.mkv`}}, "/data/tv/Show.S01"},
+		"single file":    {[]fakeFile{{0, "movie.mkv"}}, "/data/tv/movie.mkv"},
+		"no metadata":    {nil, "/data/tv/My Show"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			c := newClient(t, f, model.ManagerConfig{})
+			f.put(hashN(1), &fakeTorrent{Name: "My Show", SavePath: "/data/tv", State: "Seeding", Files: tc.files})
+			entries, err := c.List(context.Background(), model.FilterOptions{})
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("List: %v, %+v", err, entries)
+			}
+			if entries[0].ContentPath != tc.want {
+				t.Errorf("ContentPath = %q, want %q", entries[0].ContentPath, tc.want)
+			}
+		})
+	}
+}
+
 func TestGetTorrentDetails(t *testing.T) {
 	f := newFake(t)
 	c := newClient(t, f, model.ManagerConfig{})
@@ -412,6 +438,31 @@ func TestDiscardNeverRemovesData(t *testing.T) {
 	})
 	if err := c.Discard(context.Background(), h); err == nil {
 		t.Fatalf("Discard with result false succeeded")
+	}
+}
+
+func TestPurgeRemovesDataWhateverSettings(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f, model.ManagerConfig{})
+	h := hashN(1)
+	f.put(h, &fakeTorrent{})
+	if err := c.Purge(context.Background(), strings.ToUpper(h)); err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if rm := removes(t, f); len(rm) != 1 || rm[0] != (removeCall{h, true}) {
+		t.Fatalf("remove calls = %+v", rm)
+	}
+	if err := c.Purge(context.Background(), h); err == nil {
+		t.Fatalf("Purge of absent torrent succeeded")
+	}
+	f.put(h, &fakeTorrent{})
+	f.lock(func() {
+		f.hook = func(m string, _ []json.RawMessage) (any, *fakeFault, bool) {
+			return false, nil, m == "core.remove_torrent"
+		}
+	})
+	if err := c.Purge(context.Background(), h); err == nil {
+		t.Fatalf("Purge with result false succeeded")
 	}
 }
 
