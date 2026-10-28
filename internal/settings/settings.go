@@ -101,6 +101,11 @@ type integrationsOverlay struct {
 		Host     *string `json:"host,omitempty"`
 		Password *string `json:"password,omitempty"`
 	} `json:"deluge"`
+	DownloadStation struct {
+		Host     *string `json:"host,omitempty"`
+		Username *string `json:"username,omitempty"`
+		Password *string `json:"password,omitempty"`
+	} `json:"downloadstation"`
 	Flaresolverr struct {
 		URL       *string `json:"url,omitempty"`
 		TimeoutMS *int    `json:"timeout_ms,omitempty"`
@@ -321,7 +326,7 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 		switch client := config.NormalizeClient(*o.Client); client {
 		case "":
 			// пустая строка: клиент не меняем, ValidateIntegrationsPatch ее пропускает
-		case "qbit", "transmission", "deluge":
+		case "qbit", "transmission", "deluge", "downloadstation":
 			cfg.Manager.Client = client
 		default:
 			logger.Warn(fmt.Sprintf("settings %s: unknown client %q, keeping %q", sqlite.SettingIntegrations, *o.Client, cfg.Manager.Client))
@@ -350,6 +355,15 @@ func applyIntegrations(cfg *config.App, o integrationsOverlay) {
 	}
 	if o.Deluge.Password != nil {
 		cfg.Manager.Deluge.Password = *o.Deluge.Password
+	}
+	if o.DownloadStation.Host != nil {
+		cfg.Manager.DownloadStation.Host = *o.DownloadStation.Host
+	}
+	if o.DownloadStation.Username != nil {
+		cfg.Manager.DownloadStation.Username = *o.DownloadStation.Username
+	}
+	if o.DownloadStation.Password != nil {
+		cfg.Manager.DownloadStation.Password = *o.DownloadStation.Password
 	}
 	if o.Flaresolverr.URL != nil {
 		cfg.Flaresolverr.Host = *o.Flaresolverr.URL
@@ -510,6 +524,11 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 			Host     string `json:"host"`
 			Password string `json:"password"`
 		} `json:"deluge"`
+		DownloadStation struct {
+			Host     string `json:"host"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		} `json:"downloadstation"`
 		Flaresolverr struct {
 			URL       string `json:"url"`
 			TimeoutMS int    `json:"timeout_ms"`
@@ -567,6 +586,9 @@ func IntegrationsJSON(cfg *config.App) json.RawMessage {
 	s.Transmission.Password = cfg.Manager.Transmission.Password
 	s.Deluge.Host = cfg.Manager.Deluge.Host
 	s.Deluge.Password = cfg.Manager.Deluge.Password
+	s.DownloadStation.Host = cfg.Manager.DownloadStation.Host
+	s.DownloadStation.Username = cfg.Manager.DownloadStation.Username
+	s.DownloadStation.Password = cfg.Manager.DownloadStation.Password
 	s.Flaresolverr.URL = cfg.Flaresolverr.Host
 	s.Flaresolverr.TimeoutMS = cfg.Flaresolverr.MaxTimeout
 	s.Proxy.DownloadProxy = cfg.Runner.DownloadProxy

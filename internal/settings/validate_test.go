@@ -178,7 +178,7 @@ func TestSchedulePatchMagnetTimeoutAbsentAllowed(t *testing.T) {
 
 func TestIntegrationsPatchFromJSONClient(t *testing.T) {
 	// UI и MANAGER_CLIENT из env шлют имя клиента в любом регистре и с пробелами
-	for _, v := range []string{"qbit", "transmission", "", "Transmission", " transmission ", "QBIT", "deluge", " Deluge "} {
+	for _, v := range []string{"qbit", "transmission", "", "Transmission", " transmission ", "QBIT", "deluge", " Deluge ", "downloadstation", " DownloadStation "} {
 		if _, err := IntegrationsPatchFromJSON(json.RawMessage(`{"client":"` + v + `"}`)); err != nil {
 			t.Errorf("client=%q: unexpected error: %v", v, err)
 		}

@@ -3,7 +3,7 @@
 # Ripperr
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
-![Release](https://img.shields.io/badge/release-v2.6.1-2f9e44)
+![Release](https://img.shields.io/badge/release-v2.7.0-2f9e44)
 
 ![Backend](https://img.shields.io/badge/backend-Go%201.25-00ADD8?logo=go&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-vanilla%20JS-F7DF1E?logo=javascript&logoColor=black)
@@ -11,7 +11,7 @@
 ![Docker](https://img.shields.io/badge/docker-amd64%20%7C%20arm64-2496ED?logo=docker&logoColor=white)
 
 ![Trackers](https://img.shields.io/badge/trackers-15-4c6ef5)
-![Clients](https://img.shields.io/badge/clients-3-4c6ef5)
+![Clients](https://img.shields.io/badge/clients-4-4c6ef5)
 ![Notifiers](https://img.shields.io/badge/notifiers-5-4c6ef5)
 ![UI](https://img.shields.io/badge/UI-EN%20%7C%20RU-2f9e44)
 
@@ -50,7 +50,9 @@ torrent client instead:
   watched.
 - **Replace without surprises.** Save path, category, tags and your file selection carry over to
   the new version. The new torrent is checked before the old one goes away, and a crash in the
-  middle is recovered on the next start. Old files are deleted only where you allow it.
+  middle is recovered on the next start. Old files are deleted only where you allow it. If the new
+  version does not fit on the disk, the old torrent stays and you get a notice. Ripperr tries again
+  on the next check.
 - **Works where trackers fight back.** Cloudflare through FlareSolverr, dead domains through
   mirror switching, magnet-only topics through peers.
 - **Easy to run.** One container, one SQLite file, a web UI that works on a phone.
@@ -60,7 +62,8 @@ torrent client instead:
 RuTracker, Kinozal, Rutor, NNM-Club, TeamHD, Toloka, Tapochek, Riper.AM, BookTracker, AniDub,
 AnimeLayer, AniLiberty, Selezen, Rustorka, NewStudio.
 
-Torrent clients: qBittorrent, Transmission, Deluge.
+Torrent clients: qBittorrent, Transmission, Deluge, Synology Download Station (no tags; a replace
+downloads the new version in full and keeps old files).
 
 ## Also inside
 

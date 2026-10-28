@@ -131,3 +131,15 @@ func TestURLParseErrorsQuoteNoInput(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeIntegrationsPatchDownloadStationHost(t *testing.T) {
+	host := "nas:5000"
+	o := integrationsOverlay{}
+	o.DownloadStation.Host = &host
+	if err := normalizeIntegrationsPatch(&o); err != nil {
+		t.Fatal(err)
+	}
+	if *o.DownloadStation.Host != "http://nas:5000" {
+		t.Errorf("downloadstation host = %q", *o.DownloadStation.Host)
+	}
+}

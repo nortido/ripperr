@@ -982,7 +982,7 @@ func TestMirrorEventsMerged(t *testing.T) {
 	if paused.Kind != KindMirrorSwitched || paused.Text != want {
 		t.Fatalf("paused = %+v", paused)
 	}
-	if d := DefaultEvents(); len(d) != 5 || slices.Contains(d, "mirror_suggested") {
+	if d := DefaultEvents(); len(d) != 6 || slices.Contains(d, "mirror_suggested") {
 		t.Fatalf("defaults = %v", d)
 	}
 	if KnownEvent("mirror_suggested") {
@@ -1259,5 +1259,43 @@ func TestSocksPosterDialerAllowsOtherPublicIP(t *testing.T) {
 	_, _ = dial(context.Background(), "tcp", "poster.example.invalid:8080")
 	if got := fwd.calls(); len(got) != 1 {
 		t.Errorf("forward dialer got %v, want exactly one call to the proxy", got)
+	}
+}
+
+func noSpaceEvent() Event {
+	gib := float64(1 << 30)
+	return NoSpaceEvent("Show.S01", "https://t/9", int64(8.21*gib), int64(3.19*gib))
+}
+
+func TestNoSpaceEvent(t *testing.T) {
+	ev := noSpaceEvent()
+	if ev.Kind != KindNoSpace || KindNoSpace != "no_space" || ev.URL != "https://t/9" || ev.AppPath != dashboardPath("", "Show.S01") {
+		t.Fatalf("event = %+v", ev)
+	}
+	for lang, want := range map[string]string{LangEN: "need 8.3 GB, free 3.1 GB", LangRU: "нужно 8.3 ГБ, свободно 3.1 ГБ"} {
+		got := New(Config{Language: lang}, "").localize(ev).plain()
+		if !strings.Contains(got, want) || !strings.Contains(got, "Show.S01") {
+			t.Errorf("%s plain = %q, want %q and subject", lang, got, want)
+		}
+	}
+}
+
+func TestNoSpaceTelegramParts(t *testing.T) {
+	title, name, ctx := tgParts(New(Config{Language: LangEN}, "").localize(noSpaceEvent()))
+	if title != "Not enough disk space" || name != "Show S01" || ctx != "Need 8.3 GB, free 3.1 GB" {
+		t.Fatalf("tgParts = %q %q %q", title, name, ctx)
+	}
+}
+
+func TestNoSpacePushText(t *testing.T) {
+	title, body := pushOf(t, LangRU, noSpaceEvent())
+	if title != "Не хватает места на диске" || body != "Show S01\nНужно 8.3 ГБ, свободно 3.1 ГБ" {
+		t.Fatalf("push = %q %q", title, body)
+	}
+}
+
+func TestNoSpaceDefault(t *testing.T) {
+	if !KnownEvent("no_space") || !slices.Contains(DefaultEvents(), KindNoSpace) || !wants(nil, KindNoSpace) {
+		t.Fatal("no_space must be known and on by default")
 	}
 }

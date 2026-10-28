@@ -14,6 +14,7 @@ import (
 	"ripperr/internal/helper"
 	"ripperr/internal/manager"
 	"ripperr/internal/manager/client/deluge"
+	"ripperr/internal/manager/client/downloadstation"
 	"ripperr/internal/manager/client/qbittorrent"
 	"ripperr/internal/manager/client/transmission"
 	"ripperr/internal/mirrorsync"
@@ -206,6 +207,9 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 	case "deluge":
 		_, err := deluge.New(delugeManagerConfigFrom(cfg))
 		s.testResult(w, r, req.Kind, err)
+	case "downloadstation":
+		_, err := downloadstation.New(downloadstationManagerConfigFrom(cfg))
+		s.testResult(w, r, req.Kind, err)
 	case "flaresolverr":
 		s.testResult(w, r, req.Kind, testFlaresolverr(cfg))
 	case "proxy":
@@ -236,7 +240,7 @@ func (s *Server) handleTestIntegration(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, testResultResp{OK: true, Hosts: n})
 	default:
-		writeError(w, http.StatusBadRequest, "kind must be qbit, transmission, deluge, flaresolverr, proxy, notify, or mirror_source")
+		writeError(w, http.StatusBadRequest, "kind must be qbit, transmission, deluge, downloadstation, flaresolverr, proxy, notify, or mirror_source")
 	}
 }
 
@@ -295,6 +299,24 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 			cfg.Manager.Deluge.Host = norm
 		}
 		cfg.Manager.Deluge.Password = c.Password
+	case "downloadstation":
+		var c struct {
+			Host     string `json:"host"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return cfg, err
+		}
+		if c.Host != "" {
+			norm, err := settings.EnsureScheme(c.Host, "http")
+			if err != nil {
+				return cfg, err
+			}
+			cfg.Manager.DownloadStation.Host = norm
+		}
+		cfg.Manager.DownloadStation.Username = c.Username
+		cfg.Manager.DownloadStation.Password = c.Password
 	case "flaresolverr":
 		var c struct {
 			URL       string `json:"url"`
@@ -402,7 +424,7 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 			return cfg, err
 		}
 	default:
-		return cfg, fmt.Errorf("kind must be qbit, transmission, deluge, flaresolverr, proxy, notify, or mirror_source")
+		return cfg, fmt.Errorf("kind must be qbit, transmission, deluge, downloadstation, flaresolverr, proxy, notify, or mirror_source")
 	}
 	if err := settings.RestoreMaskedSecrets(&cfg, &orig); err != nil {
 		return cfg, err
@@ -485,6 +507,14 @@ func delugeManagerConfigFrom(cfg config.App) model.ManagerConfig {
 	}
 }
 
+func downloadstationManagerConfigFrom(cfg config.App) model.ManagerConfig {
+	return model.ManagerConfig{
+		Host:     cfg.Manager.DownloadStation.Host,
+		Username: cfg.Manager.DownloadStation.Username,
+		Password: cfg.Manager.DownloadStation.Password,
+	}
+}
+
 func (s *Server) managerConfig(cfg config.App) model.ManagerConfig {
 	// BlackholeDir тут не ставим: при непустом пути конструктор клиента делает MkdirAll,
 	// а проверка связи или загрузка категорий не должны создавать каталог.
@@ -494,6 +524,8 @@ func (s *Server) managerConfig(cfg config.App) model.ManagerConfig {
 		return transmissionManagerConfigFrom(cfg)
 	case manager.ClientDeluge:
 		return delugeManagerConfigFrom(cfg)
+	case manager.ClientDownloadStation:
+		return downloadstationManagerConfigFrom(cfg)
 	}
 	return qbitManagerConfigFrom(cfg)
 }

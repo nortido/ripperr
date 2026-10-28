@@ -231,3 +231,28 @@ func TestRunnerValidateIgnoresSchedule(t *testing.T) {
 		t.Fatalf("Validate must not check the schedule (the DB may override it): %v", err)
 	}
 }
+
+func TestProcessDownloadStationEnv(t *testing.T) {
+	cfg := DefaultApp()
+	if err := envconfig.ProcessWith(context.Background(), &envconfig.Config{
+		Target:   &cfg,
+		Lookuper: envconfig.MapLookuper(map[string]string{}),
+	}); err != nil {
+		t.Fatalf("ProcessWith: %v", err)
+	}
+	if cfg.Manager.DownloadStation.Host != "localhost:5000" || cfg.Manager.DownloadStation.Username != "" || cfg.Manager.DownloadStation.Password != "" {
+		t.Fatalf("defaults = %+v, want localhost:5000 and empty credentials", cfg.Manager.DownloadStation)
+	}
+	cfg = DefaultApp()
+	if err := envconfig.ProcessWith(context.Background(), &envconfig.Config{
+		Target: &cfg,
+		Lookuper: envconfig.MapLookuper(map[string]string{
+			"DOWNLOADSTATION_URL": "nas:5000", "DOWNLOADSTATION_USER": "u", "DOWNLOADSTATION_PASS": "secret",
+		}),
+	}); err != nil {
+		t.Fatalf("ProcessWith: %v", err)
+	}
+	if cfg.Manager.DownloadStation.Host != "nas:5000" || cfg.Manager.DownloadStation.Username != "u" || cfg.Manager.DownloadStation.Password != "secret" {
+		t.Fatalf("env = %+v, want nas:5000 / u / secret", cfg.Manager.DownloadStation)
+	}
+}

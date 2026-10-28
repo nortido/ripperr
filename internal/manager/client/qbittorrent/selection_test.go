@@ -565,3 +565,19 @@ func TestAddFromBuffer_FilePathsIndependentRenamesNoExtraRead(t *testing.T) {
 		t.Fatalf("files reads = %d, want 1, log %v", n, log)
 	}
 }
+
+func TestFilesReportsDone(t *testing.T) {
+	files := qbt.TorrentFiles{
+		{Index: 0, Name: "R/a", Size: 1000, Progress: 1, Priority: 1},
+		{Index: 1, Name: "R/b", Size: 1000, Progress: 0.5, Priority: 0},
+	}
+	c, _ := newSelectionServer(t, "h1", files, http.StatusOK)
+	got, err := c.Files(context.Background(), "h1")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	want := []model.TorrentFile{{Path: "R/a", Wanted: true, Done: 1000}, {Path: "R/b", Wanted: false, Done: 500}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Files = %v, want %v", got, want)
+	}
+}

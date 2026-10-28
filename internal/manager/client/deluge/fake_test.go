@@ -35,15 +35,17 @@ type fakeFile struct {
 }
 
 type fakeTorrent struct {
-	Name      string
-	Comment   string
-	SavePath  string
-	Label     string
-	State     string
-	Progress  float64
-	TimeAdded float64
-	Files     []fakeFile
-	Prios     []int
+	Name         string
+	Comment      string
+	SavePath     string
+	Label        string
+	State        string
+	Progress     float64
+	TimeAdded    float64
+	Files        []fakeFile
+	Prios        []int
+	Sizes        []int64
+	FileProgress []float64
 	// очередь состояний, каждое чтение state забирает следующее
 	script []string
 }
@@ -70,6 +72,8 @@ type fakeDeluge struct {
 	ignorePriorities bool
 	resumeTo         string
 	afterRecheck     string
+	freeSpace        int64
+	freeSpaceParams  []string
 }
 
 func newFake(t *testing.T) *fakeDeluge {
@@ -194,6 +198,9 @@ func (f *fakeDeluge) handle(w http.ResponseWriter, r *http.Request, method strin
 		return nil, &fakeFault{2, "Unknown method"}
 	}
 	switch method {
+	case "core.get_free_space":
+		f.freeSpaceParams = append(f.freeSpaceParams, arg[string](f.t, params, 0))
+		return f.freeSpace, nil
 	case "core.get_torrents_status":
 		keys := arg[[]string](f.t, params, 1)
 		out := map[string]any{}
@@ -325,8 +332,12 @@ func (f *fakeDeluge) statusOf(id string, tor *fakeTorrent, keys []string) map[st
 		tor.State, tor.script = tor.script[0], tor.script[1:]
 	}
 	files := make([]map[string]any, 0, len(tor.Files))
-	for _, fl := range tor.Files {
-		files = append(files, map[string]any{"index": fl.Index, "path": fl.Path, "size": 1, "offset": 0})
+	for i, fl := range tor.Files {
+		size := int64(1)
+		if i < len(tor.Sizes) {
+			size = tor.Sizes[i]
+		}
+		files = append(files, map[string]any{"index": fl.Index, "path": fl.Path, "size": size, "offset": 0})
 	}
 	prios := tor.Prios
 	if prios == nil {
@@ -336,6 +347,9 @@ func (f *fakeDeluge) statusOf(id string, tor *fakeTorrent, keys []string) map[st
 		"hash": id, "name": tor.Name, "comment": tor.Comment, "save_path": tor.SavePath,
 		"time_added": tor.TimeAdded, "state": tor.State, "progress": tor.Progress,
 		"is_finished": tor.Progress >= 100, "files": files, "file_priorities": prios,
+	}
+	if tor.FileProgress != nil {
+		all["file_progress"] = tor.FileProgress
 	}
 	if f.labels != nil {
 		all["label"] = tor.Label

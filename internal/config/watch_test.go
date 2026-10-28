@@ -37,6 +37,9 @@ func TestClientSupportsTags(t *testing.T) {
 	if ClientSupportsTags("Deluge ") {
 		t.Error("deluge must not support tags")
 	}
+	if ClientSupportsTags(" DownloadStation ") {
+		t.Error("downloadstation must not support tags")
+	}
 	if !ClientSupportsTags("qbit") {
 		t.Error("qbit must support tags")
 	}

@@ -63,7 +63,8 @@ type rpcTorrent struct {
 }
 
 type rpcFile struct {
-	Name string `json:"name"`
+	Name           string `json:"name"`
+	BytesCompleted int64  `json:"bytesCompleted"`
 }
 
 type rpcFileStat struct {
@@ -796,7 +797,30 @@ func (c *Client) Files(ctx context.Context, hash string) ([]model.TorrentFile, e
 	}
 	files := make([]model.TorrentFile, len(t.Files))
 	for i := range t.Files {
-		files[i] = model.TorrentFile{Path: t.Files[i].Name, Wanted: bool(t.FileStats[i].Wanted)}
+		files[i] = model.TorrentFile{Path: t.Files[i].Name, Wanted: bool(t.FileStats[i].Wanted), Done: t.Files[i].BytesCompleted}
 	}
 	return files, nil
+}
+
+func (c *Client) FreeSpace(ctx context.Context, path string) (int64, error) {
+	raw, err := c.rpc.call(ctx, "free-space", map[string]interface{}{"path": path})
+	if err != nil {
+		return 0, err
+	}
+	// старые версии отдают size-bytes, новая спецификация size_bytes
+	var res struct {
+		Dash  *int64 `json:"size-bytes"`
+		Under *int64 `json:"size_bytes"`
+	}
+	if err = json.Unmarshal(raw, &res); err != nil {
+		return 0, fmt.Errorf("decode free-space: %w", err)
+	}
+	size := res.Dash
+	if size == nil {
+		size = res.Under
+	}
+	if size == nil || *size < 0 {
+		return 0, model.ErrFreeSpaceUnknown
+	}
+	return *size, nil
 }

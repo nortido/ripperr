@@ -87,15 +87,30 @@ func TestNewClientDelugeKnown(t *testing.T) {
 
 func TestSupportsTags(t *testing.T) {
 	cases := map[string]bool{
-		"":                 true,
-		ClientQbit:         true,
-		ClientTransmission: true,
-		ClientDeluge:       false,
-		" Deluge ":         false,
+		"":                    true,
+		ClientQbit:            true,
+		ClientTransmission:    true,
+		ClientDeluge:          false,
+		" Deluge ":            false,
+		ClientDownloadStation: false,
 	}
 	for kind, want := range cases {
 		if got := SupportsTags(kind); got != want {
 			t.Errorf("SupportsTags(%q) = %v, want %v", kind, got, want)
 		}
+	}
+}
+
+func TestNewClientDownloadStationKnown(t *testing.T) {
+	_, err := NewClient(" DownloadStation ", model.ManagerConfig{Host: "http://127.0.0.1:1", Username: "u", Password: "p"})
+	if err == nil {
+		t.Fatal("expected connection error for unreachable host")
+	}
+	if errors.Is(err, ErrUnknownClient) {
+		t.Fatalf("got ErrUnknownClient for downloadstation: %v", err)
+	}
+	_, err = NewClient("bogus", model.ManagerConfig{})
+	if err == nil || !strings.Contains(err.Error(), ClientDownloadStation) {
+		t.Fatalf("unknown kind error = %v, want it to list %q", err, ClientDownloadStation)
 	}
 }

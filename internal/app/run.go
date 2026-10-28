@@ -54,6 +54,10 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 	case manager.ClientDeluge:
 		mcfg.Host = cfg.Manager.Deluge.Host
 		mcfg.Password = cfg.Manager.Deluge.Password
+	case manager.ClientDownloadStation:
+		mcfg.Host = cfg.Manager.DownloadStation.Host
+		mcfg.Username = cfg.Manager.DownloadStation.Username
+		mcfg.Password = cfg.Manager.DownloadStation.Password
 	default:
 		mcfg.Host = cfg.Manager.QbitTorrent.Host
 		mcfg.Username = cfg.Manager.QbitTorrent.Username
@@ -62,7 +66,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 			clientName = manager.ClientQbit
 		}
 	}
-	// у Deluge нет тегов: режим тегов дал бы пустую выборку, поэтому смотрим по категориям
+	// у Deluge и Download Station нет тегов: режим тегов дал бы пустую выборку, поэтому смотрим по категориям
 	supportsTags := manager.SupportsTags(clientName)
 	if cfg.Runner.EffectiveWatchMode() == config.WatchModeTags && !supportsTags {
 		logger.Info(fmt.Sprintf("%s has no tags, watching by categories %v", clientName, cfg.Runner.AllowedCategories))

@@ -1,6 +1,9 @@
 package model
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	ErrAlreadyAdded       = errors.New("torrent already added")
@@ -11,6 +14,8 @@ var (
 	ErrExportUnsupported  = errors.New("client cannot export torrent")
 	ErrFilesNotAllowed    = errors.New("deleting files is not allowed for this torrent")
 	ErrRemoveUnconfirmed  = errors.New("client still lists the removed torrent")
+	ErrNoSpace            = errors.New("not enough free disk space")
+	ErrFreeSpaceUnknown   = errors.New("free disk space unknown")
 )
 
 type FilterOptions struct {
@@ -45,6 +50,7 @@ type RedownloadOptions struct {
 type TorrentFile struct {
 	Path   string
 	Wanted bool
+	Done   int64
 }
 
 type ManagerDeleteOptions struct {
@@ -66,3 +72,17 @@ type ManagerConfig struct {
 	DeleteCategories   []string
 	BlackholeDir       string
 }
+
+type NoSpaceError struct {
+	Path string
+	Need int64
+	Free int64
+	Hash string
+}
+
+func (e *NoSpaceError) Error() string {
+	const gb = float64(1 << 30)
+	return fmt.Sprintf("not enough free disk space in %s: need %.1f GB, free %.1f GB", e.Path, float64(e.Need)/gb, float64(e.Free)/gb)
+}
+
+func (e *NoSpaceError) Unwrap() error { return ErrNoSpace }

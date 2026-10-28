@@ -33,6 +33,7 @@ type client interface {
 	Resume(ctx context.Context, hash string) error
 	ReplacePending(hash string) bool
 	Files(ctx context.Context, hash string) ([]model.TorrentFile, error)
+	FreeSpace(ctx context.Context, path string) (int64, error)
 	SetComment(ctx context.Context, hash, comment string) error
 	ExportTorrent(ctx context.Context, hash string) ([]byte, error)
 	ApplySelection(ctx context.Context, hash string, opts model.ManagerAddFileOptions) error
@@ -89,6 +90,7 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, opts mo
 	if (hashKnown && m.client.ReplacePending(newHash)) || (opts.Hash != "" && m.client.ReplacePending(opts.Hash)) {
 		return fmt.Errorf("%w: %s", model.ErrReplacePending, opts.Name)
 	}
+	var oldFiles []model.TorrentFile
 	// выбор файлов читаем, пока старый торрент жив; ошибка чтения откладывает
 	// замену до следующего прогона, иначе большая раздача скачалась бы целиком
 	if opts.Hash != "" && !same {
@@ -96,6 +98,7 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, opts mo
 		if filesErr != nil {
 			return fmt.Errorf("read file selection of %s: %w", opts.Name, filesErr)
 		}
+		oldFiles = files
 		if slices.ContainsFunc(files, func(f model.TorrentFile) bool { return !f.Wanted }) {
 			opts.FileSelection = files
 		}
@@ -104,6 +107,11 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, opts mo
 		// одно решение и для выбора пути, и для Delete: повторная проверка в клиенте
 		// (transmission спрашивает downloadDir) могла бы ответить иначе
 		delOpts.DeleteFiles = m.client.DeletesFiles(ctx, delOpts)
+	}
+	if opts.Hash != "" && !same && hashKnown {
+		if err = m.checkSpace(ctx, data, newHash, oldFiles, opts, known && delOpts.DeleteFiles); err != nil {
+			return
+		}
 	}
 	if known && !same {
 		// старый торрент уйдет вместе с файлами: новый добавляем остановленным

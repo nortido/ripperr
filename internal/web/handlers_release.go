@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ripperr/internal/config"
+	"ripperr/internal/manager"
 	"ripperr/internal/model"
 	"ripperr/internal/runner"
 )
@@ -112,6 +113,10 @@ func releaseHash(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return hash, true
 }
 
+func (s *Server) clientKeepsFiles() bool {
+	return manager.NormalizeClient(s.effective().Manager.Client) == manager.ClientDownloadStation
+}
+
 func (s *Server) handleRemovalInfo(w http.ResponseWriter, r *http.Request) {
 	hash, ok := releaseHash(w, r)
 	if !ok {
@@ -124,7 +129,9 @@ func (s *Server) handleRemovalInfo(w http.ResponseWriter, r *http.Request) {
 		writeReleaseError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, removalResp{Torrents: info.Torrents, Files: info.Files})
+	// Download Station удаляет задачу без файлов, поэтому опцию с файлами UI не показывает
+	files := info.Files && !s.clientKeepsFiles()
+	writeJSON(w, http.StatusOK, removalResp{Torrents: info.Torrents, Files: files})
 }
 
 func (s *Server) handleRemoveRelease(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +149,10 @@ func (s *Server) handleRemoveRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Torrents == nil || *body.Torrents < 0 {
 		writeError(w, http.StatusBadRequest, "torrents must be a non-negative number")
+		return
+	}
+	if body.Files && s.clientKeepsFiles() {
+		writeReleaseError(w, model.ErrFilesNotAllowed)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), removeTimeout)

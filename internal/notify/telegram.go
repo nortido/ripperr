@@ -16,6 +16,7 @@ var tgEmoji = map[string]string{
 	KindUpdated:        "🔄",
 	KindBroken:         "⚠️",
 	KindCheckFailed:    "❌",
+	KindNoSpace:        "💾",
 	KindTrackerDown:    "🔴",
 	KindTrackerUp:      "🟢",
 	KindMirrorSwitched: "🔀",
@@ -70,6 +71,8 @@ func tgParts(ev Event) (title, name, ctx string) {
 		return m[msgTgBroken], pushName(ev.Subject), fmt.Sprintf(m[msgTgBrokenNote], arg(0))
 	case msgCheckFailed:
 		return m[msgPushCheckFailed], pushName(ev.Subject), arg(0)
+	case msgNoSpace:
+		return m[msgPushNoSpace], pushName(ev.Subject), fmt.Sprintf(m[msgNoSpaceNote], arg(0), arg(1))
 	case msgTrackerDown:
 		return m[msgTgTrackerDown], arg(0) + ": " + arg(1), m[msgTgTrackerDownNote]
 	case msgTrackerUp:

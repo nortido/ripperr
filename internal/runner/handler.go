@@ -103,6 +103,8 @@ type handler struct {
 	siblings atomic.Pointer[map[string][]string]
 	// хеш торрента -> retryState: его обновление не удалось, а строку истории он делит с соседями
 	retry sync.Map
+	// хеш старого торрента -> инфохеш новой раздачи, о нехватке места под которую уже уведомили
+	noSpace sync.Map
 	// задачи одного торрента в очередях: после старта новее не перезапускаем устаревшую
 	taskSeq   atomic.Uint64
 	startedMu sync.Mutex
@@ -555,6 +557,12 @@ func (h *handler) storeSiblings(rawEntries []*model.Entry, partial bool) {
 		}
 		return true
 	})
+	h.noSpace.Range(func(hash, _ any) bool {
+		if _, ok := present[hash.(string)]; !ok {
+			h.noSpace.Delete(hash)
+		}
+		return true
+	})
 }
 
 func (h *handler) markRetry(ctx context.Context, e *model.Entry, cause error) {
@@ -600,6 +608,14 @@ func (h *handler) deferRetry(ctx context.Context, e *model.Entry) {
 	}
 	h.retry.Store(e.Hash, st)
 	h.forceRow(ctx, e.URLHash)
+}
+
+func (h *handler) notifyNoSpace(e *model.Entry, nse *model.NoSpaceError) {
+	if v, ok := h.noSpace.Load(e.Hash); ok && v.(string) == nse.Hash {
+		return
+	}
+	h.noSpace.Store(e.Hash, nse.Hash)
+	h.notifier.Notify(notify.NoSpaceEvent(e.Name, e.URL, nse.Need, nse.Free))
 }
 
 func (h *handler) forceRow(ctx context.Context, urlHash string) {
@@ -982,6 +998,26 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 			h.logCheck(ctx, e, ttid, "unchanged", "", rep)
 			return nil
 		}
+		var nse *model.NoSpaceError
+		if errors.As(err, &nse) {
+			err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
+			if rep == nil {
+				logger.Info(fmt.Sprintf("%s: %s", e.Name, nse))
+				h.deferRetry(ctx, e)
+				h.notifyNoSpace(e, nse)
+			}
+			h.logCheckStreak(ctx, e, ttid, "error", err.Error(), true, rep)
+			return nil
+		}
+		if errors.Is(err, model.ErrPartialList) {
+			err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
+			if rep == nil {
+				logger.Warn(fmt.Sprintf("%s: %v", e.Name, err))
+				h.deferRetry(ctx, e)
+			}
+			h.logCheckStreak(ctx, e, ttid, "error", err.Error(), true, rep)
+			return nil
+		}
 		err = fmt.Errorf("%s %w", entryTopicURL(tc, e), err)
 		if rep == nil {
 			h.markRetry(ctx, e, err)
@@ -990,6 +1026,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		return
 	}
 	if rep == nil {
+		h.noSpace.Delete(e.Hash)
 		if pc.pageDated {
 			h.recordReleaseTime(ctx, e, *pc.date)
 		}

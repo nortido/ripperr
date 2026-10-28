@@ -83,7 +83,7 @@ export async function refreshLogs(manual) {
 }
 
 const EVENT_SUCCESS_KINDS = ['updated', 'tracker_up'];
-const EVENT_ERROR_KINDS = ['broken', 'tracker_down', 'check_failed', 'ui_error'];
+const EVENT_ERROR_KINDS = ['broken', 'tracker_down', 'check_failed', 'no_space', 'ui_error'];
 
 export function eventLevel(kind) {
   if (EVENT_SUCCESS_KINDS.indexOf(kind) >= 0) return 'success';

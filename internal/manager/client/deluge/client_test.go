@@ -1108,3 +1108,49 @@ func TestDeletesFilesIgnoresEmptyCategory(t *testing.T) {
 		t.Fatalf("DeletesFiles false for listed category")
 	}
 }
+
+func TestFilesReportsDone(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f, model.ManagerConfig{})
+	h := hashN(1)
+	f.put(h, &fakeTorrent{Files: []fakeFile{{0, "x/a"}, {1, "x/b"}}, Prios: []int{4, 4}, Sizes: []int64{1000, 400}, FileProgress: []float64{0.25, 1}})
+	files, err := c.Files(context.Background(), h)
+	if err != nil || len(files) != 2 || files[0].Done != 250 || files[1].Done != 400 {
+		t.Fatalf("Files = %+v, %v; want Done 250 and 400", files, err)
+	}
+}
+
+func TestFilesDoneWithoutProgress(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f, model.ManagerConfig{})
+	h := hashN(1)
+	f.put(h, &fakeTorrent{Files: []fakeFile{{0, "x/a"}, {1, "x/b"}}, Prios: []int{4, 4}, Sizes: []int64{1000, 400}})
+	files, err := c.Files(context.Background(), h)
+	if err != nil || len(files) != 2 || files[0].Done != 0 || files[1].Done != 0 {
+		t.Fatalf("no file_progress: %+v, %v; want Done 0, nil", files, err)
+	}
+	f.put(h, &fakeTorrent{Files: []fakeFile{{0, "x/a"}, {1, "x/b"}}, Prios: []int{4, 4}, Sizes: []int64{1000, 400}, FileProgress: []float64{0.5}})
+	files, err = c.Files(context.Background(), h)
+	if err != nil || len(files) != 2 || files[0].Done != 0 || files[1].Done != 0 {
+		t.Fatalf("length mismatch: %+v, %v; want Done 0, nil", files, err)
+	}
+}
+
+func TestFreeSpace(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f, model.ManagerConfig{})
+	f.lock(func() { f.freeSpace = 4242 })
+	got, err := c.FreeSpace(context.Background(), "/data")
+	if err != nil || got != 4242 {
+		t.Fatalf("FreeSpace = %d, %v; want 4242", got, err)
+	}
+	f.lock(func() {
+		if !slices.Equal(f.freeSpaceParams, []string{"/data"}) {
+			t.Fatalf("params = %v; want [/data]", f.freeSpaceParams)
+		}
+		f.freeSpace = -1
+	})
+	if _, err = c.FreeSpace(context.Background(), "/data"); !errors.Is(err, model.ErrFreeSpaceUnknown) {
+		t.Fatalf("negative: err = %v; want ErrFreeSpaceUnknown", err)
+	}
+}

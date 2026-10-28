@@ -2,6 +2,15 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.7.0] - 2026-10-28
+
+### Added
+- Free disk space check before a replace. If the new version does not fit, the old torrent stays, the new `no_space` notice is sent (on by default) and the replace is tried again on the next check. Unknown free space never blocks a replace.
+- Synology Download Station client (reduced mode): no tags, a replace downloads the new version in full and keeps old files, no redownload, no delete with files.
+
+### Fixed
+- The "Last check" column header lines up with the times below it.
+
 ## [2.6.1] - 2026-10-28
 
 ### Changed

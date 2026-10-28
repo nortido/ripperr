@@ -28,6 +28,7 @@ const (
 	msgMirrorDigest   = "mirror_digest"
 	msgMirrorPaused   = "mirror_paused"
 	msgCheckFailed    = "check_failed"
+	msgNoSpace        = "no_space"
 	msgTest           = "test"
 	msgAppLink        = "app_link"
 	msgDigestMain     = "digest_main"
@@ -40,6 +41,8 @@ const (
 	msgPushBroken      = "push_broken"
 	msgPushCheckFailed = "push_check_failed"
 	msgPushStreak      = "push_streak"
+	msgPushNoSpace     = "push_no_space"
+	msgNoSpaceNote     = "no_space_note"
 
 	msgTgBroken          = "tg_broken"
 	msgTgBrokenNote      = "tg_broken_note"
@@ -66,6 +69,7 @@ var messages = map[string]map[string]string{
 		msgMirrorDigest:   "Tracker mirrors: %s",
 		msgMirrorPaused:   "Tracker %s is paused: only the new mirror %s responds. Confirm it in the tracker settings.",
 		msgCheckFailed:    "Release check failed: %s",
+		msgNoSpace:        "Not enough disk space to update the release: need %s GB, free %s GB. The old version stays, the update will be retried:",
 		msgTest:           "Ripperr: connectivity test",
 		msgAppLink:        "Open in Ripperr",
 		msgDigestMain:     "%s: main address %s instead of %s",
@@ -78,6 +82,8 @@ var messages = map[string]map[string]string{
 		msgPushBroken:      "Release ignored",
 		msgPushCheckFailed: "Check failed",
 		msgPushStreak:      "Errors in a row: %s",
+		msgPushNoSpace:     "Not enough disk space",
+		msgNoSpaceNote:     "Need %s GB, free %s GB",
 
 		msgTgBroken:          "Release moved to ignored",
 		msgTgBrokenNote:      "Errors in a row: %s, no longer checked",
@@ -98,6 +104,7 @@ var messages = map[string]map[string]string{
 		msgMirrorDigest:   "Зеркала трекеров: %s",
 		msgMirrorPaused:   "Трекер %s на паузе: отвечает только новое зеркало %s. Подтвердите его в настройках трекера.",
 		msgCheckFailed:    "Ошибка проверки раздачи: %s",
+		msgNoSpace:        "Не хватает места на диске для обновления раздачи: нужно %s ГБ, свободно %s ГБ. Старая версия остается, обновление повторится:",
 		msgTest:           "Ripperr: проверка связи",
 		msgAppLink:        "Открыть в Ripperr",
 		msgDigestMain:     "%s: основной адрес %s вместо %s",
@@ -110,6 +117,8 @@ var messages = map[string]map[string]string{
 		msgPushBroken:      "Раздача в игноре",
 		msgPushCheckFailed: "Ошибка проверки",
 		msgPushStreak:      "Ошибок подряд: %s",
+		msgPushNoSpace:     "Не хватает места на диске",
+		msgNoSpaceNote:     "Нужно %s ГБ, свободно %s ГБ",
 
 		msgTgBroken:          "Раздача ушла в игнор",
 		msgTgBrokenNote:      "Ошибок подряд: %s, больше не проверяется",

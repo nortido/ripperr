@@ -379,8 +379,8 @@ func ValidateIntegrationsPatch(o integrationsOverlay) error {
 	// пустая строка: клиент не меняем. Сравниваем после нормализации, иначе "Transmission"
 	// из UI получит 400, хотя applyIntegrations его примет. Там же подстраховка для старых баз
 	if o.Client != nil {
-		if client := config.NormalizeClient(*o.Client); client != "" && client != "qbit" && client != "transmission" && client != "deluge" {
-			return fmt.Errorf("client must be qbit, transmission or deluge")
+		if client := config.NormalizeClient(*o.Client); client != "" && client != "qbit" && client != "transmission" && client != "deluge" && client != "downloadstation" {
+			return fmt.Errorf("client must be qbit, transmission, deluge or downloadstation")
 		}
 	}
 	if o.Flaresolverr.TimeoutMS != nil && *o.Flaresolverr.TimeoutMS < 1 {

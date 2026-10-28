@@ -21,7 +21,7 @@ func (c *Client) Files(ctx context.Context, hash string) ([]model.TorrentFile, e
 	}
 	out := make([]model.TorrentFile, len(*files))
 	for i, f := range *files {
-		out[i] = model.TorrentFile{Path: f.Name, Wanted: f.Priority != 0}
+		out[i] = model.TorrentFile{Path: f.Name, Wanted: f.Priority != 0, Done: int64(float64(f.Size) * float64(f.Progress))}
 	}
 	return out, nil
 }

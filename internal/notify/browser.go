@@ -141,6 +141,11 @@ func pushText(ev Event) (title, body string) {
 			reason = ev.args[0]
 		}
 		return m[msgPushCheckFailed], joinLines(name, reason)
+	case msgNoSpace:
+		if len(ev.args) > 1 {
+			reason = fmt.Sprintf(m[msgNoSpaceNote], ev.args[0], ev.args[1])
+		}
+		return m[msgPushNoSpace], joinLines(name, reason)
 	}
 	text := strings.TrimPrefix(strings.TrimSpace(ev.Text), subjectHead)
 	first, rest, _ := strings.Cut(text, "\n")

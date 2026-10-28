@@ -79,6 +79,10 @@ type stubClient struct {
 	waitBlocks         bool
 	filesByHash        map[string][]model.TorrentFile
 	filesErrByHash     map[string]error
+	freeBytes          int64
+	freeErr            error
+	freeSet            bool
+	freePaths          []string
 }
 
 type existsAnswer struct {
@@ -207,6 +211,17 @@ func (s *stubClient) Files(ctx context.Context, hash string) ([]model.TorrentFil
 		return files, nil
 	}
 	return s.files, s.filesErr
+}
+
+func (s *stubClient) FreeSpace(ctx context.Context, path string) (int64, error) {
+	s.freePaths = append(s.freePaths, path)
+	if s.freeErr != nil {
+		return 0, s.freeErr
+	}
+	if !s.freeSet {
+		return 0, model.ErrFreeSpaceUnknown
+	}
+	return s.freeBytes, nil
 }
 
 func (s *stubClient) ReplacePending(hash string) bool {

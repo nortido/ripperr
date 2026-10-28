@@ -21,7 +21,7 @@ type Log struct {
 }
 
 type Manager struct {
-	// "qbit", "transmission" или "deluge"
+	// "qbit", "transmission", "deluge" или "downloadstation"
 	Client      string `env:"MANAGER_CLIENT, default=qbit"`
 	QbitTorrent struct {
 		Host     string `env:"QBIT_URL, default=localhost:8068"`
@@ -38,6 +38,11 @@ type Manager struct {
 		Host string `env:"DELUGE_URL, default=localhost:8112"`
 		// Web UI Deluge авторизует только паролем, логина у него нет
 		Password string `env:"DELUGE_PASS, default=deluge"`
+	}
+	DownloadStation struct {
+		Host     string `env:"DOWNLOADSTATION_URL, default=localhost:5000"`
+		Username string `env:"DOWNLOADSTATION_USER, default="`
+		Password string `env:"DOWNLOADSTATION_PASS, default="`
 	}
 	PausedMaxRatio        float64  `env:"MANAGER_PAUSED_MAX_RATIO, default=2"`
 	DeleteEnabled         bool     `env:"MANAGER_DELETE_ENABLED, default=false"`

@@ -22,6 +22,7 @@ const maskingIntegrationsSeed = `{"client":"qbit",
 "qbit":{"host":"http://qu:SEC-qh@127.0.0.1:1","username":"qu","password":"SEC-qp"},
 "transmission":{"host":"http://tu:SEC-th@127.0.0.1:1","username":"tu","password":"SEC-tp"},
 "deluge":{"host":"http://du:SEC-dh@127.0.0.1:1","password":"SEC-dp"},
+"downloadstation":{"host":"http://su:SEC-sh@127.0.0.1:1","username":"su","password":"SEC-sp"},
 "flaresolverr":{"url":"http://fu:SEC-fh@127.0.0.1:1","timeout_ms":1000},
 "proxy":{"download_proxy":"socks5://pu:SEC-pp@127.0.0.1:1"},
 "notifications":{"telegram":{"bot_token":"SEC-tg","chat_id":"42"},
@@ -34,6 +35,7 @@ var maskingSecretPaths = []string{
 	"qbit.host", "qbit.password",
 	"transmission.host", "transmission.password",
 	"deluge.host", "deluge.password",
+	"downloadstation.host", "downloadstation.password",
 	"flaresolverr.url", "proxy.download_proxy",
 	"notifications.telegram.bot_token", "notifications.telegram.chat_id",
 	"notifications.webhook.url", "notifications.email.password",
@@ -244,6 +246,10 @@ func TestIntegrationTestUsesStoredSecretsWhenMasked(t *testing.T) {
 			{"host", func(c *config.App) string { return c.Manager.Deluge.Host }},
 			{"password", func(c *config.App) string { return c.Manager.Deluge.Password }},
 		},
+		"downloadstation": {
+			{"host", func(c *config.App) string { return c.Manager.DownloadStation.Host }},
+			{"password", func(c *config.App) string { return c.Manager.DownloadStation.Password }},
+		},
 		"flaresolverr": {{"url", func(c *config.App) string { return c.Flaresolverr.Host }}},
 		"proxy":        {{"download_proxy", func(c *config.App) string { return c.Runner.DownloadProxy }}},
 		"notify": {
@@ -275,6 +281,7 @@ func TestIntegrationTestUsesStoredSecretsWhenMasked(t *testing.T) {
 	}{
 		{"qbit", func(m map[string]any) { m["password"] = "" }, func(c *config.App) string { return c.Manager.QbitTorrent.Password }},
 		{"deluge", func(m map[string]any) { m["password"] = "" }, func(c *config.App) string { return c.Manager.Deluge.Password }},
+		{"downloadstation", func(m map[string]any) { m["password"] = "" }, func(c *config.App) string { return c.Manager.DownloadStation.Password }},
 		{"proxy", func(m map[string]any) { m["download_proxy"] = "" }, func(c *config.App) string { return c.Runner.DownloadProxy }},
 		{"notify", func(m map[string]any) { m["telegram"].(map[string]any)["bot_token"] = "" }, func(c *config.App) string { return c.Notify.TelegramToken }},
 	}
@@ -421,6 +428,7 @@ func TestIntegrationErrorsHideSecrets(t *testing.T) {
 "qbit":{"host":"http://u:SEC-qh@127.0.0.1:1","username":"u","password":"SEC-qp"},
 "transmission":{"host":"http://u:SEC-th@127.0.0.1:1","username":"u","password":"SEC-tp"},
 "deluge":{"host":"http://u:SEC-dh@127.0.0.1:1","password":"SEC-dp"},
+"downloadstation":{"host":"http://u:SEC-sh@127.0.0.1:1","username":"u","password":"SEC-sp"},
 "flaresolverr":{"url":"http://u:SEC-fh@127.0.0.1:1","timeout_ms":1000},
 "proxy":{"download_proxy":"socks5://u:SEC-pp@127.0.0.1:1"},
 "notifications":{"webhook":{"url":"` + webhook + `"},"enabled":true}}`
@@ -431,7 +439,7 @@ func TestIntegrationErrorsHideSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, kind := range []string{"qbit", "transmission", "deluge", "flaresolverr", "proxy", "notify"} {
+	for _, kind := range []string{"qbit", "transmission", "deluge", "downloadstation", "flaresolverr", "proxy", "notify"} {
 		src := kind
 		if kind == "notify" {
 			src = "notifications"

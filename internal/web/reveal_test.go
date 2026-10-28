@@ -18,6 +18,7 @@ var revealPlainSeeds = map[string]string{
 	"qbit.password":                    "SEC-qp",
 	"transmission.password":            "SEC-tp",
 	"deluge.password":                  "SEC-dp",
+	"downloadstation.password":         "SEC-sp",
 	"notifications.telegram.bot_token": "SEC-tg",
 	"notifications.email.password":     "SEC-ep",
 	"notifications.pushover.app_token": "SEC-pa",

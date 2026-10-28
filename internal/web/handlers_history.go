@@ -16,6 +16,7 @@ import (
 	"ripperr/internal/config"
 	"ripperr/internal/manager"
 	"ripperr/internal/manager/client/deluge"
+	"ripperr/internal/manager/client/downloadstation"
 	"ripperr/internal/manager/client/transmission"
 	"ripperr/internal/model"
 	"ripperr/internal/model/storage"
@@ -255,6 +256,10 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, deluge.ErrRedownloadUnsupported.Error())
 		return
 	}
+	if manager.NormalizeClient(cfg.Manager.Client) == manager.ClientDownloadStation {
+		writeError(w, http.StatusNotImplemented, downloadstation.ErrRedownloadUnsupported.Error())
+		return
+	}
 
 	urlHash := r.PathValue("hash")
 	if urlHash == "" {
@@ -332,7 +337,7 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 	defer unlockTorrent()
 
 	if err = mc.ForceRedownload(ctx, entry.Hash, model.RedownloadOptions{Comment: newComment}); err != nil {
-		if errors.Is(err, transmission.ErrRedownloadUnsupported) {
+		if errors.Is(err, transmission.ErrRedownloadUnsupported) || errors.Is(err, downloadstation.ErrRedownloadUnsupported) {
 			writeError(w, http.StatusNotImplemented, err.Error())
 			return
 		}

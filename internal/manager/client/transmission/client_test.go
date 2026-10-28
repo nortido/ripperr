@@ -75,6 +75,10 @@ type stubServer struct {
 	failSetUnwanted bool
 	// torrent-start отвечает ошибкой
 	failStart bool
+	// free-space отвечает этими аргументами, а при непустом freeSpaceResult этим результатом
+	freeSpaceReply  string
+	freeSpaceResult string
+	freeSpaceCalls  []map[string]interface{}
 	// торрент на деле не добавляется, как при молчаливом отказе Transmission
 	failEnsurePresent bool
 	// torrent-add с этим хешем отвечает torrent-duplicate, как настоящий
@@ -177,6 +181,13 @@ func newStubServer(t *testing.T, downloadDir string) *stubServer {
 			}
 			s.startCalls = append(s.startCalls, req.Arguments)
 			writeResult(w, map[string]interface{}{})
+		case "free-space":
+			s.freeSpaceCalls = append(s.freeSpaceCalls, req.Arguments)
+			if s.freeSpaceResult != "" {
+				_ = json.NewEncoder(w).Encode(rpcResponse{Result: s.freeSpaceResult})
+				return
+			}
+			writeResult(w, json.RawMessage(s.freeSpaceReply))
 		default:
 			w.WriteHeader(http.StatusBadRequest)
 		}
@@ -1222,5 +1233,62 @@ func TestDeletesFilesIgnoresEmptyCategory(t *testing.T) {
 		if got := c.DeletesFiles(context.Background(), model.ManagerDeleteOptions{Hash: "h1", Category: tc.category}); got != tc.want {
 			t.Fatalf("DeletesFiles(%q) = %v, want %v", tc.category, got, tc.want)
 		}
+	}
+}
+
+func TestFilesReportsDone(t *testing.T) {
+	stub := newStubServer(t, "/downloads")
+	stub.putTorrent(rpcTorrent{HashString: "h1", Files: []rpcFile{{Name: "R/a", BytesCompleted: 7}, {Name: "R/b", BytesCompleted: 0}}, FileStats: []rpcFileStat{{Wanted: true}, {Wanted: true}}})
+	c := newTestClient(t, stub, model.ManagerConfig{})
+
+	got, err := c.Files(context.Background(), "h1")
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if len(got) != 2 || got[0].Done != 7 || got[1].Done != 0 {
+		t.Errorf("Files: got %+v, want Done 7 and 0", got)
+	}
+}
+
+func TestFreeSpace(t *testing.T) {
+	cases := []struct {
+		name    string
+		reply   string
+		result  string
+		want    int64
+		wantErr error
+		anyErr  bool
+	}{
+		{name: "size-bytes", reply: `{"path":"/data","size-bytes":555}`, want: 555},
+		{name: "size_bytes", reply: `{"path":"/data","size_bytes":556}`, want: 556},
+		{name: "negative is unknown", reply: `{"path":"/data","size-bytes":-1}`, wantErr: model.ErrFreeSpaceUnknown},
+		{name: "rpc error", result: "method name not recognized", anyErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newStubServer(t, "/downloads")
+			stub.freeSpaceReply = tc.reply
+			stub.freeSpaceResult = tc.result
+			c := newTestClient(t, stub, model.ManagerConfig{})
+
+			got, err := c.FreeSpace(context.Background(), "/data")
+			if len(stub.freeSpaceCalls) != 1 || stub.freeSpaceCalls[0]["path"] != "/data" {
+				t.Fatalf("free-space calls = %v, want one with path /data", stub.freeSpaceCalls)
+			}
+			switch {
+			case tc.wantErr != nil:
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+			case tc.anyErr:
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+			default:
+				if err != nil || got != tc.want {
+					t.Fatalf("FreeSpace = (%d, %v), want %d", got, err, tc.want)
+				}
+			}
+		})
 	}
 }

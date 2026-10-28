@@ -16,6 +16,7 @@ const seedIntegrationsDoc = `{
 	"qbit": {"host": "http://hu:SEC-qh@qbit:8080/qb/", "username": "qu", "password": "SEC-qp"},
 	"transmission": {"host": "http://tu:SEC-th@tm:9091/transmission/rpc", "username": "tu", "password": "SEC-tp"},
 	"deluge": {"host": "http://du:SEC-dh@dl:8112", "password": "SEC-dp"},
+	"downloadstation": {"host": "http://su:SEC-sh@nas:5000", "username": "su", "password": "SEC-sp"},
 	"flaresolverr": {"url": "http://fu:SEC-fp@flare:8191", "timeout_ms": 1000},
 	"proxy": {"download_proxy": "socks5://pu:SEC-pp@proxy:1080"},
 	"notifications": {
@@ -32,6 +33,7 @@ var secretPaths = []string{
 	"qbit.host", "qbit.password",
 	"transmission.host", "transmission.password",
 	"deluge.host", "deluge.password",
+	"downloadstation.host", "downloadstation.password",
 	"flaresolverr.url", "proxy.download_proxy",
 	"notifications.telegram.bot_token", "notifications.webhook.url",
 	"notifications.email.password",
@@ -93,13 +95,16 @@ func TestIntegrationsJSONMasksEverySecret(t *testing.T) {
 		"transmission.username":            "tu",
 		"deluge.host":                      "http://********@dl:8112",
 		"deluge.password":                  "********",
+		"downloadstation.host":             "http://********@nas:5000",
+		"downloadstation.password":         "********",
+		"downloadstation.username":         "su",
 		"flaresolverr.url":                 "http://********@flare:8191",
 		"flaresolverr.timeout_ms":          float64(1000),
 		"proxy.download_proxy":             "socks5://********@proxy:1080",
 		"notifications.telegram.bot_token": "********",
 		"notifications.telegram.chat_id":   "12345",
 		"notifications.webhook.url":        "https://hooks.example:8443/********",
-		"notifications.events":             []any{"updated", "broken", "tracker_down", "tracker_up", "mirror_switched", "check_failed"},
+		"notifications.events":             []any{"updated", "broken", "tracker_down", "tracker_up", "mirror_switched", "check_failed", "no_space"},
 		"notifications.email.host":         "smtp.example.com",
 		"notifications.email.port":         float64(587),
 		"notifications.email.security":     "starttls",
@@ -330,6 +335,7 @@ func TestRevealIntegrationSecret(t *testing.T) {
 		"qbit.password":                    "SEC-qp",
 		"transmission.password":            "SEC-tp",
 		"deluge.password":                  "SEC-dp",
+		"downloadstation.password":         "SEC-sp",
 		"notifications.telegram.bot_token": "SEC-tg",
 		"notifications.email.password":     "SEC-ep",
 		"notifications.pushover.app_token": "SEC-pa",
@@ -342,11 +348,30 @@ func TestRevealIntegrationSecret(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		"qbit.host", "transmission.host", "deluge.host", "flaresolverr.url",
+		"qbit.host", "transmission.host", "deluge.host", "downloadstation.host", "flaresolverr.url",
 		"proxy.download_proxy", "notifications.webhook.url", "nope", "",
 	} {
 		if got, ok := RevealIntegrationSecret(&cfg, path); ok || got != "" {
 			t.Errorf("%q = %q, %t, want empty, false", path, got, ok)
 		}
+	}
+}
+
+func TestUnmaskKeepsDownloadStationPassword(t *testing.T) {
+	cur := seedApp(t)
+	body := json.RawMessage(`{"client":"downloadstation","downloadstation":{"host":"http://********@nas:5000","username":"su","password":"********"}}`)
+	out, err := UnmaskIntegrationsPatch(body, &cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := IntegrationsPatchFromJSON(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DownloadStation.Password != nil || got.DownloadStation.Host != nil {
+		t.Errorf("masked values must be kept: host=%v password=%v", got.DownloadStation.Host, got.DownloadStation.Password)
+	}
+	if got.DownloadStation.Username == nil || *got.DownloadStation.Username != "su" {
+		t.Errorf("username = %v, want su", got.DownloadStation.Username)
 	}
 }

@@ -157,6 +157,13 @@ func normalizeIntegrationsPatch(o *integrationsOverlay) error {
 		}
 		o.Deluge.Host = &norm
 	}
+	if o.DownloadStation.Host != nil && strings.TrimSpace(*o.DownloadStation.Host) != "" {
+		norm, err := EnsureScheme(*o.DownloadStation.Host, "http")
+		if err != nil {
+			return fmt.Errorf("downloadstation.host: %w", err)
+		}
+		o.DownloadStation.Host = &norm
+	}
 	if o.Flaresolverr.URL != nil && strings.TrimSpace(*o.Flaresolverr.URL) != "" {
 		norm, err := EnsureScheme(*o.Flaresolverr.URL, "http")
 		if err != nil {
@@ -228,6 +235,13 @@ func NormalizeAppIntegrations(cfg *config.App) error {
 			return fmt.Errorf("deluge.host: %w", err)
 		}
 		cfg.Manager.Deluge.Host = norm
+	}
+	if strings.TrimSpace(cfg.Manager.DownloadStation.Host) != "" {
+		norm, err := EnsureScheme(cfg.Manager.DownloadStation.Host, "http")
+		if err != nil {
+			return fmt.Errorf("downloadstation.host: %w", err)
+		}
+		cfg.Manager.DownloadStation.Host = norm
 	}
 	if strings.TrimSpace(cfg.Flaresolverr.Host) != "" {
 		norm, err := EnsureScheme(cfg.Flaresolverr.Host, "http")

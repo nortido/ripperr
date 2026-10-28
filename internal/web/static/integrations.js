@@ -11,7 +11,7 @@ export let integrationsCache = null;
 // null: старый сервер не знает mirror_confirm, переключатель не рисуем
 let mirrorConfirm = null;
 
-let clientDrafts = { qbit: {}, transmission: {}, deluge: {} };
+let clientDrafts = { qbit: {}, transmission: {}, deluge: {}, downloadstation: {} };
 let clientDraftType = 'qbit';
 
 const NOTIFY_CHANNELS = ['telegram', 'webhook', 'email', 'pushover', 'browser'];
@@ -22,7 +22,7 @@ const NOTIFY_CHANNEL_KEYS = {
   pushover: 'integrations.notifyChannelPushover',
   browser: 'integrations.notifyChannelBrowser',
 };
-const NOTIFY_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched', 'check_failed'];
+const NOTIFY_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched', 'check_failed', 'no_space'];
 const NOTIFY_EVENT_KEYS = {
   updated: 'integrations.notifyEventUpdated',
   broken: 'integrations.notifyEventBroken',
@@ -30,8 +30,9 @@ const NOTIFY_EVENT_KEYS = {
   tracker_up: 'integrations.notifyEventTrackerUp',
   mirror_switched: 'integrations.notifyEventMirrorSwitched',
   check_failed: 'integrations.notifyEventCheckFailed',
+  no_space: 'integrations.notifyEventNoSpace',
 };
-const NOTIFY_DEFAULT_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched'];
+const NOTIFY_DEFAULT_EVENTS = ['updated', 'broken', 'tracker_down', 'tracker_up', 'mirror_switched', 'no_space'];
 const EMAIL_DEFAULT_PORTS = { starttls: 587, tls: 465, none: 25 };
 const INTEGRATION_TEST_KINDS = ['client', 'flaresolverr', 'proxy', 'mirror_source', 'notify'];
 
@@ -102,6 +103,7 @@ export function renderIntegrations(el, data) {
     qbit: Object.assign({ host: '', username: '', password: '' }, data.qbit),
     transmission: Object.assign({ host: '', username: '', password: '' }, data.transmission),
     deluge: Object.assign({ host: '', password: '' }, data.deluge),
+    downloadstation: Object.assign({ host: '', username: '', password: '' }, data.downloadstation),
   };
   clientDraftType = clientVal;
   const cur = clientDrafts[clientVal] || clientDrafts.qbit;
@@ -245,6 +247,7 @@ const INT_SECTIONS = {
       doc.qbit = Object.assign(doc.qbit || {}, v.qbit);
       doc.transmission = Object.assign(doc.transmission || {}, v.transmission);
       doc.deluge = Object.assign(doc.deluge || {}, v.deluge);
+      doc.downloadstation = Object.assign(doc.downloadstation || {}, v.downloadstation);
     },
   },
   flaresolverr: {
@@ -299,6 +302,7 @@ function readClientSection() {
     qbit: pick(drafts.qbit, true),
     transmission: pick(drafts.transmission, true),
     deluge: pick(drafts.deluge, false),
+    downloadstation: pick(drafts.downloadstation, true),
   };
 }
 
@@ -399,7 +403,7 @@ function clientCardHtml(clientVal, cur) {
   const opt = function (value, key) {
     return html`<option value="${value}"${clientVal === value ? ' selected' : ''}>${t(key)}</option>`;
   };
-  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.client')}</h2>${testButtonHtml('client')}</div><div class="card-body" autocomplete="off">${testLineHtml('client')}<div class="form-row"><div class="form-group"><label class="form-label" for="download-client">${t('integrations.clientType')}</label><select class="select" id="download-client">${opt('qbit', 'integrations.qbit')}${opt('transmission', 'integrations.transmission')}${opt('deluge', 'integrations.deluge')}</select><p class="form-hint">${t('integrations.clientHint')}</p></div><div class="form-group"><label class="form-label" for="client-host">${t('integrations.host')}</label><input type="text" class="input" id="client-host" autocomplete="off" name="dc-host-field" value="${cur.host}"></div></div><div class="form-row"><div class="form-group"><label class="form-label" for="client-username">${t('integrations.username')}</label><input type="text" class="input" id="client-username" autocomplete="off" name="dc-user-field" value="${cur.username}"></div><div class="form-group"><label class="form-label" for="client-password">${t('integrations.password')}</label><div class="input-password-wrap"><input id="client-password" data-reveal="/api/integrations/secret" data-reveal-field="${clientVal}.password"${secureInputAttrs('dc-secret')} value="${cur.password}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eyeHidden"></span></button></div></div></div><p class="form-hint hidden" id="client-hint"></p></div></div>`;
+  return html`<div class="card"><div class="card-header"><h2 class="card-title">${t('integrations.client')}</h2>${testButtonHtml('client')}</div><div class="card-body" autocomplete="off">${testLineHtml('client')}<div class="form-row"><div class="form-group"><label class="form-label" for="download-client">${t('integrations.clientType')}</label><select class="select" id="download-client">${opt('qbit', 'integrations.qbit')}${opt('transmission', 'integrations.transmission')}${opt('deluge', 'integrations.deluge')}${opt('downloadstation', 'integrations.downloadstation')}</select><p class="form-hint">${t('integrations.clientHint')}</p></div><div class="form-group"><label class="form-label" for="client-host">${t('integrations.host')}</label><input type="text" class="input" id="client-host" autocomplete="off" name="dc-host-field" value="${cur.host}"></div></div><div class="form-row"><div class="form-group"><label class="form-label" for="client-username">${t('integrations.username')}</label><input type="text" class="input" id="client-username" autocomplete="off" name="dc-user-field" value="${cur.username}"></div><div class="form-group"><label class="form-label" for="client-password">${t('integrations.password')}</label><div class="input-password-wrap"><input id="client-password" data-reveal="/api/integrations/secret" data-reveal-field="${clientVal}.password"${secureInputAttrs('dc-secret')} value="${cur.password}"><button type="button" class="input-password-toggle" aria-label="${t('trackers.showCredentials')}"><span data-icon="eyeHidden"></span></button></div></div></div><p class="form-hint hidden" id="client-hint"></p></div></div>`;
 }
 
 function flareCardHtml(f) {
@@ -697,7 +701,7 @@ function metricsCardHtml(m) {
 function applyClientHint(el, type) {
   const hintEl = el.querySelector('#client-hint');
   if (!hintEl) return;
-  const hintKey = { transmission: 'integrations.transmissionHint', deluge: 'integrations.delugeHint' }[type];
+  const hintKey = { transmission: 'integrations.transmissionHint', deluge: 'integrations.delugeHint', downloadstation: 'integrations.downloadstationHint' }[type];
   hintEl.textContent = hintKey ? t(hintKey) : '';
   hintEl.classList.toggle('hidden', !hintKey);
   // у Deluge Web UI вход только по паролю
@@ -733,7 +737,7 @@ function getNotifyChannelType() {
 
 
 export function getIntegrationTestConfig(kind) {
-  if (kind === 'qbit' || kind === 'transmission' || kind === 'deluge') {
+  if (kind === 'qbit' || kind === 'transmission' || kind === 'deluge' || kind === 'downloadstation') {
     return readClientFields();
   }
   if (kind === 'flaresolverr') {

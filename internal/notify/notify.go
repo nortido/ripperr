@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -36,6 +37,7 @@ const (
 	KindTrackerDown    = "tracker_down"
 	KindTrackerUp      = "tracker_up"
 	KindCheckFailed    = "check_failed"
+	KindNoSpace        = "no_space"
 	KindMirrorSwitched = "mirror_switched"
 	KindTest           = "test"
 
@@ -219,15 +221,30 @@ func CheckFailedEvent(name, url, errMsg string) Event {
 	}.withDefaultText()
 }
 
+func NoSpaceEvent(name, url string, need, free int64) Event {
+	return Event{
+		Kind:    KindNoSpace,
+		msg:     msgNoSpace,
+		args:    []string{fmt.Sprintf("%.1f", math.Ceil(gbOf(need)*10)/10), fmt.Sprintf("%.1f", math.Floor(gbOf(free)*10)/10)},
+		Subject: name,
+		URL:     url,
+		AppPath: dashboardPath("", name),
+	}.withDefaultText()
+}
+
+func gbOf(b int64) float64 {
+	return float64(b) / (1 << 30)
+}
+
 func TestEvent(appLink string) Event {
 	return Event{Kind: KindTest, msg: msgTest, AppLink: appLink}.withDefaultText()
 }
 
-var eventOrder = []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched, KindCheckFailed}
+var eventOrder = []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched, KindCheckFailed, KindNoSpace}
 
 func DefaultEvents() []string {
 	// check_failed тут нет: шум от каждой ошибки включают руками
-	return []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched}
+	return []string{KindUpdated, KindBroken, KindTrackerDown, KindTrackerUp, KindMirrorSwitched, KindNoSpace}
 }
 
 func KnownEvent(kind string) bool {

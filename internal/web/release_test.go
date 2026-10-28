@@ -319,3 +319,38 @@ func TestReleaseRoutesRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoveReleaseDownloadStationKeepsFiles(t *testing.T) {
+	var req runner.RemoveRequest
+	var removed int
+	state := runner.NewState()
+	state.SetReleaseActions(state.Reset(), &runner.ReleaseActions{
+		Removal: func(context.Context, string) (runner.RemovalInfo, error) {
+			return runner.RemovalInfo{Torrents: 2, Files: true}, nil
+		},
+		Remove: func(_ context.Context, r runner.RemoveRequest) error {
+			req = r
+			removed++
+			return nil
+		},
+	})
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = "DownloadStation"
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", state, nil)
+
+	w := doRelease(srv.handleRemovalInfo, http.MethodGet, "/api/history/42/remove", "42", "")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"torrents":2,"files":false}` {
+		t.Fatalf("info: %d %s, want files=false", w.Code, w.Body.String())
+	}
+	w = doRelease(srv.handleRemoveRelease, http.MethodPost, "/api/history/42/remove", "42", `{"files":true,"torrents":2}`)
+	if w.Code != http.StatusConflict || errCode(t, w) != "files_not_allowed" || removed != 0 {
+		t.Fatalf("remove files: %d %s, runner calls %d, want 409 files_not_allowed and none", w.Code, w.Body.String(), removed)
+	}
+	w = doRelease(srv.handleRemoveRelease, http.MethodPost, "/api/history/42/remove", "42", `{"files":false,"torrents":2}`)
+	if w.Code != http.StatusOK || removed != 1 || req.Files || req.Torrents != 2 {
+		t.Fatalf("remove keep files: %d %s %+v, want 200 and one runner call", w.Code, w.Body.String(), req)
+	}
+}

@@ -1013,8 +1013,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 }
 
 /* время сразу за статусом: базовые 20px с обеих сторон складывались в провал */
-.table-dash-releases td.col-time,
-.table-dash-releases td.plan-recheck-cell {
+.table-dash-releases .col-time,
+.table-dash-releases .plan-recheck-cell {
   padding-left: 8px;
 }
 

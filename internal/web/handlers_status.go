@@ -158,7 +158,7 @@ func emptyIfNil(v []string) []string {
 func redownloadSupported(cfg config.App) bool {
 	// условие зеркалит отказы в handleRedownload: клиентам без перекачки кнопку не показываем
 	switch manager.NormalizeClient(cfg.Manager.Client) {
-	case manager.ClientTransmission, manager.ClientDeluge:
+	case manager.ClientTransmission, manager.ClientDeluge, manager.ClientDownloadStation:
 		return false
 	}
 	return true

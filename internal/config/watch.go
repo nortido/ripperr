@@ -6,7 +6,11 @@ const (
 )
 
 func ClientSupportsTags(kind string) bool {
-	return NormalizeClient(kind) != "deluge"
+	switch NormalizeClient(kind) {
+	case "deluge", "downloadstation":
+		return false
+	}
+	return true
 }
 
 func (r Runner) EffectiveWatchMode() string {

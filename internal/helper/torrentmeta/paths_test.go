@@ -56,3 +56,40 @@ func TestFilePaths(t *testing.T) {
 		t.Error("want error for garbage bytes")
 	}
 }
+
+func TestFileSizes(t *testing.T) {
+	multi := buildInfoTorrent(t, metainfo.Info{
+		Name: "R",
+		Files: []metainfo.FileInfo{
+			{Length: 10, Path: []string{"a"}},
+			{Length: 5, Path: []string{".pad", "5"}, ExtendedFileAttrs: metainfo.ExtendedFileAttrs{Attr: "p"}},
+			{Length: 20, Path: []string{"sub", "b"}},
+		},
+	})
+	paths, sizes, err := FileSizes(multi)
+	if err != nil {
+		t.Fatalf("FileSizes multi: %v", err)
+	}
+	if want := []string{"R/a", "R/sub/b"}; !slices.Equal(paths, want) {
+		t.Errorf("multi paths = %q, want %q", paths, want)
+	}
+	if want := []int64{10, 20}; !slices.Equal(sizes, want) {
+		t.Errorf("multi sizes = %v, want %v", sizes, want)
+	}
+
+	single := buildInfoTorrent(t, metainfo.Info{Name: "one.bin", Length: 77})
+	paths, sizes, err = FileSizes(single)
+	if err != nil {
+		t.Fatalf("FileSizes single: %v", err)
+	}
+	if want := []string{"one.bin"}; !slices.Equal(paths, want) {
+		t.Errorf("single paths = %q, want %q", paths, want)
+	}
+	if want := []int64{77}; !slices.Equal(sizes, want) {
+		t.Errorf("single sizes = %v, want %v", sizes, want)
+	}
+
+	if _, _, err := FileSizes([]byte("garbage")); err == nil {
+		t.Error("want error for garbage bytes")
+	}
+}

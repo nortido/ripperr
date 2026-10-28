@@ -19,6 +19,7 @@ import (
 	"ripperr/internal/config"
 	"ripperr/internal/helper/breakeralerts"
 	"ripperr/internal/manager/client/deluge"
+	"ripperr/internal/manager/client/downloadstation"
 	"ripperr/internal/manager/client/transmission"
 	"ripperr/internal/model"
 	"ripperr/internal/model/storage"
@@ -1231,6 +1232,7 @@ func TestGetStatusRedownloadByClient(t *testing.T) {
 		{" QBIT ", true},
 		{"transmission", false},
 		{"Deluge", false},
+		{"DownloadStation", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.client, func(t *testing.T) {
@@ -3041,5 +3043,105 @@ func TestPostPlanForceAllClearCancelsQueued(t *testing.T) {
 		if !srv.runnerState.ForceCancelled(h) {
 			t.Fatalf("%s not marked cancelled", h)
 		}
+	}
+}
+
+func fakeDownloadStationWeb(t *testing.T, password string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		reply := func(v any) { _ = json.NewEncoder(w).Encode(v) }
+		switch r.URL.Path {
+		case "/webapi/query.cgi":
+			info := map[string]any{}
+			for _, name := range strings.Split(r.Form.Get("query"), ",") {
+				info[name] = map[string]any{"path": "entry.cgi", "minVersion": 1, "maxVersion": 7}
+			}
+			info["SYNO.API.Auth"] = map[string]any{"path": "auth.cgi", "minVersion": 1, "maxVersion": 7}
+			reply(map[string]any{"success": true, "data": info})
+		case "/webapi/auth.cgi":
+			if r.Form.Get("passwd") != password {
+				reply(map[string]any{"success": false, "error": map[string]any{"code": 400}})
+				return
+			}
+			reply(map[string]any{"success": true, "data": map[string]any{"sid": "sid1"}})
+		default:
+			t.Errorf("unexpected downloadstation path %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestHandleTestIntegrationDownloadStation(t *testing.T) {
+	ds := fakeDownloadStationWeb(t, "dspass")
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = "qbit"
+		cfg.Manager.QbitTorrent.Host = "http://127.0.0.1:1"
+		cfg.Manager.DownloadStation.Host = ds.URL
+		cfg.Manager.DownloadStation.Username = "u"
+		cfg.Manager.DownloadStation.Password = "dspass"
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+	run := func(body string) testResultResp {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/integrations/test", bytes.NewReader([]byte(body)))
+		w := httptest.NewRecorder()
+		srv.handleTestIntegration(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("body %s: status = %d, want 200: %s", body, w.Code, w.Body.String())
+		}
+		var resp testResultResp
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	if resp := run(`{"kind":"downloadstation"}`); !resp.OK {
+		t.Fatalf("saved downloadstation config: error = %q, want ok", resp.Error)
+	}
+	hostOnly := strings.TrimPrefix(ds.URL, "http://")
+	if resp := run(`{"kind":"downloadstation","config":{"host":"` + hostOnly + `","username":"u","password":"dspass"}}`); !resp.OK {
+		t.Fatalf("form config without scheme: error = %q, want ok", resp.Error)
+	}
+	if resp := run(`{"kind":"downloadstation","config":{"host":"` + ds.URL + `","username":"u","password":"wrong"}}`); resp.OK || !strings.Contains(resp.Error, "account or password") {
+		t.Fatalf("wrong password: resp = %+v, want account or password", resp)
+	}
+}
+
+func TestRedownloadDownloadStationReturns501(t *testing.T) {
+	redownloadSlot <- struct{}{}
+	defer func() { <-redownloadSlot }()
+
+	effective := func() config.App {
+		cfg := testEffective()
+		cfg.Manager.Client = " DownloadStation "
+		return cfg
+	}
+	srv := New(&fakeStore{}, func() {}, effective, ":0", runner.NewState(), nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/history/somehash/redownload", nil)
+	req.SetPathValue("hash", "somehash")
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.handleRedownload(w, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleRedownload blocked instead of returning 501 for downloadstation")
+	}
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501, body: %s", w.Code, w.Body.String())
+	}
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatal(err)
+	}
+	if errResp["error"] != downloadstation.ErrRedownloadUnsupported.Error() {
+		t.Fatalf("error = %q, want %q", errResp["error"], downloadstation.ErrRedownloadUnsupported.Error())
 	}
 }

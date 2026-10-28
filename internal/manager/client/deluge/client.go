@@ -63,11 +63,13 @@ type torrentStatus struct {
 	Label          string       `json:"label"`
 	Files          []statusFile `json:"files"`
 	FilePriorities []int        `json:"file_priorities"`
+	FileProgress   []float64    `json:"file_progress"`
 }
 
 type statusFile struct {
 	Index int    `json:"index"`
 	Path  string `json:"path"`
+	Size  int64  `json:"size"`
 }
 
 var (
@@ -89,6 +91,7 @@ var (
 		Resume(ctx context.Context, hash string) error
 		ReplacePending(hash string) bool
 		Files(ctx context.Context, hash string) ([]model.TorrentFile, error)
+		FreeSpace(ctx context.Context, path string) (int64, error)
 		SetComment(ctx context.Context, hash, comment string) error
 		ExportTorrent(ctx context.Context, hash string) ([]byte, error)
 		DeleteEnabled() bool
@@ -694,7 +697,7 @@ func (c *Client) Resume(ctx context.Context, hash string) error {
 }
 
 func (c *Client) Files(ctx context.Context, hash string) ([]model.TorrentFile, error) {
-	st, err := c.status(ctx, hash, []string{"files", "file_priorities"})
+	st, err := c.status(ctx, hash, []string{"files", "file_priorities", "file_progress"})
 	if err != nil {
 		return nil, err
 	}
@@ -706,14 +709,33 @@ func (c *Client) Files(ctx context.Context, hash string) ([]model.TorrentFile, e
 	}
 	files := make([]model.TorrentFile, len(st.Files))
 	seen := make([]bool, len(st.Files))
+	progress := len(st.FileProgress) == len(st.Files)
 	for _, f := range st.Files {
 		if f.Index < 0 || f.Index >= len(files) || seen[f.Index] {
 			return nil, fmt.Errorf("torrent %s: bad file index %d", hash, f.Index)
 		}
 		seen[f.Index] = true
 		files[f.Index] = model.TorrentFile{Path: f.Path, Wanted: st.FilePriorities[f.Index] > 0}
+		if progress {
+			files[f.Index].Done = int64(float64(f.Size) * st.FileProgress[f.Index])
+		}
 	}
 	return files, nil
+}
+
+func (c *Client) FreeSpace(ctx context.Context, path string) (int64, error) {
+	raw, err := c.rpc.call(ctx, "core.get_free_space", path)
+	if err != nil {
+		return 0, err
+	}
+	var free int64
+	if err = json.Unmarshal(raw, &free); err != nil {
+		return 0, fmt.Errorf("deluge: decode free space: %w, result %.100s", err, raw)
+	}
+	if free < 0 {
+		return 0, model.ErrFreeSpaceUnknown
+	}
+	return free, nil
 }
 
 func (c *Client) SetComment(context.Context, string, string) error {

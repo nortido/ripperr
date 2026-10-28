@@ -1434,6 +1434,14 @@ func TestScheduleWatchMode(t *testing.T) {
 	if doc.TagsSupported {
 		t.Error("tags_supported = true for deluge")
 	}
+	view.Manager.Client = "downloadstation"
+	doc.TagsSupported = true
+	if err := json.Unmarshal(ScheduleJSON(&view), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.TagsSupported {
+		t.Error("tags_supported = true for downloadstation")
+	}
 
 	_, err := SchedulePatchFromJSON(json.RawMessage(`{
 		"start_hour":7,"list_refresh_per_day":2,"threshold_month":1,
@@ -1485,6 +1493,7 @@ func TestWarnDerivedWatchModeBothLists(t *testing.T) {
 		{"derived categories", "qbit", `{"monitored_categories":["tv"]}`, 1},
 		{"stored mode", "qbit", `{"watch_mode":"categories","monitored_categories":["tv"]}`, 0},
 		{"deluge", "deluge", `{"monitored_categories":["tv"]}`, 0},
+		{"downloadstation", "downloadstation", `{"monitored_categories":["tv"]}`, 0},
 		{"no categories", "qbit", `{}`, 0},
 	}
 	for _, tc := range cases {
@@ -1568,5 +1577,51 @@ func TestApplyOverridesAppliesScheduleBounds(t *testing.T) {
 	if cfg.Runner.StartHour != 0 || cfg.Runner.ListRefreshPerDay != 24 || cfg.Runner.MagnetTimeout != 0 {
 		t.Errorf("got start_hour=%d list_refresh_per_day=%d magnet_timeout=%d, want 0 24 0",
 			cfg.Runner.StartHour, cfg.Runner.ListRefreshPerDay, cfg.Runner.MagnetTimeout)
+	}
+}
+
+func TestApplyOverridesClientDownloadStation(t *testing.T) {
+	cfg := config.App{
+		Log:          config.Log{Level: "info"},
+		Runner:       config.Runner{StartHour: 7},
+		Manager:      config.Manager{Client: "qbit"},
+		Flaresolverr: config.Flaresolverr{MaxTimeout: 300000},
+	}
+	db := &fakeSettingsDB{data: map[string]json.RawMessage{
+		"integrations": json.RawMessage(`{"client":"DownloadStation","downloadstation":{"host":"nas:5000","username":"u","password":"p"}}`),
+	}}
+	if err := ApplyOverrides(context.Background(), &cfg, db); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.Client != "downloadstation" {
+		t.Errorf("client = %q, want downloadstation", cfg.Manager.Client)
+	}
+	ds := cfg.Manager.DownloadStation
+	if ds.Host != "http://nas:5000" || ds.Username != "u" || ds.Password != "p" {
+		t.Errorf("downloadstation = %+v, want http://nas:5000 / u / p", ds)
+	}
+}
+
+func TestIntegrationsJSONIncludesDownloadStation(t *testing.T) {
+	cfg := &config.App{Manager: config.Manager{Client: "DownloadStation"}}
+	cfg.Manager.DownloadStation.Host = "http://nas:5000"
+	cfg.Manager.DownloadStation.Username = "u"
+	cfg.Manager.DownloadStation.Password = "p"
+	var got struct {
+		Client          string `json:"client"`
+		DownloadStation struct {
+			Host     string `json:"host"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		} `json:"downloadstation"`
+	}
+	if err := json.Unmarshal(IntegrationsJSON(cfg), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Client != "downloadstation" {
+		t.Errorf("client = %q, want downloadstation", got.Client)
+	}
+	if got.DownloadStation.Host != "http://nas:5000" || got.DownloadStation.Username != "u" || got.DownloadStation.Password != SecretMask {
+		t.Errorf("downloadstation = %+v", got.DownloadStation)
 	}
 }
