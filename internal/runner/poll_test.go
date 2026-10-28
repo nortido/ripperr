@@ -116,11 +116,6 @@ func (m *pollManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFil
 	return nil
 }
 
-func (m *pollManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
-	m.t.Error("poll called SubmitMagnet")
-	return nil
-}
-
 func (m *pollManager) AttachComment(context.Context, string, string, func(context.Context) ([]byte, error)) error {
 	m.t.Error("poll called AttachComment")
 	return nil

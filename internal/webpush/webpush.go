@@ -108,8 +108,6 @@ func NewRequest(ctx context.Context, keys Keys, d Device, payload []byte, now ti
 	req.Header.Set("TTL", "86400")
 	// без него Android в Doze копит push до пробуждения
 	req.Header.Set("Urgency", "high")
-	// без него Android в Doze копит push до пробуждения
-	req.Header.Set("Urgency", "high")
 	req.Header.Set("Authorization", "vapid t="+jwt+", k="+keys.Public)
 	return req, nil
 }

@@ -1,6 +1,6 @@
 import { fetchJSON, showToast } from './api.js';
 import { bindErrorBadges } from './components.js';
-import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardFetchGen, setRunPending, updateRunStatusUI } from './dashboard.js';
+import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardFetchGen, pollDashboardStatus, setRunPending, updateRunStatusUI } from './dashboard.js';
 import { confirmDialog } from './confirm.js';
 import { hydrateIcons, ICONS, icon } from './icons.js';
 import { historyFiltered, historyState, saveHistoryOffset } from './state.js';
@@ -518,6 +518,8 @@ export function bindDashboardReleaseRows(root) {
           showToast(t('dash.forceQueueFull'), 'info');
         }
         updateReleaseRow(hash, !!(res && res.force));
+        // снятый форс убирает раздачу из очереди на сервере: обновляем счетчик и подсветку сразу
+        if (!enable) pollDashboardStatus();
       } catch (err) {
         if (enable) {
           setRunPending(false);

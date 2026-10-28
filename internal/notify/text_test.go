@@ -130,9 +130,9 @@ func TestLinkLabelByLanguage(t *testing.T) {
 		n := New(Config{Language: lang}, "")
 		ev := n.localize(base)
 
-		text, _ := telegramText(ev, maxMessage)
-		if !strings.Contains(text, `">`+label+`</a>`) {
-			t.Errorf("lang %q telegram = %q", lang, text)
+		m := buildTelegram(ev, maxMessage)
+		if last := m.Links[len(m.Links)-1]; last.Text != label || last.URL != link {
+			t.Errorf("lang %q telegram links = %+v", lang, m.Links)
 		}
 
 		raw := buildEmail(&mail.Address{Address: "bot@example.com"}, []*mail.Address{{Address: "a@example.com"}}, ev)

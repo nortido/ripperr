@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"mime/multipart"
 	"net"
@@ -18,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -101,6 +101,9 @@ type Event struct {
 	digest    []MirrorDigestItem
 	linkLabel string
 	lang      string
+	urlHash   string
+	tracker   string
+	category  string
 }
 
 const (
@@ -280,10 +283,19 @@ type Notifier struct {
 	appURL   string
 	push     *webpush.Store
 	events   EventRecorder
+	mutes    *TelegramMutes
+	proxyURL string
+	// последний getUpdates ответил 409: чужой поллер или webhook, кнопка не сработает
+	tgConflict atomic.Bool
 }
 
 func New(cfg Config, proxyURL string) *Notifier {
-	return &Notifier{cfg: cfg, hc: newHTTPClient(proxyURL), posterHC: newPosterClient(proxyURL)}
+	return &Notifier{cfg: cfg, hc: newHTTPClient(proxyURL), posterHC: newPosterClient(proxyURL), proxyURL: proxyURL}
+}
+
+func (n *Notifier) WithTelegramMutes(m *TelegramMutes) *Notifier {
+	n.mutes = m
+	return n
 }
 
 func (n *Notifier) WithAppURL(appURL string) *Notifier {
@@ -703,6 +715,9 @@ func (n *Notifier) Send(ctx context.Context, ev Event) error {
 }
 
 func (n *Notifier) sendTelegram(ctx context.Context, ev Event) error {
+	if n.telegramMuted(ctx, ev) {
+		return nil
+	}
 	if ev.ImageURL != "" {
 		// картинку Telegram качает сам и без наших кук. Постер за хотлинк-защитой или с приватного
 		// трекера даст ошибку, тогда шлем обычное сообщение, чтобы уведомление не пропало
@@ -712,20 +727,25 @@ func (n *Notifier) sendTelegram(ctx context.Context, ev Event) error {
 		}
 		logger.Warn("notify: telegram sendPhoto: " + err.Error())
 	}
-	text, parseMode := telegramText(ev, maxMessage)
-	payload := map[string]any{
-		"chat_id":                  n.cfg.TelegramChatID,
-		"text":                     text,
-		"disable_web_page_preview": true,
-	}
-	if parseMode != "" {
-		payload["parse_mode"] = parseMode
+	return n.telegramSend(ctx, ev, maxMessage, func(text string, kb *tgKeyboard) error {
+		return n.postTelegramJSON(ctx, telegramAPIURL, map[string]any{
+			"chat_id":                  n.cfg.TelegramChatID,
+			"text":                     text,
+			"parse_mode":               "HTML",
+			"disable_web_page_preview": true,
+		}, kb)
+	})
+}
+
+func (n *Notifier) postTelegramJSON(ctx context.Context, endpoint string, payload map[string]any, kb *tgKeyboard) error {
+	if kb != nil {
+		payload["reply_markup"] = kb
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	return n.post(ctx, fmt.Sprintf(telegramAPIURL, n.cfg.TelegramToken), body)
+	return n.post(ctx, fmt.Sprintf(endpoint, n.cfg.TelegramToken), body)
 }
 
 func withLinkLine(text, line string, limit int) string {
@@ -737,64 +757,26 @@ func withLinkLine(text, line string, limit int) string {
 	return text + "\n" + line
 }
 
-func telegramText(ev Event, limit int) (text, parseMode string) {
-	linkLine := ""
-	if ev.AppLink != "" {
-		linkLine = ev.label() + ": " + ev.AppLink
-	}
-	// разметка только когда есть и имя, и ссылка. В HTML экранировать надо лишь & < >
-	if ev.Subject == "" || ev.URL == "" {
-		text = ev.plain()
-		if ev.URL != "" {
-			text += "\n" + ev.URL
-		}
-		if linkLine == "" {
-			return helper.Substr(text, 0, limit), ""
-		}
-		return withLinkLine(text, linkLine, limit), ""
-	}
-	// режем имя до сборки разметки, иначе обрезка порвет тег ссылки.
-	// Telegram считает длину по видимому тексту
-	subject := ev.Subject
-	room := limit - len([]rune(ev.Text)) - 1
-	if ev.AppLink != "" {
-		room -= len([]rune(ev.label())) + 1
-	}
-	if room < len([]rune(subject)) {
-		subject = helper.Substr(subject, 0, max(room, 0))
-	}
-	text = html.EscapeString(ev.Text) + "\n" +
-		`<a href="` + html.EscapeString(ev.URL) + `">` + html.EscapeString(subject) + `</a>`
-	if ev.AppLink != "" {
-		text += "\n" + `<a href="` + html.EscapeString(ev.AppLink) + `">` + ev.label() + `</a>`
-	}
-	return text, "HTML"
-}
-
 func (n *Notifier) sendTelegramPhoto(ctx context.Context, ev Event) error {
-	caption, parseMode := telegramText(ev, maxCaption)
 	// до части хостингов у Telegram нет доступа (fastpic ему отвечает ошибкой), поэтому
 	// сначала качаем сами и шлем файлом. Ссылку отдаем, только если не скачалось: бывает
 	// и наоброт, домен закрыт для нас, но открыт для Telegram
 	img, err := n.fetchImage(ctx, ev.ImageURL)
 	if err == nil {
-		return n.postPhotoUpload(ctx, img, caption, parseMode)
+		return n.telegramSend(ctx, ev, maxCaption, func(caption string, kb *tgKeyboard) error {
+			return n.postPhotoUpload(ctx, img, caption, kb)
+		})
 	}
 	logger.Warn("notify: poster download: " + err.Error())
 
-	payload := map[string]any{
-		"chat_id": n.cfg.TelegramChatID,
-		"photo":   ev.ImageURL,
-		"caption": caption,
-	}
-	if parseMode != "" {
-		payload["parse_mode"] = parseMode
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	return n.post(ctx, fmt.Sprintf(telegramPhotoURL, n.cfg.TelegramToken), body)
+	return n.telegramSend(ctx, ev, maxCaption, func(caption string, kb *tgKeyboard) error {
+		return n.postTelegramJSON(ctx, telegramPhotoURL, map[string]any{
+			"chat_id":    n.cfg.TelegramChatID,
+			"photo":      ev.ImageURL,
+			"caption":    caption,
+			"parse_mode": "HTML",
+		}, kb)
+	})
 }
 
 func (n *Notifier) fetchImage(ctx context.Context, imageURL string) ([]byte, error) {
@@ -825,7 +807,7 @@ func (n *Notifier) fetchImage(ctx context.Context, imageURL string) ([]byte, err
 	return img, nil
 }
 
-func (n *Notifier) postPhotoUpload(ctx context.Context, img []byte, caption, parseMode string) error {
+func (n *Notifier) postPhotoUpload(ctx context.Context, img []byte, caption string, kb *tgKeyboard) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	if err := mw.WriteField("chat_id", n.cfg.TelegramChatID); err != nil {
@@ -834,8 +816,15 @@ func (n *Notifier) postPhotoUpload(ctx context.Context, img []byte, caption, par
 	if err := mw.WriteField("caption", caption); err != nil {
 		return err
 	}
-	if parseMode != "" {
-		if err := mw.WriteField("parse_mode", parseMode); err != nil {
+	if err := mw.WriteField("parse_mode", "HTML"); err != nil {
+		return err
+	}
+	if kb != nil {
+		markup, err := json.Marshal(kb)
+		if err != nil {
+			return err
+		}
+		if err := mw.WriteField("reply_markup", string(markup)); err != nil {
 			return err
 		}
 	}
@@ -964,4 +953,9 @@ func redactToken(err error, token string) error {
 		return err
 	}
 	return errors.New(strings.ReplaceAll(msg, token, "***"))
+}
+
+func (e Event) WithRelease(urlHash, tracker, category string) Event {
+	e.urlHash, e.tracker, e.category = urlHash, tracker, category
+	return e
 }

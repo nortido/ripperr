@@ -53,9 +53,6 @@ type trackerService interface {
 type manager interface {
 	GetEntries(ctx context.Context, opts model.FilterOptions) (entries []*model.Entry, err error)
 	Submit(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions) (err error)
-	// runner его больше не зовет (см. submit). Метод живет только ради чистки blackhole
-	// от magnet-пар, записанных прежней версией
-	SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error)
 	AttachComment(ctx context.Context, hash, comment string, fetch func(context.Context) ([]byte, error)) error
 	Remove(ctx context.Context, targets []model.ManagerDeleteOptions) (accepted []string, err error)
 	Add(ctx context.Context, data []byte, opts model.ManagerAddFileOptions) error
@@ -132,6 +129,8 @@ type task struct {
 	seq    uint64
 	// задача планового прохода или "запустить сейчас": ее учитывает счетчик normalActive
 	normal bool
+	// задача форс-прохода: ее отменяет Unforce, пока она не стартовала
+	forced bool
 }
 
 func (h *handler) Run(ctx context.Context) {
@@ -246,10 +245,20 @@ func (h *handler) nextRun(now time.Time) time.Time {
 
 func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error) {
 	interval := h.requestInterval(ttid)
+	var next *task
 	for {
-		tk := h.nextTask(ctx, ttid)
+		tk := next
+		next = nil
+		if tk == nil {
+			tk = h.nextTask(ctx, ttid)
+		}
 		if tk == nil {
 			return
+		}
+		// до staleTask: отмененная задача не должна записать старт и сделать устаревшей
+		// более старую обычную задачу той же раздачи
+		if h.dropCancelled(tk) {
+			continue
 		}
 		if h.staleTask(tk) {
 			h.endTask(tk.normal)
@@ -262,6 +271,7 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 		func() {
 			defer h.endTask(tk.normal)
 			defer tk.report.done()
+			defer h.state.FinishItem(h.gen, ttid, e.URLHash)
 			defer func() {
 				if r := recover(); r != nil {
 					logger.Error(fmt.Sprintf("panic processing %q: %v\n%s", e.Name, r, debug.Stack()))
@@ -284,12 +294,48 @@ func (h *handler) trackerWorker(ctx context.Context, ttid int, cherr chan error)
 		if interval <= 0 {
 			continue
 		}
-		timer := time.NewTimer(interval)
+		var ok bool
+		if next, ok = h.waitInterval(ctx, ttid, interval); !ok {
+			return
+		}
+	}
+}
+
+func (h *handler) dropCancelled(tk *task) bool {
+	if !tk.forced || !h.state.ForceCancelled(tk.entry.URLHash) {
+		return false
+	}
+	h.endTask(tk.normal)
+	tk.report.done()
+	return true
+}
+
+func (h *handler) waitInterval(ctx context.Context, ttid int, interval time.Duration) (*task, bool) {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	wake := h.state.UnforceWake()
+	var held *task
+	for {
+		// плановую очередь не читаем: обычный проход идет как раньше. Живую задачу держим до таймера
+		var in <-chan *task
+		if held == nil {
+			in = h.pri[ttid]
+		}
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return
+			return nil, false
 		case <-timer.C:
+			return held, true
+		case tk := <-in:
+			if !h.dropCancelled(tk) {
+				held = tk
+			}
+		case <-wake:
+			// канал берем заново до проверки: Unforce между ними закроет новый и не потеряется
+			wake = h.state.UnforceWake()
+			if held != nil && h.dropCancelled(held) {
+				held = nil
+			}
 		}
 	}
 }
@@ -693,15 +739,15 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 		if normal {
 			h.state.BeginNormal(h.gen)
 		}
-		h.state.Enqueue(h.gen, entries[i].URLHash)
+		h.state.Enqueue(h.gen, entries[i].URLHash, p.forced != nil)
 		p.rep.add()
 		select {
 		case <-ctx.Done():
-			h.state.Unqueue(h.gen, entries[i].URLHash)
+			h.state.Unqueue(h.gen, entries[i].URLHash, p.forced != nil)
 			h.endTask(normal)
 			p.rep.done()
 			return nil
-		case queue[t] <- &task{entry: entries[i], report: p.rep, seq: h.taskSeq.Add(1), normal: normal}:
+		case queue[t] <- &task{entry: entries[i], report: p.rep, seq: h.taskSeq.Add(1), normal: normal, forced: p.forced != nil}:
 		}
 	}
 	return nil
@@ -955,7 +1001,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 	}
 	if rep == nil {
 		logger.Info(fmt.Sprint("updated: ", e.Name))
-		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL, e.Poster))
+		h.notifier.Notify(notify.UpdatedEvent(e.Name, e.URL, e.Poster).WithRelease(e.URLHash, registry.Key(ttid), e.Category))
 	}
 	h.logCheck(ctx, e, ttid, "updated", "", rep)
 

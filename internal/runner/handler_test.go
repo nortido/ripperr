@@ -281,10 +281,6 @@ func (f *fakeManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFil
 	return nil
 }
 
-func (f *fakeManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
-	return nil
-}
-
 func (f *fakeManager) Remove(context.Context, []model.ManagerDeleteOptions) ([]string, error) {
 	return nil, nil
 }
@@ -1381,8 +1377,6 @@ func (m *submitTrackingManager) Submit(context.Context, *bytes.Buffer, model.Man
 type magnetTrackingManager struct {
 	fakeManager
 	submitCalled bool
-	// submit SubmitMagnet больше не зовет, флаг ловит возврат старого пути
-	submitMagnetCalled bool
 	// по этим байтам проверяем комментарий
 	lastSubmitData []byte
 }
@@ -1392,11 +1386,6 @@ func (m *magnetTrackingManager) Submit(_ context.Context, buf *bytes.Buffer, _ m
 	if buf != nil {
 		m.lastSubmitData = buf.Bytes()
 	}
-	return nil
-}
-
-func (m *magnetTrackingManager) SubmitMagnet(context.Context, string, model.ManagerAddFileOptions) error {
-	m.submitMagnetCalled = true
 	return nil
 }
 
@@ -1431,9 +1420,6 @@ func TestSubmit_MagnetMetadataSuccessUsesFileSubmitWithComment(t *testing.T) {
 	if err := h.submit(context.Background(), 1, mockPageClient{}, e, nil); err != nil {
 		t.Fatalf("submit err = %v", err)
 	}
-	if mgr.submitMagnetCalled {
-		t.Error("SubmitMagnet must never be called from submit anymore")
-	}
 	if !mgr.submitCalled {
 		t.Fatal("expected Submit to be called with the built torrent bytes")
 	}
@@ -1460,9 +1446,6 @@ func TestSubmit_MagnetMetadataFailureFallsBackToTrackerDownload(t *testing.T) {
 
 	if err := h.submit(context.Background(), 1, mockPageClient{}, e, nil); err != nil {
 		t.Fatalf("submit err = %v", err)
-	}
-	if mgr.submitMagnetCalled {
-		t.Error("SubmitMagnet must never be called from submit anymore")
 	}
 	if !mgr.submitCalled {
 		t.Fatal("expected Submit (downloaded .torrent path) to be called instead")
@@ -3800,5 +3783,226 @@ func TestServerErrorNoSaveBeforeRestore(t *testing.T) {
 	got := savedServerErrs(t, store.settings)
 	if got["B"].Count != 2 || got["C"].Count != 2 {
 		t.Fatalf("saved marks = %+v, want B 2 and C 2", got)
+	}
+}
+
+func TestTrackerWorkerSkipsUnforcedTask(t *testing.T) {
+	store := &loggingStorage{}
+	state := NewState()
+	gen := state.Reset()
+	h := &handler{
+		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:        store,
+		trackerService: &pageTracker{safeFakeTracker: safeFakeTracker{id: 1}, page: bytes.NewBufferString(strings.Repeat("x", 60))},
+		state:          state,
+		mx:             helper.KeyedMutex{},
+		gen:            gen,
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.trackerWorker(ctx, 1, make(chan error, 1))
+
+	waitActive := func(want int32) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for state.active.Load() != want && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if got := state.active.Load(); got != want {
+			t.Fatalf("active = %d, want %d", got, want)
+		}
+	}
+	e := &model.Entry{URL: "https://example.com/t/1", Name: "unforce-test", URLHash: "abc", Timestamp: timePtr(time.Now().Add(-time.Hour))}
+
+	// лишний Begin держит проход открытым: clearItems не прячет подсветку от проверки
+	state.Begin(gen)
+	state.Begin(gen)
+	state.Unforce("abc")
+	h.pri[1] <- &task{entry: e, forced: true}
+	waitActive(1)
+	if len(store.logs) != 0 {
+		t.Fatalf("logs = %d, want 0 for a cancelled forced task", len(store.logs))
+	}
+	if cur := state.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking = %v, want empty", cur)
+	}
+
+	state.Begin(gen)
+	h.idx[1] <- &task{entry: e}
+	waitActive(1)
+	if len(store.logs) != 1 {
+		t.Fatalf("logs = %d, want 1 for a normal task of the same release", len(store.logs))
+	}
+	if cur := state.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking = %v after the check finished, want empty", cur)
+	}
+}
+
+func TestPushForcedAfterUnforceNotQueued(t *testing.T) {
+	const forcedURL = "https://example.com/t/1"
+	state := NewState()
+	gen := state.Reset()
+	h := &handler{
+		manager:        &fakeManager{all: []*model.Entry{{URL: forcedURL, Name: "forced"}}},
+		storage:        &fakeStorage{},
+		trackerService: &fakeTracker{id: 1},
+		state:          state,
+		gen:            gen,
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hash := storagePkg.URLHash(forcedURL)
+	state.Unforce(hash)
+	if err := h.push(ctx, false, map[string]struct{}{hash: {}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case tk := <-h.pri[1]:
+		if !tk.forced {
+			t.Fatal("task from a forced pass must carry forced=true")
+		}
+	default:
+		t.Fatal("expected the forced task in the priority queue")
+	}
+	if _, total := state.QueuedItems(10); total != 0 {
+		t.Fatalf("queued total = %d, want 0 after Unforce before the pass", total)
+	}
+}
+
+type freshPageTracker struct {
+	safeFakeTracker
+	limit int
+}
+
+func (p *freshPageTracker) GetHourLimit(int) int { return p.limit }
+
+func (p *freshPageTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	return mockPageClient{}, nil
+}
+
+func (p *freshPageTracker) Response(context.Context, int, string, bool) (*bytes.Buffer, error) {
+	return bytes.NewBufferString(strings.Repeat("x", 60)), nil
+}
+
+type waitRig struct {
+	h     *handler
+	state *State
+	gen   uint32
+	store *loggingStorage
+	t     *testing.T
+}
+
+func newWaitRig(t *testing.T, limit int) *waitRig {
+	t.Helper()
+	store := &loggingStorage{}
+	state := NewState()
+	gen := state.Reset()
+	h := &handler{
+		config:         model.HandlerConfig{ThresholdMonth: 1, ThresholdHalfYear: 1, ThresholdYear: 1, ThresholdOld: 1},
+		storage:        store,
+		trackerService: &freshPageTracker{safeFakeTracker: safeFakeTracker{id: 1}, limit: limit},
+		state:          state,
+		mx:             helper.KeyedMutex{},
+		gen:            gen,
+	}
+	h.initTrackerChannels()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go h.trackerWorker(ctx, 1, make(chan error, 1))
+	return &waitRig{h: h, state: state, gen: gen, store: store, t: t}
+}
+
+func (r *waitRig) entry(hash string) *model.Entry {
+	return &model.Entry{URL: "https://example.com/t/" + hash, Name: "wait-" + hash, URLHash: hash, Timestamp: timePtr(time.Now().Add(-time.Hour))}
+}
+
+func (r *waitRig) waitActive(want int32) {
+	r.t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for r.state.active.Load() != want && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := r.state.active.Load(); got != want {
+		r.t.Fatalf("active = %d, want %d", got, want)
+	}
+}
+
+func (r *waitRig) enterWait() {
+	r.t.Helper()
+	// keeper держит проход открытым, live-задача "a" проверяется и воркер уходит в паузу лимита
+	r.state.Begin(r.gen)
+	r.state.Begin(r.gen)
+	r.h.pri[1] <- &task{entry: r.entry("a"), forced: true}
+	r.waitActive(1)
+	if len(r.store.logs) != 1 {
+		r.t.Fatalf("logs = %d, want 1 before the wait", len(r.store.logs))
+	}
+}
+
+func TestTrackerWorkerWaitDropsUnforcedTasks(t *testing.T) {
+	t.Run("held", func(t *testing.T) {
+		r := newWaitRig(t, 100)
+		r.enterWait()
+		r.state.Begin(r.gen)
+		r.state.Enqueue(r.gen, "b", true)
+		r.h.pri[1] <- &task{entry: r.entry("b"), forced: true}
+		// пока воркер не забрал b из очереди, Unforce дойдет до него как до новой задачи, а не через wake
+		for deadline := time.Now().Add(2 * time.Second); len(r.h.pri[1]) != 0 && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(50 * time.Millisecond)
+		r.state.Unforce("b")
+		r.waitActive(1)
+		if len(r.store.logs) != 1 {
+			t.Fatalf("logs = %d, want 1: the cancelled task must not be checked", len(r.store.logs))
+		}
+	})
+	t.Run("queued after unforce", func(t *testing.T) {
+		r := newWaitRig(t, 100)
+		r.enterWait()
+		r.state.Begin(r.gen)
+		r.state.Unforce("c")
+		r.h.pri[1] <- &task{entry: r.entry("c"), forced: true}
+		r.waitActive(1)
+		if len(r.store.logs) != 1 {
+			t.Fatalf("logs = %d, want 1: the cancelled task must not be checked", len(r.store.logs))
+		}
+	})
+	t.Run("live task waits for the timer", func(t *testing.T) {
+		r := newWaitRig(t, 100)
+		r.enterWait()
+		r.state.Begin(r.gen)
+		r.h.pri[1] <- &task{entry: r.entry("d"), forced: true}
+		r.state.Begin(r.gen)
+		r.h.idx[1] <- &task{entry: r.entry("e")}
+		time.Sleep(300 * time.Millisecond)
+		if got := r.state.active.Load(); got != 3 {
+			t.Fatalf("active = %d, want 3: live tasks stay until the interval ends", got)
+		}
+		if len(r.store.logs) != 1 {
+			t.Fatalf("logs = %d, want 1: nothing may start before the timer", len(r.store.logs))
+		}
+	})
+}
+
+func TestTrackerWorkerRunsHeldTaskAfterWait(t *testing.T) {
+	r := newWaitRig(t, 36000)
+	start := time.Now()
+	r.state.Begin(r.gen)
+	r.state.Begin(r.gen)
+	r.state.Begin(r.gen)
+	r.h.pri[1] <- &task{entry: r.entry("a"), forced: true}
+	r.h.pri[1] <- &task{entry: r.entry("b"), forced: true}
+	r.waitActive(1)
+	if len(r.store.logs) != 2 {
+		t.Fatalf("logs = %d, want 2: the held task must run after the wait", len(r.store.logs))
+	}
+	if el := time.Since(start); el < 100*time.Millisecond {
+		t.Fatalf("both checks took %v, want at least the 100ms interval", el)
+	}
+	if cur := r.state.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking = %v, want empty", cur)
 	}
 }

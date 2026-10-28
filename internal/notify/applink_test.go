@@ -98,72 +98,6 @@ func TestSendUsesPresetAppLink(t *testing.T) {
 	}
 }
 
-func TestTelegramAppLinkLine(t *testing.T) {
-	link := testAppURL + "/#dashboard?name=x"
-	t.Run("html", func(t *testing.T) {
-		ev := Event{Kind: KindUpdated, Text: "Обновлено:", Subject: "Релиз <1>", URL: "https://t/1", AppLink: link}
-		text, mode := telegramText(ev, maxMessage)
-		want := "Обновлено:\n" + `<a href="https://t/1">Релиз &lt;1&gt;</a>` + "\n" + `<a href="` + link + `">Open in Ripperr</a>`
-		if mode != "HTML" || text != want {
-			t.Fatalf("mode %q text %q, want %q", mode, text, want)
-		}
-	})
-	t.Run("escapes href", func(t *testing.T) {
-		ev := Event{Kind: KindUpdated, Text: "t", Subject: "s", URL: "https://t/1", AppLink: "https://h/#d?a=1&b=2"}
-		text, _ := telegramText(ev, maxMessage)
-		if !strings.Contains(text, `href="https://h/#d?a=1&amp;b=2"`) {
-			t.Fatalf("text = %q", text)
-		}
-	})
-	t.Run("plain", func(t *testing.T) {
-		ev := Event{Kind: KindTrackerDown, Text: "Трекер лежит", AppLink: testAppURL + "/#trackers"}
-		text, mode := telegramText(ev, maxMessage)
-		if mode != "" || text != "Трекер лежит\nOpen in Ripperr: "+testAppURL+"/#trackers" {
-			t.Fatalf("mode %q text %q", mode, text)
-		}
-	})
-	t.Run("overlong text drops link", func(t *testing.T) {
-		ev := Event{Kind: KindTrackerDown, Text: strings.Repeat("ж", 5000), AppLink: testAppURL + "/#trackers"}
-		text, _ := telegramText(ev, maxMessage)
-		if n := len([]rune(text)); n != maxMessage || strings.Contains(text, "Ripperr") {
-			t.Fatalf("runes %d, want text cut to the limit without the link", n)
-		}
-	})
-	t.Run("html limit keeps link", func(t *testing.T) {
-		ev := Event{Kind: KindUpdated, Text: "t", Subject: strings.Repeat("ж", 2000), URL: "https://t/1", AppLink: link}
-		text, _ := telegramText(ev, maxCaption)
-		if n := len([]rune(stripTags(text))); n > maxCaption || !strings.Contains(text, `">Open in Ripperr</a>`) {
-			t.Fatalf("visible runes %d", n)
-		}
-	})
-	t.Run("no link", func(t *testing.T) {
-		ev := Event{Kind: KindTrackerDown, Text: "Трекер лежит"}
-		if text, _ := telegramText(ev, maxMessage); text != "Трекер лежит" {
-			t.Fatalf("text = %q", text)
-		}
-	})
-}
-
-func TestTelegramSendCarriesAppLink(t *testing.T) {
-	var body map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-	}))
-	defer srv.Close()
-	orig := telegramAPIURL
-	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
-	defer func() { telegramAPIURL = orig }()
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "1"}, "").WithAppURL(testAppURL)
-	if err := n.Send(context.Background(), BrokenEvent("a b", "https://t/1", 3)); err != nil {
-		t.Fatal(err)
-	}
-	text, _ := body["text"].(string)
-	want := testAppURL + "/#dashboard?filter=ignored&amp;name=a+b"
-	if !strings.Contains(text, want) || !strings.Contains(text, "Open in Ripperr") {
-		t.Fatalf("text = %q, want link %q", text, want)
-	}
-}
-
 func TestEmailBodyAppLink(t *testing.T) {
 	from := &mail.Address{Address: "bot@example.com"}
 	to := []*mail.Address{{Address: "a@example.com"}}
@@ -244,13 +178,5 @@ func TestPushoverDropsAppLinkThatDoesNotFit(t *testing.T) {
 	m := form.Get("message")
 	if len([]rune(m)) > maxPushoverMessage || strings.Contains(m, "Ripperr") || form.Get("url") != "https://t/1" {
 		t.Errorf("message runes %d, url %q, link must be dropped", len([]rune(m)), form.Get("url"))
-	}
-}
-
-func TestTelegramPlainDropsAppLinkThatDoesNotFit(t *testing.T) {
-	ev := Event{Kind: KindTrackerDown, Text: "t", AppLink: testAppURL + "/#dashboard?name=" + strings.Repeat("%D0%96", 190)}
-	text, mode := telegramText(ev, maxCaption)
-	if n := len([]rune(text)); n > maxCaption || mode != "" || strings.Contains(text, "Ripperr") || text != "t" {
-		t.Fatalf("runes %d mode %q text %q, want the link dropped", n, mode, text)
 	}
 }

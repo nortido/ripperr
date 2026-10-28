@@ -137,7 +137,13 @@ export function updateRunStatusUI(running) {
   const runBtn = document.getElementById('dash-run-btn');
   const stopBtn = document.getElementById('dash-stop-btn');
   if (statusEl) {
-    statusEl.innerHTML = html`<span class="run-status-dot${running ? ' run-status-dot-active' : ''}"></span><span class="run-status-label">${running ? (dashboardDryRun ? t('dash.statusDryRunning') : t('dash.statusRunning')) : t('dash.statusIdle')}</span>${running && dashboardQueuedTotal > 0 ? html`<span class="run-status-left">${t('dash.statusLeft', { count: dashboardQueuedTotal })}</span>` : ''}`;
+    let statusText = t('dash.statusIdle');
+    if (running) {
+      const left = dashboardQueuedTotal > 0;
+      if (dashboardDryRun) statusText = left ? t('dash.statusDryRunningLeft', { count: dashboardQueuedTotal }) : t('dash.statusDryRunning');
+      else statusText = left ? t('dash.statusRunningLeft', { count: dashboardQueuedTotal }) : t('dash.statusRunning');
+    }
+    statusEl.innerHTML = html`<span class="run-status-dot${running ? ' run-status-dot-active' : ''}"></span><span class="run-status-label">${statusText}</span>`;
   }
   if (runBtn) {
     if (stopPending) {

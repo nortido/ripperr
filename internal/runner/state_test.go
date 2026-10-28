@@ -192,8 +192,8 @@ func TestStateItemQueueAndCurrent(t *testing.T) {
 	gen := s.Reset()
 	s.Begin(gen)
 	s.Begin(gen)
-	s.Enqueue(gen, "aaa")
-	s.Enqueue(gen, "bbb")
+	s.Enqueue(gen, "aaa", false)
+	s.Enqueue(gen, "bbb", false)
 
 	queued, total := s.QueuedItems(10)
 	if total != 2 || len(queued) != 2 {
@@ -202,8 +202,8 @@ func TestStateItemQueueAndCurrent(t *testing.T) {
 
 	s.StartItem(gen, 1, "aaa")
 	queued, total = s.QueuedItems(10)
-	if total != 1 || len(queued) != 1 || queued[0] != "bbb" {
-		t.Fatalf("queued=%v total=%d, want only bbb", queued, total)
+	if total != 2 || len(queued) != 1 || queued[0] != "bbb" {
+		t.Fatalf("queued=%v total=%d, want only bbb listed and total 2 (waiting + checking)", queued, total)
 	}
 	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "aaa" {
 		t.Fatalf("checking=%v, want [aaa]", cur)
@@ -214,6 +214,10 @@ func TestStateItemQueueAndCurrent(t *testing.T) {
 	s.End(gen)
 	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "aaa" {
 		t.Fatalf("checking=%v after End, want [aaa]", cur)
+	}
+	s.FinishItem(gen, 1, "aaa")
+	if cur := s.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking=%v after FinishItem, want empty", cur)
 	}
 
 	s.StartItem(gen, 1, "bbb")
@@ -226,7 +230,7 @@ func TestStateItemsClearedWhenRunFinishes(t *testing.T) {
 	s := NewState()
 	gen := s.Reset()
 	s.Begin(gen)
-	s.Enqueue(gen, "aaa")
+	s.Enqueue(gen, "aaa", false)
 	s.StartItem(gen, 2, "aaa")
 
 	s.End(gen)
@@ -242,7 +246,7 @@ func TestStateQueuedItemsCap(t *testing.T) {
 	s := NewState()
 	gen := s.Reset()
 	for _, h := range []string{"a", "b", "c"} {
-		s.Enqueue(gen, h)
+		s.Enqueue(gen, h, false)
 	}
 	queued, total := s.QueuedItems(2)
 	if total != 3 || len(queued) != 2 {
@@ -253,8 +257,8 @@ func TestStateQueuedItemsCap(t *testing.T) {
 func TestStateUnqueueDropsPending(t *testing.T) {
 	s := NewState()
 	gen := s.Reset()
-	s.Enqueue(gen, "aaa")
-	s.Unqueue(gen, "aaa")
+	s.Enqueue(gen, "aaa", false)
+	s.Unqueue(gen, "aaa", false)
 	if _, total := s.QueuedItems(10); total != 0 {
 		t.Fatalf("queued total=%d, want 0", total)
 	}
@@ -264,7 +268,7 @@ func TestStateItemsClearedByReset(t *testing.T) {
 	s := NewState()
 	gen := s.Reset()
 	s.Begin(gen)
-	s.Enqueue(gen, "aaa")
+	s.Enqueue(gen, "aaa", false)
 	s.StartItem(gen, 1, "aaa")
 	s.Reset()
 	if cur := s.CheckingItems(); len(cur) != 0 {
@@ -280,7 +284,7 @@ func TestStateStartItemIgnoresStaleGeneration(t *testing.T) {
 	stale := s.Reset()
 	s.Reset()
 	s.StartItem(stale, 1, "aaa")
-	s.Enqueue(stale, "bbb")
+	s.Enqueue(stale, "bbb", false)
 	if cur := s.CheckingItems(); len(cur) != 0 {
 		t.Fatalf("checking=%v after stale StartItem, want empty", cur)
 	}
@@ -944,5 +948,139 @@ func TestStateSaveServerErrorsWaitsForRestore(t *testing.T) {
 	_ = s.RestoreServerErrors(nil, now)
 	if err := s.SaveServerErrors(context.Background(), now, rec.save); err != nil || rec.calls != 1 {
 		t.Fatalf("err = %v calls = %d, want one save after a restore", err, rec.calls)
+	}
+}
+
+func TestStateUnforceDropsForcedQueue(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Enqueue(gen, "a", true)
+	s.Enqueue(gen, "b", false)
+	s.Enqueue(gen, "c", true)
+	s.Enqueue(gen, "c", false)
+	if _, total := s.QueuedItems(10); total != 3 {
+		t.Fatalf("queued total=%d, want 3", total)
+	}
+
+	s.Unforce("a")
+	s.Unforce("b")
+	s.Unforce("c")
+	queued, total := s.QueuedItems(10)
+	if total != 2 || len(queued) != 2 {
+		t.Fatalf("queued=%v total=%d, want b and c (normal tasks stay)", queued, total)
+	}
+	if !s.ForceCancelled("a") {
+		t.Fatal("ForceCancelled(a) = false after Unforce")
+	}
+
+	if !s.RequestForce("a") {
+		t.Fatal("RequestForce(a) was not accepted")
+	}
+	if s.ForceCancelled("a") {
+		t.Fatal("ForceCancelled(a) = true after RequestForce, want mark cleared")
+	}
+
+	s.Unforce("d")
+	s.Enqueue(gen, "d", true)
+	if _, total := s.QueuedItems(10); total != 2 {
+		t.Fatalf("queued total=%d after forced Enqueue of an unforced hash, want 2", total)
+	}
+}
+
+func TestStateUnforceMarkSurvivesEndAndReset(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Begin(gen)
+	s.Unforce("a")
+	s.End(gen)
+	if !s.ForceCancelled("a") {
+		t.Fatal("mark lost after End to zero")
+	}
+	s.Reset()
+	if !s.ForceCancelled("a") {
+		t.Fatal("mark lost after Reset")
+	}
+}
+
+func TestStateFinishItemClearsHighlight(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.StartItem(gen, 1, "a")
+	s.FinishItem(gen, 1, "a")
+	if cur := s.CheckingItems(); len(cur) != 0 {
+		t.Fatalf("checking=%v after FinishItem, want empty", cur)
+	}
+
+	s.StartItem(gen, 1, "b")
+	s.FinishItem(gen, 1, "x")
+	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "b" {
+		t.Fatalf("checking=%v after FinishItem of another hash, want [b]", cur)
+	}
+}
+
+func TestStateLeftCountsChecking(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Enqueue(gen, "a", false)
+	s.Enqueue(gen, "b", false)
+	s.StartItem(gen, 1, "a")
+	if _, total := s.QueuedItems(10); total != 2 {
+		t.Fatalf("total=%d with one waiting and one checking, want 2", total)
+	}
+	s.FinishItem(gen, 1, "a")
+	if _, total := s.QueuedItems(10); total != 1 {
+		t.Fatalf("total=%d after FinishItem, want 1", total)
+	}
+}
+
+func TestStateUnforceWakes(t *testing.T) {
+	s := NewState()
+	w := s.UnforceWake()
+	if w == nil {
+		t.Fatal("UnforceWake returned nil for a live state")
+	}
+	select {
+	case <-w:
+		t.Fatal("wake channel closed before any Unforce")
+	default:
+	}
+	s.Unforce("a")
+	select {
+	case <-w:
+	default:
+		t.Fatal("Unforce must close the wake channel")
+	}
+	w2 := s.UnforceWake()
+	select {
+	case <-w2:
+		t.Fatal("the channel after Unforce must be a new open one")
+	default:
+	}
+	s.Unforce("b")
+	select {
+	case <-w2:
+	default:
+		t.Fatal("second Unforce must close the new channel")
+	}
+	if got := (*State)(nil).UnforceWake(); got != nil {
+		t.Fatalf("nil state wake = %v, want nil", got)
+	}
+}
+
+func TestStateQueuedItemsDedupesChecking(t *testing.T) {
+	s := NewState()
+	gen := s.Reset()
+	s.Enqueue(gen, "a", false)
+	s.StartItem(gen, 1, "a")
+	s.Enqueue(gen, "a", false)
+	hashes, total := s.QueuedItems(10)
+	if total != 1 || len(hashes) != 1 || hashes[0] != "a" {
+		t.Fatalf("hashes=%v total=%d with one hash queued and checking, want [a] and 1", hashes, total)
+	}
+
+	s.StartItem(gen, 2, "x")
+	s.StartItem(gen, 3, "x")
+	if _, total := s.QueuedItems(10); total != 2 {
+		t.Fatalf("total=%d with one hash checking on two trackers, want 2", total)
 	}
 }

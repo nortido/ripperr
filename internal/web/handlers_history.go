@@ -196,6 +196,9 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 	queued := true
 	if req.Force {
 		queued = s.runnerState.RequestForce(hash)
+	} else {
+		// задача уже стоит в очереди форс-прохода: без отметки воркер проверил бы ее зря
+		s.runnerState.Unforce(hash)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"force": req.Force, "force_queued": queued})
 }
@@ -227,6 +230,10 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 			if s.runnerState.RequestForce(hash) {
 				queued++
 			}
+		}
+	} else {
+		for _, hash := range hashes {
+			s.runnerState.Unforce(hash)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"updated": n, "queued": int64(queued)})

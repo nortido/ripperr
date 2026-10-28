@@ -1745,11 +1745,6 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
   }
 }
 
-.run-status-left {
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 /* расширенные параметры прячем через CSS без перерисовки карточки: поля
    остаются в DOM и несохраненные правки не пропадают. Заголовок раздела
    раскрывает их только в этом диалоге и лишний в расширенном режиме */

@@ -1,6 +1,8 @@
-FROM golang:1.25 AS builder
+# сборщик на платформе хоста: Go кросс-компилирует сам, без эмуляции qemu
+FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
+ARG TARGETOS TARGETARCH
 #RUN go install github.com/go-delve/delve/cmd/dlv@latest
-ENV GOOS=linux CGO_ENABLED=0
+ENV GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0
 COPY . /app
 WORKDIR /app
 RUN go build -o main ./cmd && ls -la

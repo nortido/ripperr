@@ -14,6 +14,11 @@ import (
 	"ripperr/internal/system/logger"
 )
 
+const (
+	qNormal uint8 = 1 << iota
+	qForced
+)
+
 type State struct {
 	trigger         chan bool
 	force           chan string
@@ -27,7 +32,9 @@ type State struct {
 	dry             atomic.Bool
 	stopping        atomic.Bool
 	itemsMu         sync.Mutex
-	queued          map[string]struct{}
+	queued          map[string]uint8
+	unforced        map[string]struct{}
+	unforceWake     chan struct{}
 	current         map[int]string
 	pageMu          sync.Mutex
 	pageOK          map[int]bool
@@ -134,6 +141,10 @@ func (s *State) RequestForce(urlHash string) bool {
 	if s == nil || urlHash == "" {
 		return false
 	}
+	// новый форс снимает отмену раньше отправки: иначе воркер отбросил бы и его
+	s.itemsMu.Lock()
+	delete(s.unforced, urlHash)
+	s.itemsMu.Unlock()
 	select {
 	case s.force <- urlHash:
 		return true
@@ -223,25 +234,85 @@ func (s *State) DrainTrigger() {
 	}
 }
 
-func (s *State) Enqueue(gen uint32, urlHash string) {
+func (s *State) Enqueue(gen uint32, urlHash string, forced bool) {
 	if s == nil || urlHash == "" || gen != s.gen.Load() {
 		return
 	}
 	s.itemsMu.Lock()
 	defer s.itemsMu.Unlock()
-	if s.queued == nil {
-		s.queued = make(map[string]struct{})
+	bit := qNormal
+	if forced {
+		// задачу все равно отправят, воркер отбросит ее по отметке: в очередь не считаем
+		if _, ok := s.unforced[urlHash]; ok {
+			return
+		}
+		bit = qForced
 	}
-	s.queued[urlHash] = struct{}{}
+	if s.queued == nil {
+		s.queued = make(map[string]uint8)
+	}
+	s.queued[urlHash] |= bit
 }
 
-func (s *State) Unqueue(gen uint32, urlHash string) {
+func (s *State) Unqueue(gen uint32, urlHash string, forced bool) {
 	if s == nil || urlHash == "" || gen != s.gen.Load() {
 		return
 	}
 	s.itemsMu.Lock()
 	defer s.itemsMu.Unlock()
-	delete(s.queued, urlHash)
+	bit := qNormal
+	if forced {
+		bit = qForced
+	}
+	s.clearBit(urlHash, bit)
+}
+
+func (s *State) clearBit(urlHash string, bit uint8) {
+	left := s.queued[urlHash] &^ bit
+	if left == 0 {
+		delete(s.queued, urlHash)
+		return
+	}
+	s.queued[urlHash] = left
+}
+
+func (s *State) Unforce(urlHash string) {
+	if s == nil || urlHash == "" {
+		return
+	}
+	s.itemsMu.Lock()
+	defer s.itemsMu.Unlock()
+	if s.unforced == nil {
+		s.unforced = make(map[string]struct{})
+	}
+	s.unforced[urlHash] = struct{}{}
+	s.clearBit(urlHash, qForced)
+	if s.unforceWake != nil {
+		close(s.unforceWake)
+		s.unforceWake = nil
+	}
+}
+
+func (s *State) UnforceWake() <-chan struct{} {
+	if s == nil {
+		return nil
+	}
+	s.itemsMu.Lock()
+	defer s.itemsMu.Unlock()
+	if s.unforceWake == nil {
+		s.unforceWake = make(chan struct{})
+	}
+	return s.unforceWake
+}
+
+func (s *State) ForceCancelled(urlHash string) bool {
+	if s == nil {
+		return false
+	}
+	s.itemsMu.Lock()
+	defer s.itemsMu.Unlock()
+	_, ok := s.unforced[urlHash]
+	return ok
 }
 
 func (s *State) StartItem(gen uint32, ttid int, urlHash string) {
@@ -259,6 +330,17 @@ func (s *State) StartItem(gen uint32, ttid int, urlHash string) {
 	// прошлая запись трекера остается текущей до следующего StartItem: между записями
 	// воркер ждет паузу лимита, и погасшая подсветка мигала бы зря
 	s.current[ttid] = urlHash
+}
+
+func (s *State) FinishItem(gen uint32, ttid int, urlHash string) {
+	if s == nil || urlHash == "" || gen != s.gen.Load() {
+		return
+	}
+	s.itemsMu.Lock()
+	defer s.itemsMu.Unlock()
+	if s.current[ttid] == urlHash {
+		delete(s.current, ttid)
+	}
 }
 
 func (s *State) CheckingItems() []string {
@@ -283,10 +365,17 @@ func (s *State) QueuedItems(limit int) (hashes []string, total int) {
 	defer s.itemsMu.Unlock()
 	// для подсветки хватает страницы, а по total видно, длинный проход впереди или одна запись
 	total = len(s.queued)
+	checking := make(map[string]struct{}, len(s.current))
+	for _, hash := range s.current {
+		if _, waiting := s.queued[hash]; !waiting {
+			checking[hash] = struct{}{}
+		}
+	}
+	total += len(checking)
 	if limit <= 0 {
 		return nil, total
 	}
-	hashes = make([]string, 0, min(limit, total))
+	hashes = make([]string, 0, min(limit, len(s.queued)))
 	for hash := range s.queued {
 		if len(hashes) == limit {
 			break

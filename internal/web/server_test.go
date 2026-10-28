@@ -2996,3 +2996,50 @@ func TestGetHistoryNewReleaseTimes(t *testing.T) {
 		t.Fatalf("recheck_at = %v, want %s", got, first.Format(time.RFC3339))
 	}
 }
+
+func TestPostPlanForceOffCancelsQueued(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{"abc123": true}}
+	srv := newTestServer(store)
+	gen := srv.runnerState.Reset()
+	srv.runnerState.Begin(gen)
+	srv.runnerState.Enqueue(gen, "abc123", true)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/abc123/force", bytes.NewReader([]byte(`{"force":false}`)))
+	req.SetPathValue("hash", "abc123")
+	w := httptest.NewRecorder()
+	srv.handlePlanForce(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if _, total := srv.runnerState.QueuedItems(10); total != 0 {
+		t.Fatalf("queued total = %d after force off, want 0", total)
+	}
+	if !srv.runnerState.ForceCancelled("abc123") {
+		t.Fatal("expected the forced task to be marked cancelled")
+	}
+}
+
+func TestPostPlanForceAllClearCancelsQueued(t *testing.T) {
+	store := &fakeStore{forceItems: map[string]bool{"h1": true, "h2": true, "h3": true}}
+	srv := newTestServer(store)
+	gen := srv.runnerState.Reset()
+	srv.runnerState.Begin(gen)
+	for _, h := range []string{"h1", "h2", "h3"} {
+		srv.runnerState.Enqueue(gen, h, true)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/plan/force-all", bytes.NewReader([]byte(`{"force":false}`)))
+	w := httptest.NewRecorder()
+	srv.handlePlanForceAll(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if _, total := srv.runnerState.QueuedItems(10); total != 0 {
+		t.Fatalf("queued total = %d after force-all clear, want 0", total)
+	}
+	for _, h := range []string{"h1", "h2", "h3"} {
+		if !srv.runnerState.ForceCancelled(h) {
+			t.Fatalf("%s not marked cancelled", h)
+		}
+	}
+}

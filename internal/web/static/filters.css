@@ -62,8 +62,7 @@
   background: var(--danger-bg);
 }
 
-/* у битых свой цвет: --warning это тот же --hue-amber, и раньше оба фильтра
-   красили кнопку одинаково */
+/* у битых свой цвет: --warning это тот же --hue-amber, и оба фильтра красили бы кнопку одинаково */
 .hist-filter-trigger.active-broken {
   color: var(--hue-violet);
   border-color: var(--hue-violet);
@@ -1109,8 +1108,7 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
 }
 
 /* до 1200px колонки времени и статуса узкие (110 и 84), без мелкого шрифта
-   «ПОСЛЕДНЯЯ ПРОВЕРКА» не влезает. С 1200px они 130 и 100, все входит в 12px,
-   а старая граница 1440 давала только скачок шрифта и сдвиг колонки */
+   «ПОСЛЕДНЯЯ ПРОВЕРКА» не влезает. С 1200px они 130 и 100, все входит в 12px */
 @media (min-width: 561px) and (max-width: 1199px) {
   html:not(.mobile-layout) .table-dash-releases th.col-status,
   html:not(.mobile-layout) .table-dash-releases th.col-time,
@@ -1249,9 +1247,8 @@ html.mobile-layout .releases-card-header.is-search-animating .mobile-name-search
   }
 }
 
-/* между 901 и 1080 размеры плавно растут до обычных, ступенька на 1080 давала
-   скачок шрифта во всех четырех карточках. --stat-t идет от 0 до 1px, остальное
-   ниже линейно от него */
+/* между 901 и 1080 размеры плавно растут до обычных, иначе на 1080 скачок шрифта
+   во всех четырех карточках. --stat-t идет от 0 до 1px, остальное ниже линейно от него */
 @media (min-width: 901px) and (max-width: 1080px) {
   :root {
     --stat-t: calc((100vw - 901px) / 179);

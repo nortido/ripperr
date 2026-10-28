@@ -59,21 +59,12 @@ func (m *manager) Submit(ctx context.Context, buf *bytes.Buffer, opts model.Mana
 	if buf == nil || buf.Len() == 0 {
 		return
 	}
-	return m.replaceTorrent(ctx, buf, "", opts, func(ctx context.Context, opts model.ManagerAddFileOptions) error {
+	return m.replaceTorrent(ctx, buf, opts, func(ctx context.Context, opts model.ManagerAddFileOptions) error {
 		return m.client.AddFromBuffer(ctx, buf, opts)
 	})
 }
 
-func (m *manager) SubmitMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
-	if magnet == "" {
-		return
-	}
-	return m.replaceTorrent(ctx, nil, magnet, opts, func(ctx context.Context, opts model.ManagerAddFileOptions) error {
-		return m.client.AddFromMagnet(ctx, magnet, opts)
-	})
-}
-
-func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet string, opts model.ManagerAddFileOptions, add func(context.Context, model.ManagerAddFileOptions) error) (err error) {
+func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, opts model.ManagerAddFileOptions, add func(context.Context, model.ManagerAddFileOptions) error) (err error) {
 	// имя и комментарий берем у текущего торрента до удаления, чтобы add получил готовые opts, а не сырые от вызывающего
 	if opts.Hash != "" {
 		if name, comment, detailErr := m.client.GetTorrentDetails(ctx, opts.Hash); detailErr == nil {
@@ -89,12 +80,9 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 	del := func() error {
 		return m.client.Delete(ctx, delOpts)
 	}
-	var data []byte
-	if buf != nil {
-		data = buf.Bytes()
-	}
-	same, known := m.client.IncomingHashSameAs(buf, magnet, opts.Hash)
-	newHash, hashKnown := incomingHash(data, magnet)
+	data := buf.Bytes()
+	same, known := m.client.IncomingHashSameAs(buf, "", opts.Hash)
+	newHash, hashKnown := incomingHash(data)
 	// прошлая замена с удалением еще не доведена: пара жива по новому хешу или по хешу
 	// записи, если это ее остановленный новый торрент. Любой исход тут запишет историю,
 	// а подметальщик потом может откатить замену
@@ -103,7 +91,7 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 	}
 	// выбор файлов читаем, пока старый торрент жив; ошибка чтения откладывает
 	// замену до следующего прогона, иначе большая раздача скачалась бы целиком
-	if len(data) > 0 && opts.Hash != "" && !same {
+	if opts.Hash != "" && !same {
 		files, filesErr := m.client.Files(ctx, opts.Hash)
 		if filesErr != nil {
 			return fmt.Errorf("read file selection of %s: %w", opts.Name, filesErr)
@@ -121,7 +109,7 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 		// старый торрент уйдет вместе с файлами: новый добавляем остановленным
 		// и запускаем только после удаления старого, иначе общие файлы снесет
 		if hashKnown && delOpts.DeleteFiles {
-			return m.replaceDeletingFirst(ctx, data, magnet, newHash, opts, delOpts, add)
+			return m.replaceDeletingFirst(ctx, data, newHash, opts, delOpts, add)
 		}
 	}
 	if known && same {
@@ -138,7 +126,7 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 			// проживут до следующей смены инфохеша
 			return model.ErrHashUnchanged
 		}
-		if err = m.client.WriteBlackholePair(data, magnet, opts); err != nil {
+		if err = m.client.WriteBlackholePair(data, "", opts); err != nil {
 			return
 		}
 		if err = del(); err != nil {
@@ -177,7 +165,7 @@ func (m *manager) replaceTorrent(ctx context.Context, buf *bytes.Buffer, magnet 
 		pairOpts.Hash = newHash
 		pairOpts.ReplacesHash = opts.Hash
 		pairOpts.Stopped = false
-		if err = m.client.WriteBlackholePair(data, magnet, pairOpts); err != nil {
+		if err = m.client.WriteBlackholePair(data, "", pairOpts); err != nil {
 			return
 		}
 		start = time.Now()
@@ -273,9 +261,8 @@ func (m *manager) selectionApplied(ctx context.Context, newHash string, selectio
 	return slices.Equal(unwanted, fileselect.Unwanted(selection, paths))
 }
 
-func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, magnet, newHash string, opts model.ManagerAddFileOptions, delOpts model.ManagerDeleteOptions, add func(context.Context, model.ManagerAddFileOptions) error) (err error) {
-	// новый торрент уже в клиенте: удаление старого с файлами снесло бы и его
-	// общие файлы, прежний путь add-first тут отдавал ErrAlreadyAdded без удаления
+func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, newHash string, opts model.ManagerAddFileOptions, delOpts model.ManagerDeleteOptions, add func(context.Context, model.ManagerAddFileOptions) error) (err error) {
+	// новый торрент уже в клиенте: удаление старого с файлами снесло бы и его общие файлы
 	if present, existsErr := m.client.Exists(ctx, newHash); existsErr != nil {
 		return existsErr
 	} else if present {
@@ -288,7 +275,7 @@ func (m *manager) replaceDeletingFirst(ctx context.Context, data []byte, magnet,
 	pairOpts.Hash = newHash
 	pairOpts.ReplacesHash = opts.Hash
 	pairOpts.Stopped = false
-	if err = m.client.WriteBlackholePair(data, magnet, pairOpts); err != nil {
+	if err = m.client.WriteBlackholePair(data, "", pairOpts); err != nil {
 		return
 	}
 	start := time.Now()
@@ -451,15 +438,9 @@ func (m *manager) readdWithComment(ctx context.Context, hash, comment string, fe
 	return nil
 }
 
-func incomingHash(data []byte, magnet string) (string, bool) {
-	if len(data) > 0 {
-		hash, err := torrentmeta.InfoHash(data)
-		return hash, err == nil
-	}
-	if magnet != "" {
-		return torrentmeta.BtihFromMagnet(magnet)
-	}
-	return "", false
+func incomingHash(data []byte) (string, bool) {
+	hash, err := torrentmeta.InfoHash(data)
+	return hash, err == nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

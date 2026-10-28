@@ -22,3 +22,19 @@ build:
 
 build-arm:
 	@docker buildx build --platform linux/arm64 -t ripperr:arm .
+
+VERSION ?= $(shell git describe --tags --always --dirty)
+IMAGE ?= nortido/ripperr
+PLATFORMS ?= linux/amd64,linux/arm64
+TAG := $(patsubst v%,%,$(VERSION))
+
+# драйвер docker не собирает мультиархитектурный манифест, нужен builder docker-container
+builder:
+	@docker buildx inspect ripperr-multi >/dev/null 2>&1 || docker buildx create --name ripperr-multi --driver docker-container >/dev/null
+
+build-multi: builder
+	@mkdir -p dist
+	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) -t $(IMAGE):$(TAG) --output type=oci,dest=dist/ripperr-$(TAG).tar .
+
+push-multi: builder
+	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .

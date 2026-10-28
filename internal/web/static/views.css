@@ -97,8 +97,7 @@ html:not(.mobile-layout) .page-header .select {
 }
 
 .dash-header-status-block {
-  /* размер на всю мета-строку: раньше статус, остаток и время были 14/13/12px
-     и читались как разные шрифты */
+  /* один размер на всю мета-строку, чтобы статус, остаток и время не читались разными шрифтами */
   font-size: 13px;
   display: inline-flex;
   align-items: center;
@@ -372,8 +371,8 @@ html.mobile-layout .int-page-header .page-header-actions {
   cursor: pointer;
 }
 
-/* --border-subtle отличался от --border на 0.01 альфы, то есть наведение на
-   кликабельную карточку не давало никакой обратной связи */
+/* --border-subtle почти не отличается от --border (0.01-0.02 альфы), поэтому для
+   наведения на кликабельную карточку берем --text-muted */
 @media (hover: hover) {
   .stat-card-filter:hover {
     border-color: var(--text-muted);

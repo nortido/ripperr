@@ -40,6 +40,16 @@ const (
 	msgPushBroken      = "push_broken"
 	msgPushCheckFailed = "push_check_failed"
 	msgPushStreak      = "push_streak"
+
+	msgTgBroken          = "tg_broken"
+	msgTgBrokenNote      = "tg_broken_note"
+	msgTgTrackerDown     = "tg_tracker_down"
+	msgTgTrackerDownNote = "tg_tracker_down_note"
+	msgTgTrackerUp       = "tg_tracker_up"
+	msgTgTrackerUpNote   = "tg_tracker_up_note"
+	msgTgTopic           = "tg_topic"
+	msgTgMuted           = "tg_muted"
+	msgTgUnmuted         = "tg_unmuted"
 )
 
 type MirrorDigestItem struct {
@@ -68,6 +78,16 @@ var messages = map[string]map[string]string{
 		msgPushBroken:      "Release ignored",
 		msgPushCheckFailed: "Check failed",
 		msgPushStreak:      "Errors in a row: %s",
+
+		msgTgBroken:          "Release moved to ignored",
+		msgTgBrokenNote:      "Errors in a row: %s, no longer checked",
+		msgTgTrackerDown:     "Tracker unavailable",
+		msgTgTrackerDownNote: "Tracker checks paused",
+		msgTgTrackerUp:       "Tracker is back",
+		msgTgTrackerUpNote:   "Checks resumed",
+		msgTgTopic:           "Topic on tracker",
+		msgTgMuted:           "Telegram notifications for this release are off",
+		msgTgUnmuted:         "Telegram notifications for this release are on",
 	},
 	LangRU: {
 		msgUpdated:        "Раздача обновлена в torrent-клиенте:",
@@ -90,6 +110,16 @@ var messages = map[string]map[string]string{
 		msgPushBroken:      "Раздача в игноре",
 		msgPushCheckFailed: "Ошибка проверки",
 		msgPushStreak:      "Ошибок подряд: %s",
+
+		msgTgBroken:          "Раздача ушла в игнор",
+		msgTgBrokenNote:      "Ошибок подряд: %s, больше не проверяется",
+		msgTgTrackerDown:     "Трекер недоступен",
+		msgTgTrackerDownNote: "Проверки трекера на паузе",
+		msgTgTrackerUp:       "Трекер снова доступен",
+		msgTgTrackerUpNote:   "Проверки возобновлены",
+		msgTgTopic:           "Тема на трекере",
+		msgTgMuted:           "Уведомления об этой раздаче в Telegram выключены",
+		msgTgUnmuted:         "Уведомления об этой раздаче в Telegram включены",
 	},
 }
 

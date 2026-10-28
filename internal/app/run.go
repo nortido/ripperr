@@ -138,7 +138,17 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		}
 		alerts.Retain(names)
 	}
-	nt := notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy).WithAppURL(cfg.Web.AppURL).WithPush(webpush.NewStore(db)).WithEvents(db)
+	nt := notify.New(notify.Config(cfg.Notify), cfg.Runner.DownloadProxy).WithAppURL(cfg.Web.AppURL).WithPush(webpush.NewStore(db)).WithEvents(db).WithTelegramMutes(notify.NewTelegramMutes(db))
+	tgCtx, tgStop := context.WithCancel(ctx)
+	tgDone := make(chan struct{})
+	go func() {
+		nt.RunTelegramButtons(tgCtx)
+		close(tgDone)
+	}()
+	defer func() {
+		tgStop()
+		<-tgDone
+	}()
 	tr.SetMirrorSwitchHook(func(name, from, to string) {
 		nt.Notify(notify.MirrorSwitchedEvent(name, from, to))
 	})

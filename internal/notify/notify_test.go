@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"ripperr/internal/metrics"
 	"ripperr/internal/system/logger"
@@ -455,8 +456,8 @@ func TestSendTelegramUsesPhotoWhenImageSet(t *testing.T) {
 	if body.Photo != "http://127.0.0.1:1/poster.jpg" {
 		t.Errorf("photo = %q", body.Photo)
 	}
-	if !strings.Contains(body.Caption, "Some.Release") || !strings.Contains(body.Caption, "https://example.com/t1") {
-		t.Errorf("caption %q lost the release name or link", body.Caption)
+	if !strings.Contains(body.Caption, "Some Release") || strings.Contains(body.Caption, "http") {
+		t.Errorf("caption %q lost the release name or carries a raw link", body.Caption)
 	}
 }
 
@@ -489,10 +490,10 @@ func TestSendTelegramFallsBackToMessageWhenPhotoRejected(t *testing.T) {
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatalf("photo failure must not fail the whole send: %v", err)
 	}
-	if len(paths) != 2 || !strings.HasSuffix(paths[1], "/sendMessage") {
-		t.Fatalf("requests = %v, want sendPhoto then sendMessage", paths)
+	if len(paths) != 3 || !strings.HasSuffix(paths[2], "/sendMessage") {
+		t.Fatalf("requests = %v, want sendPhoto, its url-button retry, then sendMessage", paths)
 	}
-	if !strings.Contains(text, "Some.Release") {
+	if !strings.Contains(text, "Some Release") {
 		t.Errorf("fallback text %q lost the release name", text)
 	}
 }
@@ -519,8 +520,8 @@ func TestTelegramCaptionTruncatedToLimit(t *testing.T) {
 	if err := n.Send(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}
-	if got := len([]rune(caption)); got != maxCaption {
-		t.Errorf("caption length = %d runes, want %d", got, maxCaption)
+	if got := len(utf16.Encode([]rune(stripTags(caption)))); got != maxCaption {
+		t.Errorf("caption length = %d UTF-16 units, want %d", got, maxCaption)
 	}
 }
 
@@ -570,7 +571,7 @@ func TestSendTelegramUploadsImageBytes(t *testing.T) {
 	if !strings.HasPrefix(gotContentType, "multipart/form-data") {
 		t.Errorf("content-type = %q, want multipart", gotContentType)
 	}
-	if !strings.Contains(gotCaption, "Some.Release") {
+	if !strings.Contains(gotCaption, "Some Release") {
 		t.Errorf("caption %q lost the release name", gotCaption)
 	}
 }
@@ -734,139 +735,6 @@ func TestSendTelegramFallsBackToURLWhenImageNotFetchable(t *testing.T) {
 	}
 	if gotPhoto != img.URL+"/poster.jpg" {
 		t.Errorf("photo = %q, want the original link so telegram fetches it itself", gotPhoto)
-	}
-}
-
-func TestTelegramMessageLinksSubjectInsteadOfBareURL(t *testing.T) {
-	orig := telegramAPIURL
-	defer func() { telegramAPIURL = orig }()
-
-	var body struct {
-		Text      string `json:"text"`
-		ParseMode string `json:"parse_mode"`
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
-
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
-	ev := UpdatedEvent("Some.Release.2026", "https://example.com/forum/viewtopic.php?t=1", "")
-	if err := n.Send(context.Background(), ev); err != nil {
-		t.Fatal(err)
-	}
-	want := `<a href="https://example.com/forum/viewtopic.php?t=1">Some.Release.2026</a>`
-	if !strings.Contains(body.Text, want) {
-		t.Errorf("text %q does not carry the linked name %q", body.Text, want)
-	}
-	if body.ParseMode != "HTML" {
-		t.Errorf("parse_mode = %q, want HTML", body.ParseMode)
-	}
-	if strings.Contains(body.Text, "\nhttps://example.com/forum/viewtopic.php?t=1") {
-		t.Errorf("text %q still repeats the link on its own line", body.Text)
-	}
-}
-
-func TestTelegramMessageEscapesNameForHTML(t *testing.T) {
-	orig := telegramAPIURL
-	defer func() { telegramAPIURL = orig }()
-
-	var body struct {
-		Text string `json:"text"`
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
-
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
-	ev := UpdatedEvent("Release <b> & (2026) [x_264]", "https://example.com/t?a=1&b=2", "")
-	if err := n.Send(context.Background(), ev); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(body.Text, "<b>") {
-		t.Errorf("text %q leaks raw markup from the release name", body.Text)
-	}
-	if !strings.Contains(body.Text, "(2026) [x_264]") {
-		t.Errorf("text %q mangled brackets and underscores", body.Text)
-	}
-	if !strings.Contains(body.Text, "https://example.com/t?a=1&amp;b=2") {
-		t.Errorf("text %q did not escape the ampersand in the link", body.Text)
-	}
-}
-
-func TestTelegramEventsWithoutSubjectStayPlain(t *testing.T) {
-	orig := telegramAPIURL
-	defer func() { telegramAPIURL = orig }()
-
-	var body struct {
-		Text      string `json:"text"`
-		ParseMode string `json:"parse_mode"`
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	telegramAPIURL = srv.URL + "/bot%s/sendMessage"
-
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
-	if err := n.Send(context.Background(), TrackerDownEvent("rutracker", "connection refused")); err != nil {
-		t.Fatal(err)
-	}
-	if body.ParseMode != "" {
-		t.Errorf("parse_mode = %q, want none for a message without a link", body.ParseMode)
-	}
-	if !strings.Contains(body.Text, "connection refused") {
-		t.Errorf("text %q lost the error message", body.Text)
-	}
-}
-
-func TestTelegramCaptionTrimsNameNotMarkup(t *testing.T) {
-	origPhoto, origMsg := telegramPhotoURL, telegramAPIURL
-	defer func() { telegramPhotoURL, telegramAPIURL = origPhoto, origMsg }()
-	telegramAPIURL = "http://127.0.0.1:1/bot%s/sendMessage"
-
-	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte("JPEGBYTES"))
-	}))
-	defer img.Close()
-
-	var caption, parseMode string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		caption = r.FormValue("caption")
-		parseMode = r.FormValue("parse_mode")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	telegramPhotoURL = srv.URL + "/bot%s/sendPhoto"
-
-	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
-	n.posterHC = img.Client()
-	ev := UpdatedEvent(strings.Repeat("я", 2000), "https://example.com/t1", img.URL+"/poster.jpg")
-	if err := n.Send(context.Background(), ev); err != nil {
-		t.Fatal(err)
-	}
-	if parseMode != "HTML" {
-		t.Errorf("parse_mode = %q, want HTML", parseMode)
-	}
-	if !strings.HasSuffix(caption, "</a>") {
-		t.Errorf("caption %q was cut inside the link markup", caption)
-	}
-	// в caption у telegram считается видимый текст, а не разметка
-	visible := len([]rune(stripTags(caption)))
-	if visible > maxCaption {
-		t.Errorf("visible caption length = %d runes, want at most %d", visible, maxCaption)
 	}
 }
 

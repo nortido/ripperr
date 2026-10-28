@@ -16,3 +16,4 @@ main
 
 .DS_Store
 *.md
+dist
