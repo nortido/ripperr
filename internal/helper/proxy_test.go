@@ -23,8 +23,8 @@ func TestProxyTransportEmptyIsNilInterface(t *testing.T) {
 }
 
 func TestProxyTransportBrokenAddressFailsClosed(t *testing.T) {
-	// адрес без схемы это самая частая опечатка, и раньше она давала прямое
-	// соединение: запросы с логинами трекеров уходили с реального IP
+	// адрес без схемы частая опечатка, прямое соединение недопустимо: запросы с логинами
+	// трекеров ушли бы с реального IP
 	for _, raw := range []string{"1.2.3.4:8080", "://broken"} {
 		tr, ok := ProxyTransport(raw).(*http.Transport)
 		if !ok {

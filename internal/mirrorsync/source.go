@@ -55,7 +55,7 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	if req.URL.Scheme != "https" {
 		return fmt.Errorf("redirect to %s refused", req.URL.Scheme)
 	}
-	// isLocalTarget сравнивает буквально, а BOX.LOCAL. ведет туда же
+	// IsLocalHost сравнивает буквально, а BOX.LOCAL. ведет туда же
 	host := strings.TrimSuffix(strings.ToLower(req.URL.Hostname()), ".")
 	if helper.IsLocalHost(host) {
 		return fmt.Errorf("redirect to %s refused", host)

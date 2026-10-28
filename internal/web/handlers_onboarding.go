@@ -70,7 +70,7 @@ func (s *Server) handlePutOnboarding(w http.ResponseWriter, r *http.Request) {
 var (
 	clientProbeTimeout = 5 * time.Second
 	clientProbeTTL     = 60 * time.Second
-	// Только обрыв связи: неверный пароль так же кешируется на минуту, иначе qBittorrent банит IP
+	// короткий TTL только для обрыва связи; неверный пароль кешируем на минуту, иначе qBittorrent банит IP
 	clientProbeFailTTL = 10 * time.Second
 )
 
@@ -93,7 +93,7 @@ type clientProbeCache struct {
 }
 
 func (s *Server) clientReachable(ctx context.Context) bool {
-	// Без лога при ошибке: на свежей установке клиента еще нет, и каждый заход на главную писал бы строку.
+	// Без лога при ошибке: на свежей установке клиента еще нет, и каждый заход на главную писал бы строку
 	// Результат кешируем: каждая попытка входа с неверным паролем приближает бан IP в qBittorrent
 	cfg := s.effective()
 	mcfg := s.managerConfig(cfg)

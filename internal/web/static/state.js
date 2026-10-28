@@ -2,8 +2,8 @@ export const historyState = { offset: 0, limit: 10, status: '', ignored: false, 
 
 const HISTORY_PAGE_KEY = 'ripperr-history-page';
 
-// страница запоминается вместе с фильтрами: с другими фильтрами это другой список
 function historyPageSignature() {
+  // страница запоминается вместе с фильтрами: с другими фильтрами это другой список
   return [historyState.sort, historyState.status, historyState.ignored ? 1 : 0, historyState.name,
     historyState.tracker, historyState.category].join('|');
 }

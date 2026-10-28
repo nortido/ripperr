@@ -2,113 +2,91 @@
 
 # Ripperr
 
-Keeps the torrents you already have in sync with the forum trackers they came from.
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Release](https://img.shields.io/badge/release-v2.6.1-2f9e44)
+
+![Backend](https://img.shields.io/badge/backend-Go%201.25-00ADD8?logo=go&logoColor=white)
+![Frontend](https://img.shields.io/badge/frontend-vanilla%20JS-F7DF1E?logo=javascript&logoColor=black)
+![Database](https://img.shields.io/badge/database-SQLite-003B57?logo=sqlite&logoColor=white)
+![Docker](https://img.shields.io/badge/docker-amd64%20%7C%20arm64-2496ED?logo=docker&logoColor=white)
+
+![Trackers](https://img.shields.io/badge/trackers-15-4c6ef5)
+![Clients](https://img.shields.io/badge/clients-3-4c6ef5)
+![Notifiers](https://img.shields.io/badge/notifiers-5-4c6ef5)
+![UI](https://img.shields.io/badge/UI-EN%20%7C%20RU-2f9e44)
+
+[Changelog](CHANGELOG.md)
+
+Your torrents from forum trackers stay fresh by themselves.
+
+New episodes, extra audio tracks, a new game version: when the release on a forum tracker is
+updated, Ripperr replaces it in your torrent client. You do nothing.
+
+<img src="docs/dashboard.png" alt="Ripperr dashboard" width="900">
 
 </div>
 
 ---
 
-## What is Ripperr?
+## Why Ripperr
 
-When a release on a forum tracker is re-uploaded (new episodes, a better rip, fixed files), the topic
-page changes, but your torrent client keeps the old version. Ripperr checks those topics a few times a
-day and replaces the old torrent with the new one. Save path, category, tags and file selection stay
-the same.
+Forum trackers update releases in place. The topic says "torrent file updated, download it again
+and recheck the task in your client", but your client keeps seeding the old one, and you only
+notice when the season is over. Ripperr downloads the new `.torrent` and does the recheck for you.
 
-There is nothing to add by hand. Forum trackers write the topic link into the torrent comment, so
-Ripperr takes the watch list straight from your client: the torrents in the categories or with the
-tags you choose.
+## Keep your stack, add Ripperr
 
-It works with qBittorrent, Transmission and Deluge. Updates and errors can go to Telegram, email,
-Pushover, a webhook or browser push notifications.
+Ripperr does not replace Sonarr, Radarr or whatever else fills your client. They find and grab
+releases. They do not follow a forum topic that gets new episodes in the same torrent: Sonarr
+sees an already imported download and moves on. Ripperr closes that gap. Whatever lands in the
+watched categories or tags, from Sonarr, Radarr, Prowlarr or your own hands, stays up to date.
 
-## Features
+Topic watchers like Monitorrent or TorrentMonitor do the update job too, but they start with a
+list of topic links that you fill in and keep up to date by hand. Ripperr starts with your
+torrent client instead:
 
-- Replace in a safe order, with recovery after a crash.
-- Old files are removed only if you allow it, and only for the categories you pick.
-- Fresh releases are checked often, old ones rarely. A topic that keeps failing goes to the ignore list.
-- Tracker mirrors: Ripperr picks a working domain and switches to another one when it fails.
-- FlareSolverr for sites behind Cloudflare, HTTP or SOCKS5 proxy for downloads.
-- Topics with a magnet link only: Ripperr gets the `.torrent` from peers, found through the trackers in the magnet link.
-- Dry run: a full pass that changes nothing.
-- Web UI in English and Russian, works on phones.
-- One container, one SQLite file.
+- **No list to keep.** Trackers write the topic link into the torrent comment. Ripperr reads it
+  from the torrents in the categories or tags you pick. Add a torrent to the client and it is
+  watched.
+- **Replace without surprises.** Save path, category, tags and your file selection carry over to
+  the new version. The new torrent is checked before the old one goes away, and a crash in the
+  middle is recovered on the next start. Old files are deleted only where you allow it.
+- **Works where trackers fight back.** Cloudflare through FlareSolverr, dead domains through
+  mirror switching, magnet-only topics through peers.
+- **Easy to run.** One container, one SQLite file, a web UI that works on a phone.
 
 ## Supported trackers
 
-| Tracker | Access |
-|---|---|
-| RuTracker | account |
-| Kinozal | account |
-| Rutor | public |
-| TeamHD | cookies |
-| NNM-Club | cookies |
-| Toloka | account |
-| Tapochek | account |
-| Riper.AM | account |
-| BookTracker | account |
-| AniDub | account |
-| AnimeLayer | account |
-| Selezen | account |
-| Rustorka | account |
-| AniLiberty | public |
-| NewStudio | public |
+RuTracker, Kinozal, Rutor, NNM-Club, TeamHD, Toloka, Tapochek, Riper.AM, BookTracker, AniDub,
+AnimeLayer, AniLiberty, Selezen, Rustorka, NewStudio.
 
-## Quick start
+Torrent clients: qBittorrent, Transmission, Deluge.
 
-You need a running qBittorrent, Transmission or Deluge that Ripperr can reach over the network.
+## Also inside
+
+- Notifications to Telegram, email, Pushover, a webhook or browser push. The Telegram mute button needs a bot that only Ripperr uses.
+- Smart schedule: fresh releases are checked often, old ones rarely, broken topics go to ignore.
+- Dry run: a full pass that shows what would change and changes nothing.
+- Force a check of any release, or all of them, from the dashboard.
+- Logins and tokens are stored encrypted. Prometheus metrics, `/healthz` and `/readyz`.
+- English and Russian UI.
+
+## Run
+
+The image on [Docker Hub](https://hub.docker.com/r/nortido/ripperr) is built for amd64 and arm64.
 
 ```bash
-docker build -t ripperr .
+docker run -d --name ripperr -p 6410:6410 -v ./config:/config nortido/ripperr
 ```
 
-```bash
-docker run -d --name ripperr \
-  -p 6410:6410 \
-  -v ./config:/config \
-  ripperr
-```
+Open `http://<host>:6410` and create the account (only from the local network, so do it before you
+open the port). Connect the torrent client, add trackers, pick categories or tags, then start with
+a dry run.
 
-Open `http://<host>:6410` and create the account. This works only from your local network, so do it
-before you open the port to the internet. Then:
+Backup `secrets.key` together with `ripperr.db` from the config folder: without the key the saved
+passwords cannot be read.
 
-1. Integrations: connect the torrent client and the notification channels.
-2. Trackers: add your trackers and enter the login or cookies.
-3. Settings: choose categories or tags to watch and set the schedule.
-
-Run a dry pass from the dashboard first to see what Ripperr would change.
-
-Browser push needs HTTPS. On iPhone and iPad it works only from a Home Screen app (iOS 16.4 or newer).
-
-## Configuration
-
-Almost everything is set in the web UI. Values you save there win over environment variables.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `CONFIG_DIR` | `/config` | folder for the database, logs and the secrets key |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-| `DB_SECRETS_KEY` | empty | key for the secrets in the database; empty means the file `secrets.key` |
-| `WEB_TRUSTED_PROXY` | `false` | trust `X-Forwarded-For`; turn on only if every request comes through your reverse proxy |
-
-## Backups
-
-Logins, passwords and tokens are stored encrypted. The key is the file `secrets.key` in the config
-folder, or `DB_SECRETS_KEY` if you set it. Back up the key together with `ripperr.db`: without the key
-the secrets cannot be recovered.
-
-To go back to a build without encryption, stop the container and run:
-
-```bash
-docker run --rm -v ./config:/config ripperr /app/main decrypt-secrets
-```
-
-## Monitoring
-
-`/healthz` and `/readyz` work without login. `/metrics` returns Prometheus metrics after you set a token
-in Integrations (advanced mode).
-
-## Building from source
+## Build
 
 Go 1.25 or newer.
 
@@ -117,9 +95,11 @@ go build -o ripperr ./cmd
 go test ./...
 ```
 
+`docker build -t ripperr .` builds the image for your platform, `make build-multi` builds it for amd64 and arm64.
+
 ## License
 
 GNU Affero General Public License v3.0.
 
-Ripperr does not host or index any content. It works only with torrents you already have, on trackers
-where you have access. You are responsible for what you download.
+Ripperr does not host or index any content. It works only with torrents you already have, on
+trackers where you have access. You are responsible for what you download.

@@ -68,7 +68,7 @@ export function renderSchedule(el, sch, suggestions, qbitDown, timezones, web) {
     ? html`<p class="form-hint form-hint-warn">${t('settings.qbitUnavailable')}</p>`
     : '';
   const tagsSupported = sch.tags_supported !== false;
-  // у Deluge без сохраненного режима tags только выведен из тега по умолчанию: не закрепляем его первым сохранением
+  // у Deluge без сохраненного режима tags только выведен из тега по умолчанию: первым сохранением не закрепляем
   let watchMode = sch.watch_mode === 'tags' && (tagsSupported || sch.watch_mode_stored) ? 'tags' : 'categories';
   const shownMode = tagsSupported ? watchMode : 'categories';
   const tagsNote = tagsSupported ? '' : html`<p class="form-hint form-hint-keep">${t('settings.tagsUnsupported')}</p>`;

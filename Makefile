@@ -37,4 +37,5 @@ build-multi: builder
 	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) -t $(IMAGE):$(TAG) --output type=oci,dest=dist/ripperr-$(TAG).tar .
 
 push-multi: builder
+	@test -z "$$(git status --porcelain)" || { echo "push-multi: uncommitted changes, commit first" >&2; exit 1; }
 	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .

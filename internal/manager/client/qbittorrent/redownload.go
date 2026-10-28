@@ -154,8 +154,8 @@ func (c *Client) ForceRedownload(ctx context.Context, torrentHash string, ro mod
 		return fmt.Errorf("add torrent failed: %w", addErr)
 	}
 
-	// добавить вышло, но удаление с файлами в qbit еще может догнать новый торрент.
-	// Страховку убираем, только если он пережил ту же задержку, что ждет подметальщик, иначе пусть он и разбирается
+	// удаление с файлами в qbit еще может догнать новый торрент: пару убираем, только если он
+	// пережил ту же задержку, что ждет подметальщик, иначе пусть он и разбирается
 	if !c.bh.Settled(ctx, torrentHash) {
 		logger.Info(fmt.Sprintf("force redownload: %s not confirmed settled, leaving blackhole pair for the sweeper", torrentHash))
 		return nil

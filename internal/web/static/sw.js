@@ -1,12 +1,10 @@
-// Без обработчика fetch и кэша: воркер нужен только для push. Каждый push обязан
-// показать уведомление, иначе iOS отзывает разрешение.
-// без claim вкладки, открытые до регистрации, остаются чужими: navigate на них падает,
-// и клик открывал второе окно. fetch не перехватываем, поэтому сразу брать их безопасно
 self.addEventListener('install', function () {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', function (event) {
+  // без claim вкладки, открытые до регистрации, остаются чужими: navigate на них падает
+  // и клик открывал второе окно. fetch не перехватываем, так что брать их безопасно
   event.waitUntil(self.clients.claim());
 });
 
@@ -15,6 +13,7 @@ self.addEventListener('push', function (event) {
   try {
     data = event.data ? event.data.json() : {};
   } catch (_) { /* битый payload все равно показываем */ }
+  // каждый push обязан показать уведомление, иначе iOS отзывает разрешение
   event.waitUntil(self.registration.showNotification(data.title || 'Ripperr', {
     body: data.body,
     icon: '/icon-192.png',

@@ -133,8 +133,8 @@ export function renderEventsFeed(el, data) {
   applyEventFocus(feed);
 }
 
-// текст события на сервере обрезан до 1000 символов и без пробелов по краям, как в reportUIError
 export function openEventsAndFocus(text) {
+  // на сервере текст события обрезан до 1000 символов и без пробелов по краям, как в reportUIError
   logsState.focusText = String(text).slice(0, 1000).trim();
   logsState.focusUntil = Date.now() + 30000;
   const el = document.getElementById('view-logs');
@@ -191,8 +191,6 @@ async function copyEventText(btn) {
   }, 1500);
 }
 
-// loud: показать ошибку первой загрузки (переключение вкладки, ручное обновление),
-// фоновый опрос молчит
 export async function refreshEvents(manual, loud) {
   if (currentView !== 'logs' || document.visibilityState !== 'visible') return;
   const el = document.getElementById('view-logs');
@@ -208,6 +206,7 @@ export async function refreshEvents(manual, loud) {
     renderEventsFeed(el, data);
     updateRefreshedAt('logs-last-updated', 'logs.lastUpdated');
   } catch (err) {
+    // loud: ошибку первой загрузки показываем, фоновый опрос молчит
     if (loud && fetchGen === logsFetchGen) {
       const feed = el.querySelector('.events-feed');
       if (feed && !logsState.eventsLoaded) feed.innerHTML = html`<div class="log-empty">${err.message}</div>`;

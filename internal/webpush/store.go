@@ -28,8 +28,7 @@ var (
 	ErrNoKeys         = errors.New("webpush: no VAPID keys yet")
 )
 
-// Store создают на каждый запрос, на каждый reload Notifier и в breaker hook,
-// а строка одна на процесс: замок общий для пакета, а не поле Store
+// Store создают на каждый запрос и reload, а строка настроек одна: замок общий для пакета, не поле Store
 var docMu sync.Mutex
 
 type Settings interface {
@@ -192,8 +191,8 @@ func invalid(field string) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, field)
 }
 
-// ошибки называют только поле: endpoint и ключи дают право слать push на устройство
 func validate(sub Subscription, origin string) (Device, error) {
+	// в ошибках только имя поля: endpoint и ключи дают право слать push на устройство
 	if len(sub.Endpoint) > maxEndpoint {
 		return Device{}, invalid("endpoint is too long")
 	}

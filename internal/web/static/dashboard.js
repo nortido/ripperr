@@ -295,7 +295,7 @@ export function statCard(value, label, iconName, variant, filterType) {
       : !historyState.ignored && historyState.status === filterType;
     filterCls = ' stat-card-filter stat-card-filter-' + variant;
     if (active) filterCls += ' stat-card-active';
-    // раньше активный фильтр было видно только по рамке, скринридер про него молчал
+    // активный фильтр иначе виден только по рамке, скринридеру нужен aria-pressed
     filterAttr = html` data-stat-filter="${filterType}" role="button" tabindex="0" aria-pressed="${active ? 'true' : 'false'}"`;
   }
   return html`<div class="stat-card${filterCls}"${filterAttr}><div class="stat-card-body"><div class="stat-value" data-digits="${String(value).length}">${value}</div><div class="stat-label">${label}</div></div><div class="${iconCls}" data-icon="${iconName}"></div></div>`;
@@ -313,11 +313,11 @@ export function buildHistoryFilterParams() {
   return q;
 }
 
-// список грузится целиком, страницы листаются без запросов. Сервер отдает не больше
-// PAGE_SIZE_ALL за раз, остаток добираем следующими кусками
 export async function fetchHistoryAll() {
   const params = buildHistoryFilterParams();
   let items = [];
+  // список грузится целиком, страницы листаются без запросов; сервер отдает не больше
+  // PAGE_SIZE_ALL за раз, остаток берем следующими кусками
   for (;;) {
     const res = await fetchJSON('/api/history?limit=' + PAGE_SIZE_ALL + '&offset=' + items.length + params);
     const got = (res && res.items) || [];

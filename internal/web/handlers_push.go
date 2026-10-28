@@ -23,9 +23,9 @@ func (s *Server) pushStorageError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "push storage error")
 }
 
-// пустой Origin withAuth пропускает, поэтому https проверяем здесь; Subscribe не принимает путь, режем до scheme://host.
-// Прокси keenetic срезает Origin и Referer, тогда берем адрес, который прислала сама страница
 func pushOrigin(r *http.Request, fromBody string) (string, bool) {
+	// withAuth пропускает пустой Origin, поэтому https проверяем здесь.
+	// Прокси keenetic срезает Origin и Referer, тогда берем адрес, который прислала сама страница
 	src := r.Header.Get("Origin")
 	if src == "" {
 		src = r.Header.Get("Referer")
@@ -37,6 +37,7 @@ func pushOrigin(r *http.Request, fromBody string) (string, bool) {
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return "", false
 	}
+	// Subscribe не принимает путь, режем до scheme://host
 	return "https://" + u.Host, true
 }
 

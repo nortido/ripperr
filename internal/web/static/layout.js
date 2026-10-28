@@ -3,9 +3,8 @@ import { syncNameFilterLayout } from './namefilter.js';
 export const THEME_KEY = 'ripperr-theme';
 export const SIDEBAR_COLLAPSED_KEY = 'ripperr-sidebar-collapsed';
 export const PAGE_SCALE_BASE = 360;
-// масштаб ограничен сверху: выше 1 на 880px выходил zoom 1.83 и заголовок в 44px.
-// 0.94 дает вид экрана шире на 6%. Снизу нельзя, макет на 360px не тянется
-// и влезает в экран только при w/360
+// сверху масштаб ограничен: выше 1 на 880px был zoom 1.83 и заголовок в 44px.
+// Снизу нельзя: макет рассчитан на 360px и влезает в экран только при w/360
 export const MOBILE_PAGE_SCALE = 0.94;
 export const MOBILE_LAYOUT_MAX = 900;
 export let layoutWasMobile = false;
@@ -209,8 +208,7 @@ export function applyMobileLayout() {
 }
 
 export function syncSidebarToWidth() {
-  // в том же кадре, что и resize: через rAF панель сначала мелькнула бы развернутой.
-  // Идет до придушенного applyMobileLayout
+  // в кадре resize, не через rAF: иначе панель сначала мелькнет развернутой
   const mobile = layoutWidth() > 0 && layoutWidth() < MOBILE_LAYOUT_MAX;
   const sidebar = mobile !== layoutWasMobile ? document.getElementById('sidebar') : null;
   if (sidebar) sidebar.classList.add('no-anim');
@@ -256,9 +254,8 @@ function syncCompactHeader() {
   root.classList.toggle('header-compact', p >= 1);
 }
 
-// Копии кнопок, а не перенос самих узлов: виды перерисовывают шапку через
-// innerHTML, и перенесенная кнопка осталась бы оторванной от страницы
 function initMobileHeaderActions() {
+  // копии кнопок, а не сами узлы: виды перерисовывают шапку через innerHTML
   const bar = document.getElementById('mobile-header-actions');
   const header = document.querySelector('.mobile-header');
   const content = document.querySelector('.content');

@@ -95,7 +95,7 @@ func (s *Server) handleConfirmMirror(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, notFound)
 		return
 	}
-	// пауза снимается уже без блокировки трекеров: обе сразу не держим
+	// пауза снимается уже без замка трекеров: два замка сразу не держим
 	want := settings.MirrorHostKey(req.Host)
 	if err = settings.UpdateMirrorSync(r.Context(), s.db, func(d *settings.MirrorSync) {
 		if p, ok := d.Paused[key]; ok && settings.MirrorHostKey(p.Host) == want {

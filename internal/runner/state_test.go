@@ -209,8 +209,6 @@ func TestStateItemQueueAndCurrent(t *testing.T) {
 		t.Fatalf("checking=%v, want [aaa]", cur)
 	}
 
-	// запись остается подсвеченной, пока воркер трекера не возьмет следующую.
-	// Между записями он спит паузу лимита, гасить подсветку там незачем
 	s.End(gen)
 	if cur := s.CheckingItems(); len(cur) != 1 || cur[0] != "aaa" {
 		t.Fatalf("checking=%v after End, want [aaa]", cur)

@@ -505,8 +505,8 @@ func (g posterProxyGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	return g.next.RoundTrip(req)
 }
 
-// прокси сам резолвит имя заново, так что подмена DNS между проверкой и запросом остается
 func (g posterProxyGuard) check(req *http.Request) error {
+	// прокси резолвит имя заново, подмена DNS между проверкой и запросом остается возможной
 	host := req.URL.Hostname()
 	port := req.URL.Port()
 	if port == "" {
@@ -675,8 +675,7 @@ func isRetryable(err error) bool {
 	if errors.As(err, &te) {
 		return te.Code < 500
 	}
-	// нет статуса, значит HTTP-ответа не было вовсе (дозвон, таймаут, сброс).
-	// Стоит повторить
+	// нет статуса: HTTP-ответа не было (дозвон, таймаут, сброс), повторяем
 	return true
 }
 

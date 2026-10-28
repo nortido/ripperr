@@ -41,8 +41,8 @@ type client interface {
 
 const probeTimeout = 10 * time.Second // одна проба у локального клиента, дольше держать остановку незачем
 
-// в сумме меньше freshPairGrace подметальщика: он не должен застать пару, пока замена еще идет
 var (
+	// в сумме меньше freshPairGrace: подметальщик не должен застать пару, пока замена идет
 	replaceAddBudget   = blackhole.AddTimeout
 	replaceStartBudget = blackhole.CheckWaitBudget
 )

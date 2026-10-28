@@ -597,7 +597,7 @@ html.mobile-layout .confirm-modal .modal-foot {
     pointer-events: auto;
   }
 
-  /* кнопки страницы переехали в шапку: тост уходит под нее и сам ловит нажатия и свайп */
+  /* кнопки страницы в шапке: тост уходит под нее и сам ловит нажатия и свайп */
   html.header-has-actions .toast-stack {
     top: 64px;
     right: 8px;

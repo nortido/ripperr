@@ -14,7 +14,7 @@ func (r Runner) EffectiveWatchMode() string {
 	case WatchModeCategories, WatchModeTags:
 		return r.WatchMode
 	}
-	// режим не сохранен: старые документы с одним заполненным списком читаются как раньше
+	// режим не сохранен: один заполненный список тегов без категорий значит режим тегов
 	if len(r.AllowedCategories) == 0 && len(r.WatchTags) > 0 {
 		return WatchModeTags
 	}

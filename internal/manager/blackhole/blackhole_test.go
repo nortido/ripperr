@@ -108,8 +108,8 @@ func (f *fakeClient) Reachable(_ context.Context) bool {
 }
 
 func (f *fakeClient) add(ctx context.Context, hash string) error {
-	// как qbittorrent.Client.addTorrentVerified: Exists до и после добавления. Так vanishHash
-	// задевает оба шага, как асинхроное удаление в живом клиенте
+	// как qbittorrent.Client.addTorrentVerified: Exists до и после добавления, так vanishHash
+	// задевает оба шага, как асинхронное удаление в живом клиенте
 	hash = strings.ToLower(hash)
 	present, _ := f.Exists(ctx, hash)
 	if present {

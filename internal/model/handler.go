@@ -14,5 +14,5 @@ type HandlerConfig struct {
 	Location             *time.Location // nil = time.Local
 	Immediate            bool
 	ErrorStreakThreshold int
-	MagnetTimeout        int64 // сколько секунд ждать метаданные магнета, см. runner.handler.submit
+	MagnetTimeout        int64 // сколько секунд ждать метаданные магнета, см. runner.handler.buildTorrentFromMagnet
 }

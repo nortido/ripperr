@@ -25,8 +25,8 @@ var (
 	mergeMu sync.Mutex
 )
 
-// ApplyOverrides идет на каждый effective(), поэтому одинаковое предупреждение пишем один раз
 func warnOnce(msg string) {
+	// ApplyOverrides идет на каждый effective(), одинаковое предупреждение пишем один раз
 	warnedMu.Lock()
 	_, seen := warned[msg]
 	if !seen {
@@ -228,7 +228,7 @@ func ApplyOverrides(ctx context.Context, cfg *config.App, db settingsDB) error {
 }
 
 func applySchedule(cfg *config.App, o scheduleOverlay) {
-	// битое значение из БД иначе дошло бы до ValidateSchedule в main и остановило процесс вместе с веб-интерфейсом
+	// битое значение из БД иначе дошло бы до ValidateSchedule в main и остановило процесс
 	if o.StartHour != nil {
 		if *o.StartHour < 0 || *o.StartHour > 23 {
 			warnOnce(fmt.Sprintf("settings schedule: start_hour=%d out of range, kept %d", *o.StartHour, cfg.Runner.StartHour))

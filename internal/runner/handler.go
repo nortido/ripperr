@@ -103,10 +103,10 @@ type handler struct {
 	siblings atomic.Pointer[map[string][]string]
 	// хеш торрента -> retryState: его обновление не удалось, а строку истории он делит с соседями
 	retry sync.Map
-	// задачи одного релиза в очередях: после старта новее не перезапускаем устаревшую
+	// задачи одного торрента в очередях: после старта новее не перезапускаем устаревшую
 	taskSeq   atomic.Uint64
 	startedMu sync.Mutex
-	// urlHash -> номер, под которым последний раз стартовала задача этого релиза
+	// urlHash+hash торрента -> номер, под которым последний раз стартовала его задача
 	started map[string]uint64
 	pollMu  sync.Mutex
 	// хеши торрентов, которые опрос уже отбросил насовсем: свойства qBittorrent для них не просим
@@ -461,8 +461,7 @@ func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}
 
 	var ignoreSet map[string]struct{}
 	if forced == nil {
-		// форс это явная кнопка "проверить сейчас", поэтому берем и записи из игнора,
-		// автоигнор тоже
+		// форс это явная кнопка "проверить сейчас": игнор, в том числе автоигнор, не применяем
 		if ignoreSet, err = h.storage.GetIgnoreSet(ctx); err != nil {
 			return err
 		}
@@ -704,7 +703,7 @@ func (h *handler) enqueueEntries(ctx context.Context, entries []*model.Entry, p 
 			continue
 		}
 		// запись комментария трогает клиент (Transmission перезаливает торрент), поэтому
-		// только для тех, за кем следим. До проверки срока, как и раньше
+		// только для тех, за кем следим. До проверки срока
 		if _, ok := p.adopted[entries[i]]; ok && !p.dry {
 			if _, ignored := p.ignore[storagePkg.URLHash(entries[i].URL)]; !ignored {
 				h.attachComment(ctx, entries[i])
@@ -917,7 +916,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 	}
 	if pc.dateMissing {
 		if rep == nil {
-			// гостевая страница без ссылки или даты: возможно, сессия мертва, пусть следующий запрос войдет заново
+			// гостевая страница без ссылки или даты: возможно, сессия мертва, следующий запрос войдет заново
 			if f, ok := h.trackerService.(interface{ ForceLoginNext(ttid int) }); ok {
 				f.ForceLoginNext(ttid)
 			}
@@ -970,7 +969,7 @@ func (h *handler) worker(ctx context.Context, ttid int, e *model.Entry, rep *dry
 		}
 		if errors.Is(err, model.ErrHashUnchanged) {
 			// инфохеш не поменялся, торрент уже раздается, перезаливать не надо. Но дату в истории
-			// фиксируем иначе следующий прогон снова увидит новую дату темы и пойдет по кругу
+			// фиксируем: иначе следующий прогон снова увидит новую дату темы и пойдет по кругу
 			logger.Info(fmt.Sprint("hash unchanged, torrent kept: ", e.Name))
 			if rep == nil {
 				if saveErr := h.saveHistory(ctx, ttid, e, pc.date, false); saveErr != nil {
@@ -1222,8 +1221,7 @@ func (h *handler) buildTorrentFromMagnet(ctx context.Context, magnet, comment st
 	}
 	timeout := time.Duration(h.config.MagnetTimeout) * time.Second
 	if timeout <= 0 {
-		// нулевой или отрицательный таймаут в конфиге не должен вешать раздачу навсегда,
-		// берем минуту
+		// нулевой или отрицательный таймаут не должен вешать раздачу навсегда
 		timeout = time.Minute
 	}
 	fctx, cancel := context.WithTimeout(ctx, timeout)
@@ -1270,7 +1268,7 @@ func (h *handler) saveHistory(ctx context.Context, ttid int, e *model.Entry, cur
 		logger.Warn(fmt.Sprintf("release times of %s not read: %v", e.Name, readErr))
 		samples = nil
 	}
-	// все вызовы идут не в dry-run. Удаление во время проверки: SaveItem вставил бы строку без торрента
+	// dry-run сюда не доходит. Удаление во время проверки: SaveItem вставил бы строку без торрента
 	if h.state.Removed(e.Hash) {
 		return
 	}

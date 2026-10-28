@@ -648,7 +648,7 @@ func TestSubmit_DifferentHashAddFailureSkipsDelete(t *testing.T) {
 
 func TestSubmit_SameHashBlackholesBeforeDeleteAndRemovesAfterAdd(t *testing.T) {
 	// торрент с тем же хешем отсутствует в клиенте (пользователь удалил руками
-	// или прошлый прогон не довел дело до конца): идем прежним защищенным путем
+	// или прошлый прогон не довел дело до конца): идем обычным защищенным путем
 	stub := &stubClient{incomingSame: true, incomingKnown: true, confirmSettled: true, exists: false}
 	m := NewManager(stub)
 
@@ -1237,7 +1237,8 @@ func TestSubmit_SelectionConvergeRetriesFailedDrop(t *testing.T) {
 	if _, err := submitDeleteFirst(t, stub); !errors.Is(err, stub.deleteErr) {
 		t.Fatalf("first pass err = %v, want delete error", err)
 	}
-	// ApplySelection запустил новый, а удаление старого сорвалось: следующий прогон
+	// ApplySelection запустил новый, а удаление старого сорвалось:
+	// следующий прогон только удаляет старый без файлов
 	newEntry.Stopped = false
 	stub.deleteErr = nil
 	stub.calls, stub.applyHashes, stub.applyOpts, stub.deleteOpts = nil, nil, nil, nil

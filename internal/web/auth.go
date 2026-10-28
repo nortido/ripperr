@@ -241,9 +241,8 @@ func requestScheme(r *http.Request) (secure, known bool) {
 	return u.Scheme == "https", true
 }
 
-// https-прокси keenetic срезает Origin и Referer, а Host ставит адресом бэкенда без порта.
-// Напрямую по IP сервер открывают с портом, так что голый IP в Host бывает только за прокси
 func behindStrippingProxy(host string) bool {
+	// https-прокси keenetic срезает Origin и Referer и ставит Host без порта, а напрямую по IP заходят с портом
 	return net.ParseIP(host) != nil
 }
 

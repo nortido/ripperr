@@ -154,7 +154,7 @@ td.plan-recheck-cell {
   vertical-align: 1px;
 }
 
-/* на мобильном шрифт 14px, и тот же сдвиг поднимал значок выше центра текста */
+/* на мобильном шрифт 14px, и сдвиг в 1px поднимает значок выше центра текста */
 html.mobile-layout .time-planned svg {
   vertical-align: 0;
 }

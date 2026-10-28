@@ -1049,7 +1049,7 @@
   flex-wrap: nowrap;
 }
 
-/* триггер кастомного select был 44px при кнопках 36px, берем ту же высоту */
+/* высота триггера кастомного select как у кнопок (36px), а не 44px */
 .pagination-controls .custom-select-trigger {
   min-height: var(--btn-h-sm);
   padding-top: 0;

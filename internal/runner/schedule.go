@@ -9,16 +9,16 @@ func scheduleLocation(loc *time.Location) *time.Location {
 	return time.Local
 }
 
-// вне 1..24 сетка как при 1 раз в сутки: деление на ноль недопустимо
 func gridInterval(perDay int) time.Duration {
+	// вне 1..24 сетка как при 1 раз в сутки: деление на ноль недопустимо
 	if perDay < 1 || perDay > 24 {
 		perDay = 1
 	}
 	return time.Duration(24/perDay) * time.Hour
 }
 
-// ближайший слот StartHour + k*interval строго после now, k любое целое
 func nextSlot(now time.Time, startHour, perDay int, loc *time.Location) time.Time {
+	// слоты StartHour + k*interval, k любое целое; берем ближайший строго после now
 	loc = scheduleLocation(loc)
 	now = now.In(loc)
 	interval := gridInterval(perDay)

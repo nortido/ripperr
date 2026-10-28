@@ -145,7 +145,7 @@ func (c *Client) addMagnetURLVerified(ctx context.Context, magnet string, opts m
 }
 
 func refuseV2(data []byte, name string) error {
-	// UnmarshalInfo строже InfoHash: при ошибке разбора ведем себя как раньше, иначе перестал бы добавляться годный v1
+	// ошибку разбора пропускаем: UnmarshalInfo строже InfoHash, иначе годный v1 перестал бы добавляться
 	if v2, err := torrentmeta.HasV2(data); err == nil && v2 {
 		return errV2(name)
 	}

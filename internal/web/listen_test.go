@@ -244,7 +244,7 @@ func TestPutWebMovesListener(t *testing.T) {
 	if err := srv.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
-	// пока P занят, второй сервер ушел бы на запасной адрес и тест бы ничего не проверил
+	// пока порт p занят, второй сервер ушел бы на запасной адрес и тест бы ничего не проверил
 	waitRefused(t, localAddr(p), listenWait)
 	second := newListenServer(t, store, func() {})
 	startListenServer(t, second)

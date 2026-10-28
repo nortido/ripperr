@@ -56,7 +56,7 @@ type sweepStubServer struct {
 	mu              sync.Mutex
 	present         map[string]bool
 	metadataTorrent []byte
-	// последний torrents/add, файлом или по магниту: тесты AddFromMagnet по нему видят, каким путем ушло добавление
+	// последний torrents/add (файлом или магнитом): по нему тесты AddFromMagnet видят путь добавления
 	lastAddedFile []byte
 	lastAddedURL  string
 	// рой мертв и для нас, и для qbit: fetchMetadata всегда отвечает 202.

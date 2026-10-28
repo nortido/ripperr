@@ -202,9 +202,9 @@ func TestPollNewListsNewRelease(t *testing.T) {
 	assertNearestSlot(t, h, got.at, before, after)
 }
 
-// новый торрент из клиента идет в ближайший слот, а не через срок из настроек
 func assertNearestSlot(t *testing.T, h *handler, at, before, after time.Time) {
 	t.Helper()
+	// новый торрент из клиента идет в ближайший слот, а не через срок из настроек
 	if lo, hi := h.slotAtOrAfter(before), h.slotAtOrAfter(after); !at.Equal(lo) && !at.Equal(hi) {
 		t.Fatalf("first check %v, want nearest slot %v", at, lo)
 	}

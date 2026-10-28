@@ -14,7 +14,6 @@ import (
 	"ripperr/internal/system/logger"
 )
 
-// магнит получает комментарий позже, поэтому торрент без адреса не отбрасываем насовсем
 var pollEmptyTTL = 10 * time.Minute
 
 func (h *handler) pollNew(ctx context.Context) (added int, err error) {
@@ -74,6 +73,7 @@ func (h *handler) pollNew(ctx context.Context) (added int, err error) {
 			if _, ok := h.pollSkip[e.Hash]; ok {
 				continue
 			}
+			// магнит получает комментарий позже, поэтому торрент без адреса не отбрасываем насовсем
 			if seen, ok := h.pollEmpty[e.Hash]; ok && now.Sub(seen) < pollEmptyTTL {
 				continue
 			}

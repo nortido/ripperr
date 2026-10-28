@@ -116,7 +116,7 @@ func ValidateMirrorSourceURL(raw string) error {
 		}
 		host = u.Host
 		frag = u.Fragment
-		// isLocalTarget сравнивает буквально, а BOX.LOCAL. и localhost. ведут туда же
+		// IsLocalHost сравнивает буквально, а BOX.LOCAL. и localhost. ведут туда же, поэтому режем точку
 		if helper.IsLocalHost(strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")) {
 			return fmt.Errorf("mirror source url must not point to a local host")
 		}

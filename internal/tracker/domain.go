@@ -58,7 +58,7 @@ func hostCheckWith(hc *http.Client) hostCheckFunc {
 		if resp.StatusCode >= 500 {
 			return false, ""
 		}
-		// 403 и 3xx считаем живыми. Капчу и челлендж отдает рабочий сайт, flare-трекеры их пройдут
+		// 3xx и 4xx считаем живыми: капчу и челлендж (403) отдает рабочий сайт, flare-трекеры их пройдут
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			return true, redirectHost(base, resp)
 		}

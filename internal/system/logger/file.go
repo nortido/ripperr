@@ -14,7 +14,7 @@ const fileName = "ripperr.log"
 var (
 	maxFileSize int64 = 5 << 20
 
-	// Один мьютекс на stdout и файл: порядок строк в них одинаковый.
+	// Один мьютекс на stdout и файл: порядок строк в них одинаковый
 	fileMu         sync.Mutex
 	logFile        *os.File
 	logSize        int64
@@ -102,7 +102,7 @@ func rotateLocked() []string {
 	if err := debug.SetCrashOutput(f, debug.CrashOptions{}); err != nil {
 		reports = append(reports, "crash output: "+err.Error())
 	}
-	// После неудачной ротации следующая попытка только через новые maxFileSize байт.
+	// После неудачной ротации следующая попытка только через новые maxFileSize байт
 	logSize = 0
 	return reports
 }

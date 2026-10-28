@@ -97,7 +97,7 @@ type sessionGetArgs struct {
 type torrentAddArgs struct {
 	TorrentAdded *addedTorrent `json:"torrent-added"`
 	// на дубликат Transmission все равно шлет success. Без этого поля
-	// ensurePresentAfterAdd увидит старый торрент и молча рапортует успех
+	// ensurePresentAfterAdd увидит старый торрент и молча вернет успех
 	TorrentDuplicate *addedTorrent `json:"torrent-duplicate"`
 }
 
@@ -162,9 +162,8 @@ func New(config model.ManagerConfig) (*Client, error) {
 	}
 	c.bh = blackhole.New(config.BlackholeDir, c)
 
-	// New без контекста, как qbittorrent.New. Без своего таймаута остается только
-	// defaultTimeout (60с), и хост, который принял TCP и молчит, держит проверку
-	// интеграции целую минуту
+	// New без контекста: без своего таймаута хост, который принял TCP и молчит,
+	// держит проверку интеграции defaultTimeout (60с)
 	startCtx, cancel := context.WithTimeout(context.Background(), startupProbeTimeout)
 	defer cancel()
 	raw, err := c.rpc.call(startCtx, "session-get", nil)
@@ -607,9 +606,8 @@ func (c *Client) addMagnetVerified(ctx context.Context, magnet string, opts mode
 		}
 	}
 	if opts.Comment != "" {
-		// RPC Transmission не дает задать комментарий при добавлении по магниту,
-		// ссылка на тему потеряется. Так же ведет себя qbittorrent без fetchMetadata.
-		// Если появится способ дописать комментарий после метаданных, сделать тут
+		// RPC Transmission не дает задать комментарий при добавлении магнитом, ссылка на тему
+		// потеряется. Если появится способ дописать комментарий после метаданных, сделать тут
 		logger.Warn(fmt.Sprintf("transmission: magnet add for %s has no way to set torrent comment, tracker link will not persist", opts.Name))
 	}
 
@@ -637,12 +635,11 @@ func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 }
 
 func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) error {
-	// по магниту комментарий не задать, и старая magnet-пара blackhole так
-	// и осталась бы невидимой. Собираем .torrent с комментарием сами, если
-	// не вышло, добавляем магнитом
+	// магнитом комментарий не задать, и magnet-пара blackhole осталась бы невидимой для Ripperr.
+	// Собираем .torrent с комментарием сами, не вышло: добавляем магнитом
 	if opts.Comment != "" {
-		// потолок сильно меньше blackhole.AddTimeout (6 мин): мертвый рой иначе
-		// съест весь ctx и запасному пути ниже ничего не останется
+		// потолок сильно меньше blackhole.AddTimeout: мертвый рой иначе съест весь ctx
+		// и запасному пути ниже ничего не останется
 		fctx, cancel := context.WithTimeout(ctx, magnetFetchTimeout)
 		data, ferr := magnetFetch(fctx, magnet)
 		cancel()

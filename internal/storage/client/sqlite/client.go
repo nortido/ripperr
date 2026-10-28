@@ -146,7 +146,7 @@ func (c *Client) AddCheckLog(ctx context.Context, entry *storage.CheckLogEntry) 
 
 func (c *Client) AddNewRelease(ctx context.Context, e *storage.CheckLogEntry, firstCheck time.Time) (bool, error) {
 	// у статуса new checked_at хранит время первой проверки, а не последней.
-	// DO NOTHING без цели ловит и url_hash, и точное имя (check_log_item_name_exact_uidx): ничего не перезаписываем.
+	// DO NOTHING без цели ловит и url_hash, и точное имя (check_log_item_name_exact_uidx)
 	// appeared_at по часам SQLite, как checked_at в AddCheckLog: дашборд сравнивает их между собой
 	res, err := c.db.ExecContext(ctx,
 		`INSERT INTO check_log (checked_at, url_hash, item_name, item_url, tracker_type_id, status, new_category, appeared_at)

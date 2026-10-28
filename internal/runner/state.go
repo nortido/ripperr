@@ -61,10 +61,7 @@ func NewState() *State {
 	return &State{trigger: make(chan bool, 1), force: make(chan string, forceQueueSize)}
 }
 
-// лишние форсы отбрасываем, чтобы не блокировать HTTP-обработчик, флаг force_check
-// доживет до следующего прохода. Размер под "форсировать все" на весь фильтр, клики
-// столько не наберут
-const forceQueueSize = 4096
+const forceQueueSize = 4096 // с запасом на "форсировать все" по всему фильтру
 
 const normalQueueSize = 4096
 
@@ -149,6 +146,7 @@ func (s *State) RequestForce(urlHash string) bool {
 	case s.force <- urlHash:
 		return true
 	default:
+		// очередь полна: HTTP-обработчик не блокируем, флаг force_check доживет до следующего прохода
 		return false
 	}
 }
@@ -327,8 +325,6 @@ func (s *State) StartItem(gen uint32, ttid int, urlHash string) {
 	if s.current == nil {
 		s.current = make(map[int]string)
 	}
-	// прошлая запись трекера остается текущей до следующего StartItem: между записями
-	// воркер ждет паузу лимита, и погасшая подсветка мигала бы зря
 	s.current[ttid] = urlHash
 }
 
@@ -363,7 +359,8 @@ func (s *State) QueuedItems(limit int) (hashes []string, total int) {
 	}
 	s.itemsMu.Lock()
 	defer s.itemsMu.Unlock()
-	// для подсветки хватает страницы, а по total видно, длинный проход впереди или одна запись
+	// для подсветки хватает страницы, а по total видно, длинный проход впереди или одна запись.
+	// "Осталось" это ждущие плюс проверяемые сейчас
 	total = len(s.queued)
 	checking := make(map[string]struct{}, len(s.current))
 	for _, hash := range s.current {
@@ -498,7 +495,6 @@ func (s *State) TryLockTorrent(hash string) (unlock func(), ok bool) {
 
 const serverErrsSetting = "runner_server_errors"
 
-// два backoffCap: релиз с отметкой перепроверяется в пределах суток, так что стареют только пропавшие релизы или долгий простой
 const serverErrTTL = 2 * backoffCap
 
 type serverErrMark struct {
@@ -566,6 +562,7 @@ func (s *State) RestoreServerErrors(raw json.RawMessage, now time.Time) error {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		return err
 	}
+	// релиз с отметкой перепроверяется в пределах суток, поэтому старше двух backoffCap бывают только пропавшие
 	for hash, m := range stored {
 		if hash == "" || m.Count < 1 || m.At.IsZero() || now.Sub(m.At) > serverErrTTL {
 			continue

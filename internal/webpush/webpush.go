@@ -21,8 +21,7 @@ import (
 	"time"
 )
 
-// 4096 (rs, один record) - 86 (header) - 1 (delimiter) - 16 (GCM tag)
-const MaxPayload = 3993
+const MaxPayload = 3993 // 4096 (rs, один record) - 86 (header) - 1 (delimiter) - 16 (GCM tag)
 
 const (
 	recordSize = 4096

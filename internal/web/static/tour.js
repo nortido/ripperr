@@ -41,8 +41,8 @@ export function startTour(steps, opts) {
     state.cleanups.push(function () { target.removeEventListener(type, fn, options); });
   }
 
-  // CSS zoom на .app: Chrome и Firefox отдают getBoundingClientRect уже в координатах окна, а
-  // старые движки нет. Сверяем реальную ширину .app с заявленной --page-width и умножаем только при расхождении.
+  // CSS zoom на .app: Chrome и Firefox отдают getBoundingClientRect в координатах окна, старые
+  // движки нет. Умножаем только если реальная ширина .app расходится с --page-width
   function zoomFactor(target) {
     const app = target.closest('.app.page-scaled');
     if (!app) return 1;

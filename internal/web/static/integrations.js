@@ -561,7 +561,7 @@ function closeNotifyEvents(restoreFocus, force) {
 }
 
 function notifyEventsGone(box) {
-  // страницы при навигации только прячутся, а слушатели висят на document: невидимая панель не должна глотать Escape и клики
+  // страницы при навигации только прячутся, а слушатели на document: невидимая панель не должна глотать Escape и клики
   return !box.isConnected || !box.getClientRects().length;
 }
 
@@ -597,7 +597,7 @@ function positionNotifyEventsPanel() {
   box.classList.remove('open-up');
   panel.style.maxHeight = '';
   if (document.documentElement.classList.contains('mobile-layout')) return;
-  // .content скроллится сам и режет панель: ограничиваем высоту видимым местом и открываем вверх, если снизу тесно
+  // .content скроллится сам и режет панель: высота по видимому месту, вверх если снизу тесно
   const scroller = box.closest('.content');
   const bounds = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
   const rect = box.getBoundingClientRect();

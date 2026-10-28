@@ -43,9 +43,8 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		DeleteCategories:   cfg.Manager.DeleteFilesCategories,
 		BlackholeDir:       cfg.BlackholeDirPath(),
 	}
-	// хост, логин и пароль берутся у активного клиента, остальное общее. Имя нормализуем
-	// здесь, иначе MANAGER_CLIENT=Transmission (регистр, пробелы из env) уйдет в ветку
-	// qbit за учетными данными и упадет с ErrUnknownClient
+	// хост и учетные данные берем у активного клиента; имя нормализуем, иначе
+	// MANAGER_CLIENT=Transmission (регистр, пробелы из env) уйдет в ветку qbit и упадет с ErrUnknownClient
 	clientName := manager.NormalizeClient(cfg.Manager.Client)
 	switch clientName {
 	case manager.ClientTransmission:
@@ -63,7 +62,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 			clientName = manager.ClientQbit
 		}
 	}
-	// список один на режим; у Deluge нет тегов, режим тегов дал бы пустую выборку, поэтому категории
+	// у Deluge нет тегов: режим тегов дал бы пустую выборку, поэтому смотрим по категориям
 	supportsTags := manager.SupportsTags(clientName)
 	if cfg.Runner.EffectiveWatchMode() == config.WatchModeTags && !supportsTags {
 		logger.Info(fmt.Sprintf("%s has no tags, watching by categories %v", clientName, cfg.Runner.AllowedCategories))
@@ -227,8 +226,7 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		},
 	}
 	if err = tr.BuildCache(ctx); err != nil {
-		// без единого живого трекера приложение уходит в повтор и фоновая проверка не дожила бы до запуска,
-		// а новое зеркало нужнее всего именно тогда
+		// без живого трекера приложение уходит в повтор и фоновая проверка не успеет, а новое зеркало нужнее всего именно тогда
 		mirrorsync.RunOnceIfDue(ctx, msDeps)
 		return err
 	}

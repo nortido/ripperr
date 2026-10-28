@@ -29,9 +29,8 @@ var (
 	idRegexp = regexp.MustCompile(`(\d+)`)
 	// var, чтобы тесты могли подменить добычу
 	magnetFetch = magnetmeta.Fetch
-	// весь AddFromMagnet идет под blackhole.AddTimeout (6 минут). Без своего потолка мертвый рой
-	// съест его целиком и addMagnetWithComment получит истекший ctx, поэтому заметно меньше.
-	// var, чтобы тесты могли ужать
+	// весь AddFromMagnet идет под blackhole.AddTimeout: без своего потолка мертвый рой съест его
+	// целиком, и addMagnetWithComment получит истекший ctx. var, чтобы тесты могли ужать
 	magnetFetchTimeout = time.Minute
 	checkWaitDelay     = time.Second
 	checkWaitBudget    = blackhole.CheckWaitBudget
@@ -117,7 +116,7 @@ func (c *Client) AddFromBuffer(ctx context.Context, buf *bytes.Buffer, opts mode
 func (c *Client) AddFromMagnet(ctx context.Context, magnet string, opts model.ManagerAddFileOptions) (err error) {
 	if opts.Comment != "" {
 		// без комментария Ripperr торрент не увидит, а fetchMetadata есть не во всех сборках qbit.
-		// Поэтому сперва сами собираем .torrent с комментарием, не вышло, идем старым путем.
+		// Поэтому сперва сами собираем .torrent с комментарием, не вышло: идем через fetchMetadata
 		// Подконтекст свой, иначе мертвый рой съест весь ctx и запасному пути ничего не останется
 		fctx, cancel := context.WithTimeout(ctx, magnetFetchTimeout)
 		data, ferr := magnetFetch(fctx, magnet)
@@ -271,7 +270,7 @@ func (c *Client) getClient() (err error) {
 
 func splitHostUserinfo(raw string) (host, user, pass string, hasUserinfo bool) {
 	// qbt пишет адрес запроса в текст ошибок, поэтому логин и пароль из адреса уносим из него.
-	// qbt шлет basic только при обоих непустых полях, иначе его ставит basicAuthTransport, как раньше net/http
+	// qbt шлет basic только при обоих непустых полях, иначе его ставит basicAuthTransport
 	u, err := url.Parse(raw)
 	if err != nil || u.User == nil {
 		return raw, "", "", false

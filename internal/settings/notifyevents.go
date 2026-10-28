@@ -13,7 +13,7 @@ func applyNotifyEvents(cfg *config.App, o integrationsOverlay) {
 		cfg.Notify.Events = notify.NormalizeEvents(slices.Clone(*n.Events))
 		return
 	}
-	// общего набора в БД еще нет: берем объединение старых списков каналов, сами они остаются в документе нетронутыми
+	// общего набора в БД еще нет: берем объединение старых списков каналов (сами списки не трогаем)
 	own := func(l *[]string) []string {
 		if l == nil {
 			return notify.DefaultEvents()

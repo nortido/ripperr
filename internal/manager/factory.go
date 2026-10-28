@@ -28,7 +28,6 @@ const (
 var ErrUnknownClient = errors.New("unknown manager client") // такой клиент не подключится никогда, повторять бессмысленно
 
 func NormalizeClient(kind string) string {
-	// нормализация живет в config, обертка осталась ради вызовов из run.go и web-обработчиков
 	return config.NormalizeClient(kind)
 }
 

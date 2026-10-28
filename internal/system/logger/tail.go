@@ -82,7 +82,7 @@ func readTail(dir string) ([]Entry, []string) {
 	if len(entries) > defaultBufferCap {
 		entries = entries[len(entries)-defaultBufferCap:]
 	}
-	// Иначе сообщения держат в памяти весь прочитанный кусок файла
+	// копируем, иначе сообщения держат в памяти весь прочитанный кусок файла
 	for i := range entries {
 		entries[i].Message = strings.Clone(entries[i].Message)
 	}

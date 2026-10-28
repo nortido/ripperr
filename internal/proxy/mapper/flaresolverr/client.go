@@ -79,7 +79,7 @@ func (f *Client) Send(r *http.Request, opts *Payload) (result *Response, err err
 	if resp, err = f.hc.Do(fr); err != nil {
 		return
 	}
-	// в go-flaresolverr тело ответа утекало, из-за этого клиент и перенесли к нам
+	// тело дочитываем до конца, иначе соединение не вернется в пул
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()

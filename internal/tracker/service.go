@@ -148,7 +148,7 @@ func (s *service) ForceLoginNext(ttid int) {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 	ct, ok := s.clientIndex[ttid]
-	// не чаще раза в час, как до повторного использования кук: легальный промах не должен плодить входы
+	// не чаще missLoginGap: легальный промах не должен плодить входы
 	if last, seen := s.loginClock().get(ttid); !ok || ct.IClient == nil || (seen && time.Since(last) < missLoginGap) {
 		return
 	}

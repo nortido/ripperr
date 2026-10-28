@@ -180,7 +180,7 @@ function mirrorHostKey(host) {
 
 function trackerHosts(domain, mirrors) {
   const out = [];
-  // основной последним: после смены основного прежний встает в конец ротации, как раньше дописывал сервер
+  // основной последним: после смены основного прежний встает в конец ротации
   (mirrors || []).concat([domain]).forEach(function (h) {
     if (h && !hostIn(out, h)) out.push(h);
   });
@@ -377,8 +377,8 @@ function paintTrackerTest(key) {
 
 function bindTrackerTestButton(btn, onClick) {
   const key = btn.getAttribute('data-key');
-  // как раньше: клик по кнопке не должен доходить до строки и документных обработчиков
   bindTestButton(btn, key, onClick, function () { paintTrackerTest(key); });
+  // клик по кнопке не должен доходить до строки и документных обработчиков
   btn.addEventListener('click', function (e) { e.stopPropagation(); });
   paintTrackerTestButton(btn);
 }
@@ -425,8 +425,8 @@ function dialogKeydown(e) {
   closeTrackerDialog();
 }
 
-// верхняя полоса мобильной версии остается живой: бургер закрывает диалог и открывает меню
 function setAppInert(on) {
+  // верхняя полоса мобильной версии остается живой: бургер закрывает диалог и открывает меню
   document.querySelectorAll('.app > :not(.mobile-header)').forEach(function (el) { el.inert = on; });
 }
 
@@ -676,7 +676,7 @@ function bindMirrorSuggestions(d) {
 
 function mirrorsToConfirm(d) {
   const tr = trackersByKey.get(d.key);
-  // подтверждаем только отмеченные чипы, которые пользователь мог увидеть: поле зеркал спрятано при выключенном переключателе
+  // подтверждаем только отмеченные чипы, которые видно: при выключенном переключателе поле зеркал спрятано
   return d.root.querySelector('.tr-use-mirrors').checked && tr && tr.confirm_on === true
     ? d.mirrors.getValues().filter(function (m) { return hostIn(tr.unconfirmed, m); })
     : [];
@@ -877,7 +877,7 @@ function openTrackerDialog(key) {
   overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${tracker.name || key}</h2><button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body">${trackerFormHtml(tracker, key, tracker.publicity || 'public', tracker.mirrors || [])}</div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-ghost btn-remove-tracker"><span data-icon="trash"></span><span>${t('trackers.remove')}</span></button><button type="button" class="btn btn-ghost btn-icon-only btn-test btn-test-tracker" data-key="${key}"></button><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div>`;
   const root = overlay.querySelector('.modal');
   const saved = item._trackerSaved;
-  // форма стартует с выбором trackerDomainChoice, снимок обязан совпасть с ней, иначе диалог сразу "грязный"
+  // снимок должен совпасть с выбором trackerDomainChoice, с которого стартует форма, иначе диалог сразу "грязный"
   const choice = trackerDomainChoice(tracker, tracker.mirrors || []);
   const hosts0 = trackerHosts(tracker.domain, tracker.mirrors);
   root._trackerBase = tracker.domain;

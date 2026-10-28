@@ -74,7 +74,7 @@ func main() {
 		logger.Error(err.Error())
 		return
 	}
-	// defer-ы идут в обратном порядке: сначала остановится web, потом сброс очереди событий, потом закроется БД
+	// defer-ы идут в обратном порядке: web, сброс очереди событий, закрытие БД
 	defer func() {
 		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -272,9 +272,8 @@ func connectDB(ctx context.Context, cfg config.App) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	// одно соединение, и "database is locked" больше не бывает. WAL не берем: ему нужен индекс
-	// в разделяемой памяти, а bind mount в macOS его не синхронизирует, и процесс на хосте
-	// может потерять закомиченные транзакции
+	// одно соединение исключает "database is locked". WAL не берем: ему нужен индекс в разделяемой
+	// памяти, а bind mount в macOS его не синхронизирует, и процесс на хосте может потерять коммиты
 	dbConn.SetMaxOpenConns(1)
 	if err := dbConn.PingContext(ctx); err != nil {
 		_ = dbConn.Close()
@@ -375,7 +374,7 @@ func validateEffective(base, cfg config.App) error {
 		return err
 	}
 	// адрес из БД проверен при сохранении, из env приходит как есть: без схемы
-	// ProxyTransport молча пошел бы напрямую. Битый сохраненный руками не трогаем, как раньше
+	// ProxyTransport молча пошел бы напрямую. Сохраненный руками адрес не перепроверяем
 	if cfg.Runner.DownloadProxy == base.Runner.DownloadProxy {
 		if err := settings.ValidateDownloadProxy(cfg.Runner.DownloadProxy); err != nil {
 			return errors.New("RUNNER_DOWNLOAD_PROXY: " + err.Error())

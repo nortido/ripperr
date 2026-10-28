@@ -276,8 +276,8 @@ export function isSafeLinkUrl(url) {
   }
 }
 
-// имена релизов без пробелов: <wbr> после точек и дефисов дает переносить по частям, а не посреди слова
 function breakableName(s) {
+  // имена без пробелов: <wbr> после точек и дефисов переносит по частям, а не посреди слова
   const parts = String(s).match(/[^._\-\/]*[._\-\/]?/g).filter(Boolean);
   return parts.map(function (p, i) { return i ? html`<wbr>${p}` : html`${p}`; });
 }

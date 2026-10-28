@@ -46,7 +46,7 @@ type Deps struct {
 	Interval   time.Duration
 	Notify     func(notify.Event)
 
-	// прогон при сбое старта: при сбое сети last_run не пишем, иначе повторы старта ждали бы сутки
+	// только для RunOnceIfDue: при сбое сети last_run не пишем, иначе повторный старт ждал бы сутки
 	keepDueOnOutage bool
 }
 

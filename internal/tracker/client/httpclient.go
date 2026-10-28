@@ -528,7 +528,7 @@ func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *prox
 
 func isFlareChallengeSolveFailure(err error) bool {
 	// helper.IsFlareTimeout не годится, он ловит и таймауты. У них своя логика в
-	// shouldReloginAfterFlare, а повтор со сбросом сессии удвоил бы цену каждого
+	// shouldReloginAfterFlare, а повтор со сбросом сессии удвоил бы цену каждого таймаута
 	if err == nil {
 		return false
 	}

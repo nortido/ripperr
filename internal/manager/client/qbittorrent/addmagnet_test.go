@@ -26,7 +26,7 @@ func withMagnetFetchStub(t *testing.T, fn func(ctx context.Context, magnet strin
 
 func TestAddFromMagnet_CommentSet_OwnFetchSucceeds_AddsFileWithComment(t *testing.T) {
 	stub := newSweepStubServer(t)
-	// metadataTorrent пустой: если AddFromMagnet свалится в старый путь через qbit,
+	// metadataTorrent пустой: если AddFromMagnet свалится на путь через qbit,
 	// saveMetadata ответит 404 и торрент уйдет магнитом без комментария
 	c, err := New(model.ManagerConfig{Host: stub.server.URL})
 	if err != nil {
@@ -80,7 +80,7 @@ func TestAddFromMagnet_CommentSet_OwnFetchFails_FallsBackToQbitMetadataFetch(t *
 	if *gotMagnet != magnet {
 		t.Errorf("magnetFetch получил %q, want %q", *gotMagnet, magnet)
 	}
-	// старый путь: метаданные через qbit, комментарий вшивает addTorrentWithComment
+	// запасной путь: метаданные через qbit, комментарий вшивает addTorrentWithComment
 	if stub.lastAddedFile == nil {
 		t.Fatal("expected fallback to add via qbit fetchMetadata/saveMetadata")
 	}
@@ -94,8 +94,8 @@ func TestAddFromMagnet_CommentSet_OwnFetchFails_FallsBackToQbitMetadataFetch(t *
 }
 
 func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
-	// регресс: добыча без своего потолка съедала весь ctx, и запасному пути
-	// доставался уже истекщий контекст. Заглушка висит до конца своего ctx, фолбэк все равно должен успеть
+	// регресс: добыча без своего потолка съедала весь ctx, и запасной путь получал истекший ctx.
+	// Заглушка висит до конца своего ctx, фолбэк все равно должен успеть
 	orig := magnetFetchTimeout
 	magnetFetchTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { magnetFetchTimeout = orig })
@@ -130,8 +130,8 @@ func TestAddFromMagnet_OwnFetchHangs_FallbackStillGetsBudget(t *testing.T) {
 
 func TestAddFromMagnet_DeadSwarmBothPaths_FallsBackToMagnetAdd(t *testing.T) {
 	// регресс: своя добыча съедала magnetFetchTimeout, и путь через qbit упирался во внешний
-	// дедлайн раньше своего таймаута. DeadlineExceeded никто не ловил, торрент не добавлялся вовсе.
-	// Здесь рой мертв для обоих путей, и при нормальном бюджете фолбэк должен сработать
+	// дедлайн раньше своего таймаута, DeadlineExceeded никто не ловил. Рой мертв для обоих путей,
+	// и при нормальном бюджете фолбэк должен сработать
 	origMagnet, origMeta, origPoll := magnetFetchTimeout, metadataFetchTimeout, metadataFetchPollInterval
 	magnetFetchTimeout = 20 * time.Millisecond
 	metadataFetchTimeout = 60 * time.Millisecond

@@ -55,7 +55,7 @@ func queryTrimmed(r *http.Request, key string, maxBytes int) string {
 }
 
 func (s *Server) checkLogFilterFromQuery(r *http.Request) storage.CheckLogFilter {
-	// один разбор на список и на форс всем, иначе форс набирал бы не те записи, что видны
+	// разбор общий для списка и форса: иначе форс набирал бы не те записи, что видны
 	sortBy := r.URL.Query().Get("sort")
 	if sortBy != "recheck" {
 		sortBy = "checked"
@@ -190,9 +190,8 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "history item not found")
 		return
 	}
-	// один флаг дождался бы только планового запуска, а просьба к раннеру проверяет сразу,
-	// и несколько форсов идут одним проходом. Очередь ограничена, шквал кликов может
-	// потерять запрос, но флаг останется и запись проверится в плановом проходе
+	// одного флага мало: он дождался бы планового запуска, а RequestForce проверяет сразу.
+	// Очередь ограничена, при шквале кликов запрос может потеряться, но флаг останется
 	queued := true
 	if req.Force {
 		queued = s.runnerState.RequestForce(hash)

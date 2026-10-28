@@ -532,7 +532,7 @@ func (s *Server) storedTrackerList(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// без документа видны все трекеры, как до появления списка
+	// без документа списка видны все трекеры
 	if !ok {
 		return registry.Keys(), nil
 	}

@@ -26,8 +26,8 @@ export function initBrowserPush(root, onChange) {
   load();
 }
 
-// тест удаляет устройства, у которых истекла подписка
 export function reloadBrowserDevices() {
+  // тест удаляет устройства с истекшей подпиской
   if (box && box.isConnected) load();
 }
 

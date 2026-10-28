@@ -221,7 +221,7 @@ func (s *service) rotate(ctx context.Context, ttid int, ct *CachedTracker) (*Cac
 	confirmed, unconfirmed := confirmedMirrors(tr)
 	candidate := firstAnswering(ctx, append([]string{tr.GetDomain()}, confirmed...), alive, from)
 	if candidate == "" {
-		// текущий хост еще отвечает, значит сбой временный: паузы нет, как и до охраны
+		// текущий хост еще отвечает, значит сбой временный: паузы нет
 		if host := firstAnswering(ctx, unconfirmed, alive, from); host != "" && !alive(ctx, from) {
 			s.setPause(ttid, host)
 			// клиент на мертвом подтвержденном хосте больше не отдаем, после паузы логин заново

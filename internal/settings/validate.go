@@ -111,7 +111,7 @@ func ValidateSchedulePatch(o scheduleOverlay) error {
 	if o.WatchMode != nil && *o.WatchMode != config.WatchModeCategories && *o.WatchMode != config.WatchModeTags {
 		return fmt.Errorf("watch_mode must be categories or tags")
 	}
-	// патч без расписания (напр. только mirror_confirm): проверять нечего, обязательные поля нужны лишь целому блоку
+	// патч без расписания (напр. только mirror_confirm): проверять нечего
 	if o.StartHour == nil && o.ListRefreshPerDay == nil && o.ThresholdMonth == nil && o.ThresholdHalfYear == nil &&
 		o.ThresholdYear == nil && o.ErrorStreakThreshold == nil && o.MagnetTimeout == nil {
 		return nil
@@ -376,9 +376,8 @@ func IntegrationsPatchFromJSON(raw json.RawMessage) (integrationsOverlay, error)
 }
 
 func ValidateIntegrationsPatch(o integrationsOverlay) error {
-	// пустая строка: клиент не меняем. Неизвестное значение отклоняем здесь, applyIntegrations
-	// только подстраховка для старых баз. Сравниваем после нормализации, иначе "Transmission"
-	// из UI получит 400, хотя applyIntegrations его примет
+	// пустая строка: клиент не меняем. Сравниваем после нормализации, иначе "Transmission"
+	// из UI получит 400, хотя applyIntegrations его примет. Там же подстраховка для старых баз
 	if o.Client != nil {
 		if client := config.NormalizeClient(*o.Client); client != "" && client != "qbit" && client != "transmission" && client != "deluge" {
 			return fmt.Errorf("client must be qbit, transmission or deluge")

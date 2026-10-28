@@ -72,7 +72,7 @@ func noProxyEnv() string {
 func isLocalTarget(host string) bool {
 	// httpproxy пропускает мимо только localhost и loopback. А рядом еще вебхук на домашний
 	// сервер и соседи по docker-сети, гнать их через внешний прокси незачем, тем более
-	// светить его оператору имена раздач из тела вебхука
+	// показывать оператору прокси имена раздач из тела вебхука
 	if ip, err := netip.ParseAddr(host); err == nil {
 		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 	}

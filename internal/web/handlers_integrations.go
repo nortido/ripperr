@@ -381,7 +381,7 @@ func mergeTestIntegrationsConfig(cfg config.App, kind string, raw json.RawMessag
 		cfg.Notify.EmailFrom, cfg.Notify.EmailTo = c.Email.From, c.Email.To
 		cfg.Notify.PushoverToken, cfg.Notify.PushoverUser = c.Pushover.AppToken, c.Pushover.UserKey
 		cfg.Notify.Enabled = c.Enabled
-		// нет поля: остается сохраненный язык; чужое значение при тесте не проверяем, оно рендерится как en
+		// поля нет: остается сохраненный язык; чужое значение не проверяем, оно рендерится как en
 		if c.Language != nil {
 			cfg.Notify.Language = *c.Language
 		}
@@ -459,7 +459,6 @@ type managerClient interface {
 }
 
 var managerClientFactory = func(kind string, cfg model.ManagerConfig) (managerClient, error) {
-	// клиент на каждый запрос, общего долгоживущего в обработчиках нет
 	return manager.NewClient(kind, cfg)
 }
 

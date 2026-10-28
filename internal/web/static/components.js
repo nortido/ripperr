@@ -8,10 +8,10 @@ import { PAGE_SIZE_OPTIONS, SECRET_MASK, html, savePageSize } from './util.js';
 export let activeErrorPopover = null;
 let closingPopover = null;
 
+// равно --pop-out-dur в overlays.css
 export const POP_CLOSE_MS = 130;
 
 export function closeAnimated(el, done) {
-  // запас 30 мс сверху на длительность выхода (--pop-out-dur в overlays.css)
   if (!el || el.popCloseTimer) return;
   el.classList.add('is-closing');
   el.popCloseTimer = setTimeout(function () {
@@ -253,8 +253,8 @@ export function buildSegmentControl(options, activeValue, ariaLabel) {
   return html`<div class="seg-ctrl" role="group" aria-label="${ariaLabel}" data-active-index="${activeIdx}"><div class="seg-ctrl-thumb" aria-hidden="true"></div>${btnsParts}</div>`;
 }
 
-// имя не влезло: шрифт меньше на 1 px, не больше, дальше пусть режется многоточием
 function fitSegmentText(seg) {
+  // имя не влезло: шрифт меньше на 1 px, дальше пусть режется многоточием
   seg.classList.remove('seg-ctrl-tight');
   const cut = Array.from(seg.querySelectorAll('.seg-ctrl-btn *')).some(function (el) {
     return el.clientWidth > 0 && el.scrollWidth > el.clientWidth;
@@ -411,8 +411,8 @@ export function initHintToggles(root) {
         if (activeErrorPopover === pop) closePopovers();
       }, 10000);
     });
-    // у переключателя и кнопки (i) встает соседом в той же flex-строке, внутри span она уехала бы на вторую строку
-    // в шапке страницы кнопка прижата вправо, (i) ставим слева от нее
+    // у переключателя и кнопки (i) соседом в той же flex-строке: внутри span уехала бы на вторую
+    // в шапке страницы кнопка прижата вправо, (i) слева от нее
     if (label.matches('.page-header-actions > .btn')) label.before(btn);
     else if (label.matches('.form-switch > span, .form-submit-row > .btn')) label.after(btn);
     else if (label.matches('.card-title')) glueHintToLastWord(label, btn);

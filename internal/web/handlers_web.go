@@ -97,7 +97,7 @@ func (s *Server) handlePutWeb(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// уведомитель собирается при reload из актуального конфига, без него ссылка осталась бы старой
+	// уведомитель собирается при reload из актуального конфига, без reload ссылка осталась бы старой
 	if overlay.AppURL != nil && *overlay.AppURL != appURLBefore {
 		s.reload()
 	}

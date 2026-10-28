@@ -33,9 +33,8 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// категории берем из примененного конфига, не из патча: список мог прийти
-	// и из env, а правило "проверяем только это" должно чистить план целиком.
-	// В режиме тегов чистки нет: устаревший список категорий стер бы релизы, которые теги отслеживают
+	// категории берем из примененного конфига, не из патча: список мог прийти из env.
+	// В режиме тегов чистки нет: устаревший список категорий стер бы релизы, которые отслеживают теги
 	if cfg, cerr := s.writableConfig(); cerr != nil {
 		logger.Warn("purge disabled categories skipped: settings unreadable: " + cerr.Error())
 	} else if cats, _ := cfg.Runner.WatchSelection(config.ClientSupportsTags(cfg.Manager.Client)); len(cats) > 0 {
@@ -263,7 +262,7 @@ func (s *Server) handlePutTracker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(info.confirmed) > 0 {
-		// пауза снимается уже без блокировки трекеров: обе сразу не держим
+		// пауза снимается уже без замка трекеров: два замка сразу не держим
 		if err = settings.UpdateMirrorSync(r.Context(), s.db, func(d *settings.MirrorSync) {
 			if p, ok := d.Paused[key]; ok && slices.ContainsFunc(info.confirmed, func(h string) bool { return settings.MirrorHostKey(h) == settings.MirrorHostKey(p.Host) }) {
 				delete(d.Paused, key)

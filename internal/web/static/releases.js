@@ -336,8 +336,7 @@ function releaseMetaHtml(item) {
 
 export function buildReleaseRows(histItems) {
   if (!histItems || histItems.length === 0) {
-    // пустой результат под фильтром не значит пустую базу. Раньше в обоих случях
-    // писали «Проверок еще не было», и это путало
+    // пустой результат под фильтром не значит пустую базу, текст у них разный
     const key = historyFiltered() ? 'dash.empty.filtered' : 'dash.empty.releases';
     return html`<tr class="table-empty"><td colspan="5">${t(key)}</td></tr>`;
   }
@@ -370,8 +369,8 @@ export function getHistoryFull() {
   return historyFull;
 }
 
-// весь отфильтрованный список уже в браузере, страница это срез из него
 export function historyPage(history) {
+  // весь отфильтрованный список уже в браузере, страница это срез из него
   if (history) historyFull = history;
   const items = historyFull.items || [];
   const total = items.length;

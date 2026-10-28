@@ -11,6 +11,7 @@ EXPOSE 6410 2345
 #CMD /app/main
 
 FROM alpine:3.22
+LABEL org.opencontainers.image.source="https://github.com/nortido/ripperr"
 WORKDIR /app
 COPY --from=builder /app/main /app/
 RUN mkdir -p /config/blackhole

@@ -1258,8 +1258,7 @@ type errAlreadyAddedManager struct {
 }
 
 func (m *errAlreadyAddedManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
-	// submit SubmitMagnet уже не зовет, а h.magnetFetch тут не задан,
-	// так что запись уходит файлом через Submit
+	// h.magnetFetch тут не задан, поэтому запись уходит файлом через Submit
 	return fmt.Errorf("%w: test", model.ErrAlreadyAdded)
 }
 
@@ -2835,8 +2834,8 @@ func TestWorkerNoReleaseTimeWhenUnchanged(t *testing.T) {
 	}
 }
 
-// дата темы на первой проверке тоже идет в прогноз: после первого обновления дат уже две
 func TestWorkerRecordsFirstPageDate(t *testing.T) {
+	// дата темы на первой проверке тоже идет в прогноз: после первого обновления дат уже две
 	d := time.Now().Add(-48 * time.Hour)
 	added := time.Now().Add(-2 * time.Hour)
 	h, store := newReleaseHandler(d)

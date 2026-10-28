@@ -19,8 +19,8 @@ import (
 )
 
 func TestIncomingHashSameAs_NilBufferWithMagnet(t *testing.T) {
-	// manager.SubmitMagnet зовет IncomingHashSameAs с buf == nil на каждом магните.
-	// Без проверки на nil это паника на горячем пути
+	// контракт допускает buf == nil вместе с магнитом. Без проверки на nil
+	// такой вызов паникует
 	c := &Client{}
 	hash := "0123456789abcdef0123456789abcdef01234567"
 	magnet := "magnet:?xt=urn:btih:" + hash
