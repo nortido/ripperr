@@ -1,6 +1,6 @@
 <div align="center">
 
-# Ripperr
+# 📽️ Ripperr 📽️
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Release](https://img.shields.io/badge/release-v2.7.2-2f9e44)
