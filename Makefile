@@ -38,4 +38,5 @@ build-multi: builder
 
 push-multi: builder
 	@test -z "$$(git status --porcelain)" || { echo "push-multi: uncommitted changes, commit first" >&2; exit 1; }
+	@git describe --tags --exact-match >/dev/null 2>&1 || { echo "push-multi: HEAD has no release tag, tag it first" >&2; exit 1; }
 	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) --build-arg VERSION=$(TAG) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .

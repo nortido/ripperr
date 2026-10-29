@@ -6,9 +6,11 @@ All notable changes to Ripperr. Versions follow [Semantic Versioning](https://se
 
 ### Added
 - The app version is shown at the bottom of the sidebar. In the collapsed sidebar it is in the tooltip.
+- Russian README (README.ru.md), linked from README.md.
 
 ### Changed
 - Shorter push, Telegram and Pushover notifications: mirror changes only name the trackers that need a decision, mirror switch and pause fit in two lines, long errors are cut. Full details stay in the app event log and email.
+- Telegram buttons are shorter (Topic, Ripperr) so they fit in one row.
 
 ## [2.7.2] - 2026-10-29
 
