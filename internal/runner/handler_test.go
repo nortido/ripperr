@@ -931,6 +931,60 @@ func TestRunConsumeRestartStartsPush(t *testing.T) {
 	}
 }
 
+func newForceRestartHandler(items map[string]*runnerModel.HistoryItem) (*handler, chan struct{}) {
+	pushDone := make(chan struct{}, 1)
+	mgr := &countingManager{
+		fakeManager: fakeManager{all: []*model.Entry{{URL: "https://example.com/t/1", Name: "x", Tag: "watch"}}},
+		pushDone:    pushDone,
+	}
+	// плановый проход далеко, push может начать только форс
+	return &handler{
+		config: model.HandlerConfig{
+			WatchTags:         []string{"watch"},
+			ListRefreshPerDay: 1,
+			StartHour:         (time.Now().Hour() + 12) % 24,
+			ThresholdMonth:    1,
+			ThresholdHalfYear: 1,
+			ThresholdYear:     1,
+			ThresholdOld:      1,
+		},
+		manager:        mgr,
+		storage:        &fakeStorage{items: items},
+		trackerService: &safeFakeTracker{id: 1},
+		state:          NewState(),
+	}, pushDone
+}
+
+func TestRunPushesSavedForceChecksOnStart(t *testing.T) {
+	const url = "https://example.com/t/1"
+	h, pushDone := newForceRestartHandler(map[string]*runnerModel.HistoryItem{
+		url: {URLHash: storagePkg.URLHash(url), URL: url, ForceCheck: true},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.Run(ctx)
+	select {
+	case <-pushDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("saved force_check not pushed after start")
+	}
+}
+
+func TestRunWithoutForceChecksWaitsForSchedule(t *testing.T) {
+	const url = "https://example.com/t/1"
+	h, pushDone := newForceRestartHandler(map[string]*runnerModel.HistoryItem{
+		url: {URLHash: storagePkg.URLHash(url), URL: url},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.Run(ctx)
+	select {
+	case <-pushDone:
+		t.Fatal("push started without force_check or schedule")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
 func TestZombiePushDoesNotAffectRunning(t *testing.T) {
 	state := NewState()
 	oldGen := state.Reset()
@@ -969,6 +1023,7 @@ func TestRunResetsStuckCounter(t *testing.T) {
 			Immediate:         false,
 		},
 		trackerService: &safeFakeTracker{id: 1},
+		storage:        &fakeStorage{},
 		state:          state,
 	}
 	ctx, cancel := context.WithCancel(context.Background())

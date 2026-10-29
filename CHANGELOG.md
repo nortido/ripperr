@@ -2,6 +2,11 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.7.1] - 2026-10-29
+
+### Fixed
+- Forced checks survive a restart: releases marked for a forced check are checked right after start instead of waiting for the next scheduled pass.
+
 ## [2.7.0] - 2026-10-28
 
 ### Added

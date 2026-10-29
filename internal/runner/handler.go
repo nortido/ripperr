@@ -185,6 +185,9 @@ func (h *handler) Run(ctx context.Context) {
 	}
 	if h.state.ConsumeRestart() {
 		go h.runPush(ctx, pt, cherr, false)
+	} else if hashes := h.savedForceChecks(ctx); len(hashes) > 0 {
+		// очередь форса живет в памяти, после рестарта взведенные флаги иначе ждут планового прохода
+		go h.pushForced(ctx, hashes, cherr)
 	}
 	for {
 		select {
@@ -239,6 +242,21 @@ func (h *handler) pushForced(ctx context.Context, hashes []string, cherr chan er
 		case cherr <- err:
 		}
 	}
+}
+
+func (h *handler) savedForceChecks(ctx context.Context) []string {
+	items, err := h.storage.AllItems(ctx)
+	if err != nil {
+		logger.Warn(fmt.Sprintf("saved force checks not read: %v", err))
+		return nil
+	}
+	var hashes []string
+	for hash, it := range items {
+		if it.ForceCheck {
+			hashes = append(hashes, hash)
+		}
+	}
+	return hashes
 }
 
 func (h *handler) nextRun(now time.Time) time.Time {
