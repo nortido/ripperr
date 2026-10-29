@@ -1,11 +1,12 @@
 # сборщик на платформе хоста: Go кросс-компилирует сам, без эмуляции qemu
 FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETOS TARGETARCH
+ARG VERSION=dev
 #RUN go install github.com/go-delve/delve/cmd/dlv@latest
 ENV GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0
 COPY . /app
 WORKDIR /app
-RUN go build -o main ./cmd && ls -la
+RUN go build -ldflags "-X ripperr/internal/web.Version=$VERSION" -o main ./cmd && ls -la
 EXPOSE 6410 2345
 #CMD ["/go/bin/dlv", "--listen=:2345", "--headless=true", "--api-version=2", "--accept-multiclient", "exec", "/app/main"]
 #CMD /app/main

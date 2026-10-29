@@ -19,6 +19,16 @@ export async function loadAuthState() {
   if (!authState.configured) { gotoLogin(); return; }
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.classList.toggle('hidden', !authState.configured);
+  showVersion(authState.version);
+}
+
+function showVersion(version) {
+  const el = document.getElementById('app-version');
+  if (!el || !version) return;
+  el.textContent = /^\d/.test(version) ? 'v' + version : version;
+  el.hidden = false;
+  // в свернутой панели текст скрыт, версия остается в подсказке
+  el.parentElement.title = 'Ripperr ' + el.textContent;
 }
 
 export function bindLogout() {

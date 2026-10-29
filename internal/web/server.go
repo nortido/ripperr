@@ -47,6 +47,9 @@ type eventStore interface {
 	ListEvents(ctx context.Context, limit int) ([]storage.EventEntry, error)
 }
 
+// сборка задает через -ldflags "-X ripperr/internal/web.Version=..."
+var Version = "dev"
+
 type Server struct {
 	db              store
 	events          eventStore

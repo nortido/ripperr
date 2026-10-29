@@ -737,11 +737,16 @@ func (s *Server) handleAuthState(w http.ResponseWriter, r *http.Request) {
 		username = doc.Username
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	state := map[string]any{
 		"configured":    configured,
 		"authenticated": authenticated,
 		"username":      username,
-	})
+	}
+	// версию видит только вошедший: по ней чужой подобрал бы известные уязвимости
+	if authenticated {
+		state["version"] = Version
+	}
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {

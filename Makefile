@@ -18,10 +18,10 @@ vendor:
 	go mod vendor
 
 build:
-	@docker buildx build --platform linux/amd64 -t nortido/ripperr:latest .
+	@docker buildx build --platform linux/amd64 --build-arg VERSION=$(TAG) -t nortido/ripperr:latest .
 
 build-arm:
-	@docker buildx build --platform linux/arm64 -t ripperr:arm .
+	@docker buildx build --platform linux/arm64 --build-arg VERSION=$(TAG) -t ripperr:arm .
 
 VERSION ?= $(shell git describe --tags --always --dirty)
 IMAGE ?= nortido/ripperr
@@ -34,8 +34,8 @@ builder:
 
 build-multi: builder
 	@mkdir -p dist
-	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) -t $(IMAGE):$(TAG) --output type=oci,dest=dist/ripperr-$(TAG).tar .
+	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) --build-arg VERSION=$(TAG) -t $(IMAGE):$(TAG) --output type=oci,dest=dist/ripperr-$(TAG).tar .
 
 push-multi: builder
 	@test -z "$$(git status --porcelain)" || { echo "push-multi: uncommitted changes, commit first" >&2; exit 1; }
-	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .
+	@docker buildx build --builder ripperr-multi --platform $(PLATFORMS) --build-arg VERSION=$(TAG) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .

@@ -702,6 +702,9 @@ func TestAuthStateHidesUsername(t *testing.T) {
 	if _, ok := state["lan_bypass"]; ok {
 		t.Errorf("state has lan_bypass key: %v", state)
 	}
+	if _, ok := state["version"]; ok {
+		t.Errorf("version without cookie = %v, want no key", state["version"])
+	}
 
 	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"adminpass123"}`))
 	req.Header.Set("X-Ripperr", "1")
@@ -714,6 +717,9 @@ func TestAuthStateHidesUsername(t *testing.T) {
 	state = authState(t, srv, sessionCookie(w))
 	if state["username"] != "admin" || state["authenticated"] != true {
 		t.Errorf("state with cookie = %v, want username admin, authenticated true", state)
+	}
+	if state["version"] != Version {
+		t.Errorf("version with cookie = %v, want %q", state["version"], Version)
 	}
 }
 
