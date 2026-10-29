@@ -15,7 +15,7 @@
 ![Notifiers](https://img.shields.io/badge/notifiers-5-4c6ef5)
 ![UI](https://img.shields.io/badge/UI-EN%20%7C%20RU-2f9e44)
 
-[Changelog](CHANGELOG.md)
+[Русский](README.ru.md) · [Changelog](CHANGELOG.md)
 
 Your torrents from forum trackers stay fresh by themselves.
 
@@ -67,7 +67,7 @@ downloads the new version in full and keeps old files).
 
 ## Also inside
 
-- Notifications to Telegram, email, Pushover, a webhook or browser push. The Telegram mute button needs a bot that only Ripperr uses.
+- Notifications to Telegram, email, Pushover, a webhook or browser push.
 - Smart schedule: fresh releases are checked often, old ones rarely, broken topics go to ignore.
 - Dry run: a full pass that shows what would change and changes nothing.
 - Force a check of any release, or all of them, from the dashboard.

@@ -51,7 +51,7 @@ func tgLinks(ev Event) []tgButton {
 		links = append(links, tgButton{Text: messages[NormalizeLanguage(ev.lang)][msgTgTopic], URL: ev.URL})
 	}
 	if ev.AppLink != "" {
-		links = append(links, tgButton{Text: ev.label(), URL: ev.AppLink})
+		links = append(links, tgButton{Text: "Ripperr", URL: ev.AppLink})
 	}
 	return links
 }

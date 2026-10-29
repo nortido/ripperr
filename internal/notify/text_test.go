@@ -131,7 +131,7 @@ func TestLinkLabelByLanguage(t *testing.T) {
 		ev := n.localize(base)
 
 		m := buildTelegram(ev, maxMessage)
-		if last := m.Links[len(m.Links)-1]; last.Text != label || last.URL != link {
+		if last := m.Links[len(m.Links)-1]; last.Text != "Ripperr" || last.URL != link {
 			t.Errorf("lang %q telegram links = %+v", lang, m.Links)
 		}
 

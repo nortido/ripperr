@@ -90,55 +90,55 @@ func TestTelegramLayoutPerKind(t *testing.T) {
 	}{
 		{"updated ru", "ru", updated,
 			"<b>🔄 Раздача обновлена</b>\nSome Release 2026\n<i>rutracker · sonarr</i>",
-			[]tgButton{{Text: "Тема на трекере", URL: "https://t/1"}, {Text: "Открыть в Ripperr", URL: appUpdated}}},
+			[]tgButton{{Text: "Тема", URL: "https://t/1"}, {Text: "Ripperr", URL: appUpdated}}},
 		{"updated en", "en", updated,
 			"<b>🔄 Release updated</b>\nSome Release 2026\n<i>rutracker · sonarr</i>",
-			[]tgButton{{Text: "Topic on tracker", URL: "https://t/1"}, {Text: "Open in Ripperr", URL: appUpdated}}},
+			[]tgButton{{Text: "Topic", URL: "https://t/1"}, {Text: "Ripperr", URL: appUpdated}}},
 		{"updated without tracker", "ru", UpdatedEvent("Name", "", "").WithRelease("1", "", "sonarr"),
 			"<b>🔄 Раздача обновлена</b>\nName\n<i>sonarr</i>",
-			[]tgButton{{Text: "Открыть в Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
 		{"updated without release info", "ru", UpdatedEvent("Name", "https://t/1", ""),
 			"<b>🔄 Раздача обновлена</b>\nName",
-			[]tgButton{{Text: "Тема на трекере", URL: "https://t/1"}, {Text: "Открыть в Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
+			[]tgButton{{Text: "Тема", URL: "https://t/1"}, {Text: "Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
 		{"broken ru", "ru", BrokenEvent("Name.2026", "https://t/2", 3),
 			"<b>⚠️ Раздача ушла в игнор</b>\nName 2026\n<i>Ошибок подряд: 3, больше не проверяется</i>",
-			[]tgButton{{Text: "Тема на трекере", URL: "https://t/2"}, {Text: "Открыть в Ripperr", URL: testAppURL + "/#dashboard?filter=ignored&name=Name.2026"}}},
+			[]tgButton{{Text: "Тема", URL: "https://t/2"}, {Text: "Ripperr", URL: testAppURL + "/#dashboard?filter=ignored&name=Name.2026"}}},
 		{"broken en", "en", BrokenEvent("Name", "", 3),
 			"<b>⚠️ Release moved to ignored</b>\nName\n<i>Errors in a row: 3, no longer checked</i>",
-			[]tgButton{{Text: "Open in Ripperr", URL: testAppURL + "/#dashboard?filter=ignored&name=Name"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#dashboard?filter=ignored&name=Name"}}},
 		{"tracker down ru", "ru", TrackerDownEvent("kinozal", "timeout"),
 			"<b>🔴 Трекер недоступен</b>\nkinozal: timeout\n<i>Проверки трекера на паузе</i>",
-			[]tgButton{{Text: "Открыть в Ripperr", URL: testAppURL + "/#trackers"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#trackers"}}},
 		{"tracker down en", "en", TrackerDownEvent("kinozal", "timeout"),
 			"<b>🔴 Tracker unavailable</b>\nkinozal: timeout\n<i>Tracker checks paused</i>",
-			[]tgButton{{Text: "Open in Ripperr", URL: testAppURL + "/#trackers"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#trackers"}}},
 		{"tracker up ru", "ru", TrackerUpEvent("kinozal"),
 			"<b>🟢 Трекер снова доступен</b>\nkinozal\n<i>Проверки возобновлены</i>",
-			[]tgButton{{Text: "Открыть в Ripperr", URL: testAppURL + "/#trackers"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#trackers"}}},
 		{"tracker up en", "en", TrackerUpEvent("kinozal"),
 			"<b>🟢 Tracker is back</b>\nkinozal\n<i>Checks resumed</i>",
-			[]tgButton{{Text: "Open in Ripperr", URL: testAppURL + "/#trackers"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#trackers"}}},
 		{"check failed ru", "ru", CheckFailedEvent("Name", "https://t/3", "boom"),
 			"<b>❌ Ошибка проверки</b>\nName\n<i>boom</i>",
-			[]tgButton{{Text: "Тема на трекере", URL: "https://t/3"}, {Text: "Открыть в Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
+			[]tgButton{{Text: "Тема", URL: "https://t/3"}, {Text: "Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
 		{"check failed en", "en", CheckFailedEvent("Name", "https://t/3", "boom"),
 			"<b>❌ Check failed</b>\nName\n<i>boom</i>",
-			[]tgButton{{Text: "Topic on tracker", URL: "https://t/3"}, {Text: "Open in Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
+			[]tgButton{{Text: "Topic", URL: "https://t/3"}, {Text: "Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
 		{"test ru", "ru", TestEvent("https://x/#dashboard"),
 			"<b>✅ Ripperr: проверка связи</b>",
-			[]tgButton{{Text: "Открыть в Ripperr", URL: "https://x/#dashboard"}}},
+			[]tgButton{{Text: "Ripperr", URL: "https://x/#dashboard"}}},
 		{"mirror ru", "ru", MirrorSwitchedEvent("rutor", "a.example", "b.example"),
 			"<b>🔀 Зеркало переключено</b>\nrutor: b.example",
-			[]tgButton{{Text: "Открыть в Ripperr", URL: testAppURL + "/#trackers"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#trackers"}}},
 		{"mirror paused ru", "ru", MirrorPausedEvent("rutor", "c.example"),
 			"<b>🔀 Трекер на паузе</b>\nrutor\n<i>Подтвердите зеркало c.example</i>",
-			[]tgButton{{Text: "Открыть в Ripperr", URL: testAppURL + "/#trackers"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#trackers"}}},
 		{"digest ru", "ru", MirrorDigestEvent(digestItems()),
 			"<b>🔀 Зеркала трекеров ждут решения</b>\nkinozal, rutor",
-			[]tgButton{{Text: "Открыть в Ripperr", URL: testAppURL + "/#trackers"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#trackers"}}},
 		{"long error is cut", "en", CheckFailedEvent("Name", "", strings.Repeat("e", 300)),
 			"<b>❌ Check failed</b>\nName\n<i>" + strings.Repeat("e", maxReason-1) + "…</i>",
-			[]tgButton{{Text: "Open in Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
+			[]tgButton{{Text: "Ripperr", URL: testAppURL + "/#dashboard?name=Name"}}},
 		{"multi-line body", "ru", Event{Kind: KindMirrorSwitched, Text: "Head <1>\nrow & two\nrow three"},
 			"<b>🔀 Head &lt;1&gt;</b>\nrow &amp; two\nrow three", nil},
 		{"unknown kind has no emoji", "ru", Event{Kind: "custom", Text: "Just text"}, "<b>Just text</b>", nil},
@@ -244,8 +244,8 @@ func TestTelegramSendMessageCarriesLayoutAndButtons(t *testing.T) {
 	}
 	rows := tgButtonsOf(t, b["reply_markup"])
 	if len(rows) != 1 || len(rows[0]) != 2 ||
-		rows[0][0]["text"] != "Тема на трекере" || rows[0][0]["url"] != "https://t/1" ||
-		rows[0][1]["text"] != "Открыть в Ripperr" || rows[0][1]["url"] != testAppURL+"/"+ev.AppPath {
+		rows[0][0]["text"] != "Тема" || rows[0][0]["url"] != "https://t/1" ||
+		rows[0][1]["text"] != "Ripperr" || rows[0][1]["url"] != testAppURL+"/"+ev.AppPath {
 		t.Errorf("inline_keyboard = %+v", rows)
 	}
 }
@@ -289,8 +289,8 @@ func TestTelegramBadRequestRetriesWithoutURLButtons(t *testing.T) {
 	}
 	text, _ := reqs[1].body["text"].(string)
 	for _, want := range []string{
-		`<a href="https://t/1?a=1&amp;b=2">Тема на трекере</a>`,
-		`<a href="` + testAppURL + `/#dashboard?name=Name">Открыть в Ripperr</a>`,
+		`<a href="https://t/1?a=1&amp;b=2">Тема</a>`,
+		`<a href="` + testAppURL + `/#dashboard?name=Name">Ripperr</a>`,
 		"<b>🔄 Раздача обновлена</b>\nName\n<i>rutracker · sonarr</i>\n",
 	} {
 		if !strings.Contains(text, want) {
@@ -376,7 +376,7 @@ func TestTelegramPhotoUploadCarriesMarkupAndKeepsMethodOnFallback(t *testing.T) 
 	if _, ok := reqs[1].fields["reply_markup"]; ok {
 		t.Errorf("retry carries reply_markup %q", reqs[1].fields["reply_markup"])
 	}
-	if c := reqs[1].fields["caption"]; !strings.Contains(c, `<a href="https://t/1">Тема на трекере</a>`) || !strings.Contains(c, ">Открыть в Ripperr</a>") {
+	if c := reqs[1].fields["caption"]; !strings.Contains(c, `<a href="https://t/1">Тема</a>`) || !strings.Contains(c, ">Ripperr</a>") {
 		t.Errorf("retry caption %q", c)
 	}
 }
@@ -410,7 +410,7 @@ func TestTelegramPhotoURLCarriesMarkupAndFallsBack(t *testing.T) {
 	if _, ok := reqs[1].body["reply_markup"]; ok {
 		t.Error("retry carries reply_markup")
 	}
-	if c, _ := reqs[1].body["caption"].(string); !strings.Contains(c, `<a href="https://t/1">Topic on tracker</a>`) {
+	if c, _ := reqs[1].body["caption"].(string); !strings.Contains(c, `<a href="https://t/1">Topic</a>`) {
 		t.Errorf("retry caption %q", c)
 	}
 }

@@ -117,7 +117,7 @@ func tgBotNotifier(chat string, m *TelegramMutes) *Notifier {
 
 func callbackBatch(updateID int, data, chatJSON string) string {
 	return `{"ok":true,"result":[{"update_id":` + itoa(updateID) + `,"callback_query":{"id":"cb1","data":"` + data + `","message":{"message_id":9,"chat":` + chatJSON +
-		`,"reply_markup":{"inline_keyboard":[[{"text":"Тема на трекере","url":"https://t/1"},{"text":"🔕","callback_data":"mute:123"}]]}}}}]}`
+		`,"reply_markup":{"inline_keyboard":[[{"text":"Тема","url":"https://t/1"},{"text":"🔕","callback_data":"mute:123"}]]}}}}]}`
 }
 
 func itoa(n int) string {
@@ -159,7 +159,7 @@ func TestTelegramButtonPressMutesAnswersAndFlips(t *testing.T) {
 	}
 	rows := tgButtonsOf(t, e["reply_markup"])
 	if len(rows) != 1 || len(rows[0]) != 2 ||
-		rows[0][0]["text"] != "Тема на трекере" || rows[0][0]["url"] != "https://t/1" ||
+		rows[0][0]["text"] != "Тема" || rows[0][0]["url"] != "https://t/1" ||
 		rows[0][1]["text"] != "🔔" || rows[0][1]["callback_data"] != "unmute:123" {
 		t.Errorf("flipped markup = %+v", rows)
 	}

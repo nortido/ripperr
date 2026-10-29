@@ -119,10 +119,10 @@ func TestTelegramMuteButtonInRowOne(t *testing.T) {
 		ev   Event
 		want []string
 	}{
-		{"with mutes", tgMuteNotifier(m), UpdatedEvent("A", "https://t/1", "").WithRelease("123", "r", ""), []string{"Тема на трекере", "Открыть в Ripperr", "🔕"}},
-		{"no mutes", New(Config{TelegramToken: "tok", TelegramChatID: "42", Language: "ru"}, "").WithAppURL(testAppURL), UpdatedEvent("A", "https://t/1", "").WithRelease("123", "r", ""), []string{"Тема на трекере", "Открыть в Ripperr"}},
-		{"no hash", tgMuteNotifier(m), UpdatedEvent("A", "https://t/1", ""), []string{"Тема на трекере", "Открыть в Ripperr"}},
-		{"other kind", tgMuteNotifier(m), BrokenEvent("A", "https://t/1", 3).WithRelease("123", "r", ""), []string{"Тема на трекере", "Открыть в Ripperr"}},
+		{"with mutes", tgMuteNotifier(m), UpdatedEvent("A", "https://t/1", "").WithRelease("123", "r", ""), []string{"Тема", "Ripperr", "🔕"}},
+		{"no mutes", New(Config{TelegramToken: "tok", TelegramChatID: "42", Language: "ru"}, "").WithAppURL(testAppURL), UpdatedEvent("A", "https://t/1", "").WithRelease("123", "r", ""), []string{"Тема", "Ripperr"}},
+		{"no hash", tgMuteNotifier(m), UpdatedEvent("A", "https://t/1", ""), []string{"Тема", "Ripperr"}},
+		{"other kind", tgMuteNotifier(m), BrokenEvent("A", "https://t/1", 3).WithRelease("123", "r", ""), []string{"Тема", "Ripperr"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -183,7 +183,7 @@ func TestTelegramFallbackKeepsMuteButton(t *testing.T) {
 	if len(rows) != 1 || len(rows[0]) != 1 || rows[0][0]["text"] != "🔕" || rows[0][0]["callback_data"] != "mute:123" || rows[0][0]["url"] != "" {
 		t.Errorf("fallback markup = %+v, want only the mute button", rows)
 	}
-	if text, _ := reqs[1].body["text"].(string); !strings.Contains(text, `<a href="https://t/1">Тема на трекере</a>`) {
+	if text, _ := reqs[1].body["text"].(string); !strings.Contains(text, `<a href="https://t/1">Тема</a>`) {
 		t.Errorf("fallback text lost links: %q", text)
 	}
 }
