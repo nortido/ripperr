@@ -70,13 +70,20 @@ func tgParts(ev Event) (title, name, ctx string) {
 	case msgBroken:
 		return m[msgTgBroken], pushName(ev.Subject), fmt.Sprintf(m[msgTgBrokenNote], arg(0))
 	case msgCheckFailed:
-		return m[msgPushCheckFailed], pushName(ev.Subject), arg(0)
+		return m[msgPushCheckFailed], pushName(ev.Subject), shortReason(arg(0))
 	case msgNoSpace:
 		return m[msgPushNoSpace], pushName(ev.Subject), fmt.Sprintf(m[msgNoSpaceNote], arg(0), arg(1))
 	case msgTrackerDown:
-		return m[msgTgTrackerDown], arg(0) + ": " + arg(1), m[msgTgTrackerDownNote]
+		return m[msgTgTrackerDown], arg(0) + ": " + shortReason(arg(1)), m[msgTgTrackerDownNote]
 	case msgTrackerUp:
 		return m[msgTgTrackerUp], arg(0), m[msgTgTrackerUpNote]
+	case msgMirrorSwitched:
+		return m[msgPushSwitched], arg(0) + ": " + arg(2), ""
+	case msgMirrorPaused:
+		return m[msgPushPaused], arg(0), fmt.Sprintf(m[msgPushConfirm], arg(1))
+	case msgMirrorDigest:
+		// подробности в приложении: в уведомлении только какие трекеры ждут решения
+		return m[msgPushMirrors], digestTrackers(ev.digest), ""
 	}
 	title, name, _ = strings.Cut(ev.plain(), "\n")
 	return title, name, ""

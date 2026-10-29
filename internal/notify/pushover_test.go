@@ -31,7 +31,7 @@ func TestSendPushoverForm(t *testing.T) {
 	})
 	n := New(Config{PushoverToken: "apptok", PushoverUser: "userkey"}, "")
 	long := strings.Repeat("ж", 2000)
-	ev := Event{Kind: KindUpdated, Text: long, Subject: "Релиз", URL: "https://example.com/t1"}
+	ev := Event{Kind: KindUpdated, Text: "Релиз:", Subject: long, URL: "https://example.com/t1"}
 	if err := n.sendPushover(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestSendPushoverForm(t *testing.T) {
 	if got := len([]rune(form.Get("message"))); got != 1024 {
 		t.Errorf("message runes = %d, want 1024", got)
 	}
-	if form.Get("title") != "Ripperr: Релиз" {
+	if form.Get("title") != "Релиз" {
 		t.Errorf("title = %q", form.Get("title"))
 	}
 	if form.Get("url") != "https://example.com/t1" {
@@ -111,5 +111,27 @@ func TestPushoverReady(t *testing.T) {
 	}
 	if !New(Config{PushoverToken: "t", PushoverUser: "u"}, "").HasTransport() {
 		t.Error("token+user is a transport")
+	}
+}
+
+func TestPushoverDigestIsShort(t *testing.T) {
+	var form url.Values
+	withPushover(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		form, _ = url.ParseQuery(string(b))
+		_, _ = io.WriteString(w, `{"status":1}`)
+	})
+	n := New(Config{PushoverToken: "t", PushoverUser: "u", Language: "ru"}, "")
+	if err := n.Send(context.Background(), MirrorDigestEvent(digestItems())); err != nil {
+		t.Fatal(err)
+	}
+	if form.Get("title") != "Зеркала трекеров ждут решения" || form.Get("message") != "kinozal, rutor" {
+		t.Errorf("title %q message %q", form.Get("title"), form.Get("message"))
+	}
+	if err := n.Send(context.Background(), TestEvent("")); err != nil {
+		t.Fatal(err)
+	}
+	if form.Get("message") == "" {
+		t.Error("pushover needs a non-empty message")
 	}
 }

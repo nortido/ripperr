@@ -51,10 +51,10 @@ func TestEventTextsByLanguage(t *testing.T) {
 			"Ошибка проверки раздачи: boom 100%", "Release check failed: boom 100%"},
 		{"test", TestEvent(""), "Ripperr: проверка связи", "Ripperr: connectivity test"},
 		{"digest", MirrorDigestEvent(digestItems()),
-			"Зеркала трекеров: kinozal: основной адрес kinozal.me вместо kinozal.tv; rutor: убрать rutor.a (не отвечает); " +
-				"rutor: убрать rutor.b (нет в списке Jackett); rutor: убрать rutor.c; kinozal: новое зеркало kinozal.guru ждет подтверждения",
-			"Tracker mirrors: kinozal: main address kinozal.me instead of kinozal.tv; rutor: remove rutor.a (not responding); " +
-				"rutor: remove rutor.b (not in the Jackett list); rutor: remove rutor.c; kinozal: new mirror kinozal.guru awaits confirmation"},
+			"Зеркала трекеров ждут решения:\nkinozal: основной адрес kinozal.me вместо kinozal.tv\nrutor: убрать rutor.a (не отвечает)\n" +
+				"rutor: убрать rutor.b (нет в списке Jackett)\nrutor: убрать rutor.c\nkinozal: новое зеркало kinozal.guru ждет подтверждения",
+			"Tracker mirrors need a decision:\nkinozal: main address kinozal.me instead of kinozal.tv\nrutor: remove rutor.a (not responding)\n" +
+				"rutor: remove rutor.b (not in the Jackett list)\nrutor: remove rutor.c\nkinozal: new mirror kinozal.guru awaits confirmation"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

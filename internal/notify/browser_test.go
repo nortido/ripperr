@@ -407,8 +407,6 @@ func pushOf(t *testing.T, lang string, ev Event) (title, body string) {
 }
 
 func TestBrowserPayloadShortText(t *testing.T) {
-	digestItems := []MirrorDigestItem{{Tracker: "rutracker", Kind: DigestRemove, Host: strings.Repeat("h", 160), Reason: DigestReasonDead}}
-	digest := MirrorDigestEvent(digestItems)
 	tests := []struct {
 		name      string
 		lang      string
@@ -422,8 +420,13 @@ func TestBrowserPayloadShortText(t *testing.T) {
 		{"broken en", "en", BrokenEvent("Show.S01", "u", 5), "Release ignored", "Show S01\nErrors in a row: 5"},
 		{"check failed ru", "ru", CheckFailedEvent("Game.v1.0.iso", "u", "HTTP 503"), "Ошибка проверки", "Game v1.0\nHTTP 503"},
 		{"check failed en", "en", CheckFailedEvent("Game.v1.0.iso", "u", "HTTP 503"), "Check failed", "Game v1.0\nHTTP 503"},
-		{"tracker down ru", "ru", TrackerDownEvent("rutracker", "timeout"), "Трекер rutracker недоступен: timeout", "Проверки этого трекера приостановлены."},
-		{"tracker up ru", "ru", TrackerUpEvent("rutracker"), "Трекер rutracker снова доступен, проверки возобновлены.", ""},
+		{"check failed long error", "en", CheckFailedEvent("Name", "u", strings.Repeat("e", 300)+"\nstack"), "Check failed", "Name\n" + strings.Repeat("e", maxReason-1) + "…"},
+		{"tracker down ru", "ru", TrackerDownEvent("rutracker", "timeout"), "Трекер недоступен", "rutracker: timeout\nПроверки трекера на паузе"},
+		{"tracker up ru", "ru", TrackerUpEvent("rutracker"), "Трекер снова доступен", "rutracker\nПроверки возобновлены"},
+		{"mirror switched ru", "ru", MirrorSwitchedEvent("selezen", "selezen.top", "use.selezen.club"), "Зеркало переключено", "selezen: use.selezen.club"},
+		{"mirror paused ru", "ru", MirrorPausedEvent("selezen", "selezen.net"), "Трекер на паузе", "selezen\nПодтвердите зеркало selezen.net"},
+		{"digest ru", "ru", MirrorDigestEvent(digestItems()), "Зеркала трекеров ждут решения", "kinozal, rutor"},
+		{"digest en", "en", MirrorDigestEvent(digestItems()), "Tracker mirrors need a decision", "kinozal, rutor"},
 		{"test ru", "ru", TestEvent(""), "проверка связи", ""},
 		{"test en", "en", TestEvent(""), "connectivity test", ""},
 		{"raw event keeps name", "en", Event{Kind: KindUpdated, Text: "Hello:", Subject: "A.B"}, "Hello", "A B"},
@@ -438,13 +441,10 @@ func TestBrowserPayloadShortText(t *testing.T) {
 	}
 
 	t.Run("long first line", func(t *testing.T) {
-		full := New(Config{}, "").localize(digest).Text
-		if len([]rune(full)) <= maxSubject {
-			t.Fatalf("digest text = %d runes, want > %d", len([]rune(full)), maxSubject)
-		}
-		title, body := pushOf(t, "en", digest)
-		if len([]rune(title)) != maxSubject || !strings.HasPrefix(full, title) || body != full {
-			t.Errorf("title = %d runes %q, body = %q, want %d rune title and body %q", len([]rune(title)), title, body, maxSubject, full)
+		long := Event{Kind: KindTest, Text: strings.Repeat("x", maxSubject+10)}
+		title, body := pushOf(t, "en", long)
+		if len([]rune(title)) != maxSubject || body != long.Text {
+			t.Errorf("title = %d runes, body = %q, want %d rune title and full body", len([]rune(title)), body, maxSubject)
 		}
 	})
 }

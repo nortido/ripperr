@@ -2,7 +2,10 @@ package notify
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+
+	"ripperr/internal/helper"
 )
 
 const (
@@ -43,6 +46,10 @@ const (
 	msgPushStreak      = "push_streak"
 	msgPushNoSpace     = "push_no_space"
 	msgNoSpaceNote     = "no_space_note"
+	msgPushMirrors     = "push_mirrors"
+	msgPushSwitched    = "push_switched"
+	msgPushPaused      = "push_paused"
+	msgPushConfirm     = "push_confirm"
 
 	msgTgBroken          = "tg_broken"
 	msgTgBrokenNote      = "tg_broken_note"
@@ -66,7 +73,7 @@ var messages = map[string]map[string]string{
 		msgTrackerDown:    "Tracker %s is unavailable: %s\nChecks of this tracker are paused.",
 		msgTrackerUp:      "Tracker %s is available again, checks resumed.",
 		msgMirrorSwitched: "Tracker %s: %s is not responding, checks switched to %s.",
-		msgMirrorDigest:   "Tracker mirrors: %s",
+		msgMirrorDigest:   "Tracker mirrors need a decision:\n%s",
 		msgMirrorPaused:   "Tracker %s is paused: only the new mirror %s responds. Confirm it in the tracker settings.",
 		msgCheckFailed:    "Release check failed: %s",
 		msgNoSpace:        "Not enough disk space to update the release: need %s GB, free %s GB. The old version stays, the update will be retried:",
@@ -84,6 +91,10 @@ var messages = map[string]map[string]string{
 		msgPushStreak:      "Errors in a row: %s",
 		msgPushNoSpace:     "Not enough disk space",
 		msgNoSpaceNote:     "Need %s GB, free %s GB",
+		msgPushMirrors:     "Tracker mirrors need a decision",
+		msgPushSwitched:    "Mirror switched",
+		msgPushPaused:      "Tracker paused",
+		msgPushConfirm:     "Confirm mirror %s",
 
 		msgTgBroken:          "Release moved to ignored",
 		msgTgBrokenNote:      "Errors in a row: %s, no longer checked",
@@ -101,7 +112,7 @@ var messages = map[string]map[string]string{
 		msgTrackerDown:    "Трекер %s недоступен: %s\nПроверки этого трекера приостановлены.",
 		msgTrackerUp:      "Трекер %s снова доступен, проверки возобновлены.",
 		msgMirrorSwitched: "Трекер %s: %s не отвечает, проверки переключены на %s.",
-		msgMirrorDigest:   "Зеркала трекеров: %s",
+		msgMirrorDigest:   "Зеркала трекеров ждут решения:\n%s",
 		msgMirrorPaused:   "Трекер %s на паузе: отвечает только новое зеркало %s. Подтвердите его в настройках трекера.",
 		msgCheckFailed:    "Ошибка проверки раздачи: %s",
 		msgNoSpace:        "Не хватает места на диске для обновления раздачи: нужно %s ГБ, свободно %s ГБ. Старая версия остается, обновление повторится:",
@@ -119,6 +130,10 @@ var messages = map[string]map[string]string{
 		msgPushStreak:      "Ошибок подряд: %s",
 		msgPushNoSpace:     "Не хватает места на диске",
 		msgNoSpaceNote:     "Нужно %s ГБ, свободно %s ГБ",
+		msgPushMirrors:     "Зеркала трекеров ждут решения",
+		msgPushSwitched:    "Зеркало переключено",
+		msgPushPaused:      "Трекер на паузе",
+		msgPushConfirm:     "Подтвердите зеркало %s",
 
 		msgTgBroken:          "Раздача ушла в игнор",
 		msgTgBrokenNote:      "Ошибок подряд: %s, больше не проверяется",
@@ -149,7 +164,7 @@ func (e Event) render(lang string) string {
 		for _, it := range e.digest {
 			parts = append(parts, digestPart(m, it))
 		}
-		return fmt.Sprintf(m[msgMirrorDigest], strings.Join(parts, "; "))
+		return fmt.Sprintf(m[msgMirrorDigest], strings.Join(parts, "\n"))
 	}
 	args := make([]any, len(e.args))
 	for i, a := range e.args {
@@ -173,6 +188,25 @@ func digestPart(m map[string]string, it MirrorDigestItem) string {
 		reason = m[msgReasonJackett]
 	}
 	return fmt.Sprintf(m[msgDigestRemove], it.Tracker, it.Host, reason)
+}
+
+func digestTrackers(items []MirrorDigestItem) string {
+	var names []string
+	for _, it := range items {
+		if !slices.Contains(names, it.Tracker) {
+			names = append(names, it.Tracker)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+func shortReason(s string) string {
+	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) > maxReason {
+		return helper.Substr(s, 0, maxReason-1) + "…"
+	}
+	return s
 }
 
 func (e Event) label() string {

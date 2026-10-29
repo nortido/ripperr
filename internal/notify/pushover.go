@@ -20,11 +20,16 @@ func (n *Notifier) pushoverReady() bool {
 }
 
 func (n *Notifier) sendPushover(ctx context.Context, ev Event) error {
-	message := helper.Substr(ev.plain(), 0, maxPushoverMessage)
+	title, body := pushText(ev)
+	if body == "" {
+		// Pushover не примет пустое сообщение
+		body = title
+	}
+	message := helper.Substr(body, 0, maxPushoverMessage)
 	form := url.Values{
 		"token": {n.cfg.PushoverToken},
 		"user":  {n.cfg.PushoverUser},
-		"title": {subjectLine(ev)},
+		"title": {title},
 	}
 	// длинную ссылку Pushover отклонит вместе со всем сообщением, а без ссылки уведомление тоже полезно
 	if ev.URL != "" && len([]rune(ev.URL)) <= maxPushoverURL {
@@ -36,7 +41,7 @@ func (n *Notifier) sendPushover(ctx context.Context, ev Event) error {
 			form.Set("url_title", ev.label())
 		} else {
 			// поле url одно и занято ссылкой на раздачу: ссылка приложения идет в текст
-			message = withLinkLine(ev.plain(), ev.label()+": "+ev.AppLink, maxPushoverMessage)
+			message = withLinkLine(body, ev.label()+": "+ev.AppLink, maxPushoverMessage)
 		}
 	}
 	form.Set("message", message)

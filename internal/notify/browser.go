@@ -22,6 +22,7 @@ import (
 
 const (
 	maxPushBody = 1000
+	maxReason   = 120
 	// токены FCM, Mozilla и Apple лежат в сегментах пути, у WNS в значении query
 	minSecretToken = 16
 )
@@ -138,9 +139,12 @@ func pushText(ev Event) (title, body string) {
 		return m[msgPushBroken], joinLines(name, reason)
 	case msgCheckFailed:
 		if len(ev.args) > 0 {
-			reason = ev.args[0]
+			reason = shortReason(ev.args[0])
 		}
 		return m[msgPushCheckFailed], joinLines(name, reason)
+	case msgTrackerDown, msgTrackerUp, msgMirrorSwitched, msgMirrorPaused, msgMirrorDigest:
+		title, name, note := tgParts(ev)
+		return title, joinLines(name, note)
 	case msgNoSpace:
 		if len(ev.args) > 1 {
 			reason = fmt.Sprintf(m[msgNoSpaceNote], ev.args[0], ev.args[1])

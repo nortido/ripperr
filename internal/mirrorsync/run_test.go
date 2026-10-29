@@ -633,7 +633,7 @@ func TestRunOnceNotifiesNewOnly(t *testing.T) {
 			t.Fatalf("digests = %d (%+v), want %d", len(*sent), *sent, len(want))
 		}
 		for i, ev := range *sent {
-			if ev.Kind != notify.KindMirrorSwitched || ev.Text != "Tracker mirrors: "+want[i] {
+			if ev.Kind != notify.KindMirrorSwitched || ev.Text != "Tracker mirrors need a decision:\n"+want[i] {
 				t.Errorf("digest %d = %+v, want text %q", i, ev, want[i])
 			}
 		}

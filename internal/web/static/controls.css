@@ -727,6 +727,10 @@
   margin-left: -8px;
 }
 
+.event-text {
+  white-space: pre-line;
+}
+
 .event-success .event-icon {
   color: var(--success);
 }

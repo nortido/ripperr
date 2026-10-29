@@ -974,7 +974,7 @@ func TestErrorsHideWebhookURLSecrets(t *testing.T) {
 
 func TestMirrorEventsMerged(t *testing.T) {
 	digest := MirrorDigestEvent([]MirrorDigestItem{{Tracker: "a", Kind: DigestConfirm, Host: "a.x"}, {Tracker: "b", Kind: DigestRemove, Host: "b.x"}})
-	if digest.Kind != KindMirrorSwitched || digest.Text != "Tracker mirrors: a: new mirror a.x awaits confirmation; b: remove b.x" {
+	if digest.Kind != KindMirrorSwitched || digest.Text != "Tracker mirrors need a decision:\na: new mirror a.x awaits confirmation\nb: remove b.x" {
 		t.Fatalf("digest = %+v", digest)
 	}
 	paused := MirrorPausedEvent("kinozal", "kinozal.xyz")
