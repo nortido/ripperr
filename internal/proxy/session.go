@@ -24,6 +24,19 @@ type sessionGate struct {
 
 var sessionLocks sessionGate
 
+// FlareSolverr обслуживает 4 запроса разом и делит их с Prowlarr; Chrome на каждый запрос тяжелый,
+// поэтому все трекеры вместе держат не больше одного
+var flareSlots = make(chan struct{}, 1)
+
+func acquireFlareSlot(ctx context.Context) (release func(), err error) {
+	select {
+	case flareSlots <- struct{}{}:
+		return func() { <-flareSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (g *sessionGate) lock(ctx context.Context, id string) (unlock func(), err error) {
 	// KeyedMutex после Delete отдает новичку свежий мьютекс рядом с ожидающим старого, поэтому свой счетчик ссылок
 	g.mu.Lock()
@@ -68,6 +81,11 @@ func (f *client) DestroyFlareSession(ctx context.Context, sessionID string) (err
 		return err
 	}
 	defer unlock()
+	release, err := acquireFlareSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	var (
 		data []byte

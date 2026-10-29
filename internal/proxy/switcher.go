@@ -34,6 +34,11 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 			}
 			defer unlock()
 		}
+		var release func()
+		if release, err = acquireFlareSlot(r.Context()); err != nil {
+			return
+		}
+		defer release()
 		params = fmapper.PrepareParams(r, opts)
 		if fres, err = f.fl.Send(r, params); err != nil {
 			return

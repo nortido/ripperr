@@ -31,6 +31,7 @@ type Payload struct {
 	MaxTimeout  int     `json:"maxTimeout"`
 	PostData    string  `json:"postData,omitempty"`
 	Session     string  `json:"session,omitempty"`
+	SessionTTL  int     `json:"session_ttl_minutes,omitempty"`
 }
 
 type Response struct {

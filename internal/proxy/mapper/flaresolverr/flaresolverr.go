@@ -12,12 +12,18 @@ import (
 
 const responseOK = "ok"
 
+// браузер сессии копит память; раз в 6 ч FlareSolverr пересоздает его сам, куки форума уходят с запросом
+const sessionTTLMinutes = 360
+
 func PrepareParams(r *http.Request, opts *proxy.Options) (params *Payload) {
 	params = &Payload{
 		URL: r.URL.String(),
 	}
 	if opts != nil {
 		params.Session = opts.Session
+		if opts.Session != "" {
+			params.SessionTTL = sessionTTLMinutes
+		}
 		params.OnlyCookies = opts.OnlyCookies
 		if len(opts.Cookies) > 0 {
 			params.Cookies = cookiesForFlare(opts.Cookies)

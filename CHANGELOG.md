@@ -2,6 +2,12 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.7.2] - 2026-10-29
+
+### Changed
+- Lighter load on a shared FlareSolverr: Ripperr sends at most one request to it at a time for all trackers, so Prowlarr and other apps are not starved.
+- The FlareSolverr browser session is recreated every 6 hours to free memory. No new password login is needed.
+
 ## [2.7.1] - 2026-10-29
 
 ### Fixed

@@ -122,3 +122,21 @@ func TestBuildResponseErrorKeepsMessage(t *testing.T) {
 		t.Fatal("IsFlareTimeout must match")
 	}
 }
+
+func TestPrepareParamsSessionTTL(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodGet, "https://rutracker.org/forum/index.php", nil)
+	raw, err := json.Marshal(PrepareParams(req, &proxy.Options{Session: "rutracker"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"session_ttl_minutes":360`) {
+		t.Fatalf("session request without 6 h ttl: %s", raw)
+	}
+	raw, err = json.Marshal(PrepareParams(req, &proxy.Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "session_ttl_minutes") {
+		t.Fatalf("ttl sent without a session: %s", raw)
+	}
+}
