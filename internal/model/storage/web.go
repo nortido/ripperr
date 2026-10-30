@@ -42,3 +42,13 @@ type IgnoreEntry struct {
 	ItemURL  string
 	AddedAt  time.Time
 }
+
+type ReleaseInfo struct {
+	Name        string
+	HistoryName string
+	Status      string
+	Error       string
+	CheckedAt   *time.Time
+	RecheckAt   *time.Time
+	AddedAt     *time.Time
+}

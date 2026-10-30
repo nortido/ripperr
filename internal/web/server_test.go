@@ -47,6 +47,9 @@ type fakeStore struct {
 	purgedRows       int64
 	deletedTrackers  []int
 	newReleases      map[string]bool
+	releaseInfo      map[string]storage.ReleaseInfo
+	releaseTimes     map[string][]time.Time
+	releaseErr       error
 }
 
 func dedupeCheckLogByName(items []storage.CheckLogEntry) []storage.CheckLogEntry {
@@ -234,6 +237,18 @@ func (f *fakeStore) DeleteTracker(_ context.Context, trackerID int) error {
 
 func (f *fakeStore) Ping(context.Context) error {
 	return f.pingErr
+}
+
+func (f *fakeStore) ReleaseInfo(_ context.Context, urlHash string) (storage.ReleaseInfo, bool, error) {
+	if f.releaseErr != nil {
+		return storage.ReleaseInfo{}, false, f.releaseErr
+	}
+	info, ok := f.releaseInfo[urlHash]
+	return info, ok, nil
+}
+
+func (f *fakeStore) RecentReleaseTimes(_ context.Context, urlHash string, _ time.Time, _ int) ([]time.Time, error) {
+	return f.releaseTimes[urlHash], nil
 }
 
 func newBareServer(store *fakeStore) *Server {

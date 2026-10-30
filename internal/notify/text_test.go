@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/quotedprintable"
 	"net/http"
@@ -184,5 +185,16 @@ func TestNotifyWebhookTextFollowsLanguage(t *testing.T) {
 			t.Errorf("lang %q: no webhook call", lang)
 		}
 		srv.Close()
+	}
+}
+
+func TestCheckFailedReason(t *testing.T) {
+	for _, lang := range []string{LangRU, LangEN} {
+		if got := CheckFailedReason(fmt.Sprintf(messages[lang][msgCheckFailed], "boom\nx")); got != "boom\nx" {
+			t.Errorf("lang %q reason = %q, want %q", lang, got, "boom\nx")
+		}
+	}
+	if got := CheckFailedReason("free text"); got != "free text" {
+		t.Errorf("unknown text = %q, want unchanged", got)
 	}
 }

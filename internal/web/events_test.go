@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -15,10 +17,12 @@ import (
 )
 
 type fakeEvents struct {
-	mu        sync.Mutex
-	items     []storage.EventEntry
-	added     []storage.EventEntry
-	lastLimit int
+	mu           sync.Mutex
+	items        []storage.EventEntry
+	added        []storage.EventEntry
+	lastLimit    int
+	lastSubjects []string
+	lastKinds    []string
 }
 
 func (f *fakeEvents) AddEvent(_ context.Context, e storage.EventEntry) error {
@@ -33,6 +37,24 @@ func (f *fakeEvents) ListEvents(_ context.Context, limit int) ([]storage.EventEn
 	defer f.mu.Unlock()
 	f.lastLimit = limit
 	return f.items, nil
+}
+
+func (f *fakeEvents) ListSubjectEvents(_ context.Context, subjects, kinds []string, limit int) ([]storage.EventEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastSubjects = subjects
+	f.lastKinds = kinds
+	var out []storage.EventEntry
+	for _, e := range f.items {
+		if slices.Contains(subjects, e.Subject) && slices.Contains(kinds, e.Kind) {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func newEventsServer(fe *fakeEvents) *Server {

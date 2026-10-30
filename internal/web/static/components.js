@@ -28,22 +28,8 @@ export function cancelClose(el) {
   el.classList.remove('is-closing');
 }
 
-export function bindErrorBadges(root) {
-  root.querySelectorAll('.status-error-badge').forEach(function (badge) {
-    badge.addEventListener('click', function (e) {
-      e.stopPropagation();
-      const err = badge.getAttribute('data-error') || '';
-      closePopovers(true);
-      const pop = document.createElement('div');
-      pop.className = 'error-popover';
-      pop.textContent = err;
-      document.body.appendChild(pop);
-      const rect = badge.getBoundingClientRect();
-      pop.style.top = (rect.bottom + window.scrollY + 4) + 'px';
-      pop.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8) + 'px';
-      activeErrorPopover = pop;
-    });
-  });
+export function setActivePopover(pop) {
+  activeErrorPopover = pop;
 }
 
 export function closePopovers(force) {
@@ -58,6 +44,7 @@ export function closePopovers(force) {
   if (!pop) return;
   activeErrorPopover = null;
   if (pop.hintOwner) pop.hintOwner.setAttribute('aria-expanded', 'false');
+  if (pop.onPopClose) pop.onPopClose();
   clearTimeout(pop.hintTimer);
   if (force) {
     pop.remove();

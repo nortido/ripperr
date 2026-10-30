@@ -861,6 +861,19 @@ html.mobile-layout body:has(.modal-overlay:not(.confirm-overlay)) .mobile-header
   pointer-events: none;
 }
 
+/* история обновлений остается нижней шторкой, а не страницей на весь экран */
+html.mobile-layout .modal-overlay.relhist-overlay {
+  top: 0;
+  align-items: flex-end;
+}
+
+html.mobile-layout .modal-overlay.relhist-overlay > .modal {
+  max-height: 80vh;
+  max-height: 80dvh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
 /* на телефоне поля интеграций по одному в строке: в два столбца длинные
    подписи переносились и сдвигали поле ниже соседнего */
 html.mobile-layout #view-integrations .form-row {

@@ -304,3 +304,49 @@ func TestRecordEventSecondBatchAfterFlusherExit(t *testing.T) {
 		}
 	}
 }
+
+func TestListSubjectEvents(t *testing.T) {
+	c := newTestClient(t)
+	now := time.Now()
+	rows := []struct {
+		kind, subject, text string
+		age                 time.Duration
+	}{
+		{"updated", "A", "a1", time.Hour},
+		{"check_failed", "A", "a2", 2 * time.Hour},
+		{"tracker_down", "A", "a3", time.Hour},
+		{"updated", "B", "b1", time.Hour},
+		{"updated", "A2", "a4", 3 * time.Hour},
+		{"updated", "A", "a5", 31 * 24 * time.Hour},
+	}
+	for _, r := range rows {
+		if _, err := c.db.Exec(`INSERT INTO events (created_at, source, kind, text, subject) VALUES (?, 'server', ?, ?, ?)`,
+			now.Add(-r.age).Unix(), r.kind, r.text, r.subject); err != nil {
+			t.Fatal(err)
+		}
+	}
+	subjects := []string{"A", "A2"}
+	kinds := []string{"updated", "check_failed"}
+
+	got, err := c.ListSubjectEvents(t.Context(), subjects, kinds, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var texts []string
+	for _, e := range got {
+		texts = append(texts, e.Text)
+	}
+	if !slices.Equal(texts, []string{"a1", "a2", "a4"}) {
+		t.Fatalf("texts = %v, want [a1 a2 a4]", texts)
+	}
+
+	if got, err = c.ListSubjectEvents(t.Context(), subjects, kinds, 2); err != nil || len(got) != 2 {
+		t.Fatalf("limit 2: len=%d err=%v, want 2 nil", len(got), err)
+	}
+	if got, err = c.ListSubjectEvents(t.Context(), nil, kinds, 10); err != nil || len(got) != 0 {
+		t.Fatalf("empty subjects: len=%d err=%v, want 0 nil", len(got), err)
+	}
+	if got, err = c.ListSubjectEvents(t.Context(), subjects, nil, 10); err != nil || len(got) != 0 {
+		t.Fatalf("empty kinds: len=%d err=%v, want 0 nil", len(got), err)
+	}
+}

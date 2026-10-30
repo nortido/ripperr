@@ -40,11 +40,14 @@ type store interface {
 	GetTracker(ctx context.Context, trackerID int) (*tracker.Tracker, error)
 	PurgeCategoriesExcept(ctx context.Context, allowed []string) (int64, error)
 	DeleteTracker(ctx context.Context, trackerID int) error
+	ReleaseInfo(ctx context.Context, urlHash string) (storage.ReleaseInfo, bool, error)
+	RecentReleaseTimes(ctx context.Context, urlHash string, since time.Time, limit int) ([]time.Time, error)
 }
 
 type eventStore interface {
 	AddEvent(ctx context.Context, e storage.EventEntry) error
 	ListEvents(ctx context.Context, limit int) ([]storage.EventEntry, error)
+	ListSubjectEvents(ctx context.Context, subjects, kinds []string, limit int) ([]storage.EventEntry, error)
 }
 
 // сборка задает через -ldflags "-X ripperr/internal/web.Version=..."
@@ -119,6 +122,7 @@ func New(db store, reload func(), effective func() config.App, listen string, ru
 	mux.HandleFunc("GET /api/history/add", s.handleAddOptions)
 	mux.HandleFunc("POST /api/history/add", withMaxBody(s.handleAddRelease))
 	mux.HandleFunc("GET /api/history/{hash}/remove", s.handleRemovalInfo)
+	mux.HandleFunc("GET /api/history/{hash}/timeline", s.handleReleaseTimeline)
 	mux.HandleFunc("POST /api/history/{hash}/remove", withMaxBody(s.handleRemoveRelease))
 	mux.HandleFunc("POST /api/history/{hash}/redownload", withMaxBody(s.handleRedownload))
 	mux.HandleFunc("GET /api/categories", s.handleGetCategories)

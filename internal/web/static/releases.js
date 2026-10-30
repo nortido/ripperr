@@ -1,5 +1,5 @@
 import { fetchJSON, showToast } from './api.js';
-import { bindErrorBadges } from './components.js';
+import { bindReleaseHistory } from './relhistory.js';
 import { dashboardServerRunning, effectiveRunning, loadDashboard, nextDashboardFetchGen, pollDashboardStatus, setRunPending, updateRunStatusUI } from './dashboard.js';
 import { confirmDialog } from './confirm.js';
 import { hydrateIcons, ICONS, icon } from './icons.js';
@@ -358,7 +358,7 @@ export function buildReleaseRows(histItems) {
     const rowCls = rowClsValue ? html` class="${rowClsValue}"` : '';
     const absentLabel = item.absent ? html`<span class="release-absent" title="${t('dash.absentTitle')}">${t('dash.absent')}</span>` : '';
     const trackerBadge = trackerBadgeHtml(item.tracker_name);
-    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}${absentLabel}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button>${moreButtonHtml(urlHash, item.absent)}</div></td></tr>`);
+    rows.push(html`<tr${rowCls} data-release-hash="${urlHash}"><td class="col-name"><div class="release-title-wrap">${linkCell(item.name, item.url)}${absentLabel}</div><div class="release-foot">${trackerBadge}</div></td><td class="col-tracker">${trackerBadge}</td><td class="col-category">${categoryBadgeHtml(item)}</td><td class="col-status">${statusIcon(item.status, item.error_streak)}</td>${releaseTimeCellHtml(item)}<td class="col-actions"><div class="release-actions">${planForceButtonHtml(urlHash, forced)}<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" data-url="${item.url || ''}" data-name="${item.name || ''}" data-hash="${urlHash}">${ignoreButtonIconsHtml(ignored)}</button>${moreButtonHtml(urlHash, item.absent)}</div></td></tr>`);
   });
   return html`${rows}`;
 }
@@ -559,5 +559,5 @@ export function bindDashboardReleaseRows(root) {
     });
   });
 
-  bindErrorBadges(el);
+  bindReleaseHistory(el);
 }

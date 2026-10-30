@@ -231,3 +231,13 @@ func (n *Notifier) localize(ev Event) Event {
 	ev.linkLabel = messages[lang][msgAppLink]
 	return ev
 }
+
+func CheckFailedReason(text string) string {
+	for _, m := range messages {
+		prefix, _, ok := strings.Cut(m[msgCheckFailed], "%s")
+		if ok && prefix != "" && strings.HasPrefix(text, prefix) {
+			return strings.TrimPrefix(text, prefix)
+		}
+	}
+	return text
+}

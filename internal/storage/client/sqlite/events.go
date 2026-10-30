@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,15 +147,46 @@ func (c *Client) ListEvents(ctx context.Context, limit int) ([]storage.EventEntr
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
+	return scanEvents(rows)
+}
+
+func (c *Client) ListSubjectEvents(ctx context.Context, subjects, kinds []string, limit int) ([]storage.EventEntry, error) {
+	if len(subjects) == 0 || len(kinds) == 0 {
+		return nil, nil
+	}
+	args := []any{time.Now().Add(-eventsMaxAge).Unix()}
+	for _, k := range kinds {
+		args = append(args, k)
+	}
+	for _, s := range subjects {
+		args = append(args, s)
+	}
+	args = append(args, limit)
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, created_at, source, kind, text, subject, app_path FROM events WHERE created_at >= ?`+
+			` AND kind IN (`+placeholders(len(kinds))+`) AND subject IN (`+placeholders(len(subjects))+`)`+
+			` ORDER BY created_at DESC, id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanEvents(rows)
+}
+
+func scanEvents(rows *sql.Rows) ([]storage.EventEntry, error) {
 	var out []storage.EventEntry
 	for rows.Next() {
 		var e storage.EventEntry
 		var at int64
-		if err = rows.Scan(&e.ID, &at, &e.Source, &e.Kind, &e.Text, &e.Subject, &e.AppPath); err != nil {
+		if err := rows.Scan(&e.ID, &at, &e.Source, &e.Kind, &e.Text, &e.Subject, &e.AppPath); err != nil {
 			return nil, err
 		}
 		e.At = time.Unix(at, 0)
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }

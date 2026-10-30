@@ -331,6 +331,114 @@ body:has(.offline-banner.visible) .content {
   transform-origin: top center;
 }
 
+.modal.relhist-modal {
+  max-width: 440px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.relhist-headtext {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.relhist-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relhist-count,
+.relhist-sub,
+.relhist-time,
+.relhist-foot,
+.relhist-empty,
+.relhist-name {
+  color: var(--text-muted);
+}
+
+.relhist-count,
+.relhist-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.relhist-current {
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--danger-bg);
+  border-radius: var(--radius);
+}
+
+.relhist-current-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.relhist-current-text {
+  max-height: 10em;
+  margin-top: 6px;
+  overflow-y: auto;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.relhist-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.relhist-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.relhist-row .status-icon,
+.relhist-current .status-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.relhist-row .status-icon svg,
+.relhist-current .status-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.relhist-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.relhist-sub {
+  font-size: 12px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.relhist-empty {
+  padding: 6px 0;
+}
+
+.relhist-foot {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
 /* панели, что живут в DOM постоянно: вход по классу open, выход по is-closing.
    Кадр закрытия держит closeAnimated (POP_CLOSE_MS в components.js), потом панель скрывают.
    Новые узлы (поповеры, диалоги) играют вход сразу при вставке */

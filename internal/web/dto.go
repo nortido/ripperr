@@ -160,3 +160,21 @@ type releaseErrResp struct {
 	Error string `json:"error"`
 	Code  string `json:"code,omitempty"`
 }
+
+type timelineEntryResp struct {
+	Kind       string `json:"kind"`
+	At         string `json:"at"`
+	ReleasedAt string `json:"released_at,omitempty"`
+	Text       string `json:"text,omitempty"`
+}
+
+type timelineResp struct {
+	Name        string              `json:"name"`
+	Status      string              `json:"status"`
+	Error       string              `json:"error"`
+	CheckedAt   string              `json:"checked_at"`
+	RecheckAt   string              `json:"recheck_at"`
+	UpdateCount int                 `json:"update_count"`
+	PeriodDays  int                 `json:"period_days"`
+	Entries     []timelineEntryResp `json:"entries"`
+}

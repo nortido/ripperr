@@ -291,7 +291,7 @@ export function linkCell(name, url) {
   return html`<span class="release-link"${titleAttr}>${label}</span>`;
 }
 
-export function statusIcon(status, error, streak) {
+export function statusMeta(status) {
   let cls = 'status-icon';
   let iconName = 'help';
   let label = status || t('common.emDash');
@@ -316,16 +316,15 @@ export function statusIcon(status, error, streak) {
     iconName = 'plus';
     label = t('status.new');
   }
-  // полный текст ошибки только в попапе по клику: подсказка при наведении дублировала
-  // его и закрывала соседние строки. unknown кладет в то же поле кусок страницы трекера,
-  // поэтому значок тот же
-  const attrs = (status === 'error' || status === 'unknown') && error
-    ? html` data-error="${error}" class="${cls} status-error-badge"`
-    : html` class="${cls}"`;
+  return { cls: cls, iconName: iconName, label: label };
+}
+
+export function statusIcon(status, streak) {
+  const m = statusMeta(status);
   const badge = streak > 1
     ? html`<span class="streak-badge" title="${t('dash.streakTitle').replace('{n}', String(streak))}">${streak}</span>`
     : '';
-  return html`<span${attrs} title="${label}" aria-label="${label}">${icon(iconName)}</span>${badge}`;
+  return html`<span class="${m.cls} status-history-badge" role="button" tabindex="0" aria-haspopup="dialog" title="${m.label}" aria-label="${m.label}">${icon(m.iconName)}</span>${badge}`;
 }
 
 

@@ -1440,3 +1440,48 @@ func TestUpdateNewCategories(t *testing.T) {
 		t.Fatalf("repeat = %d, %v, want 0, nil", n, err)
 	}
 }
+
+func TestReleaseInfo(t *testing.T) {
+	c := newTestClient(t)
+	ctx := t.Context()
+
+	if _, found, err := c.ReleaseInfo(ctx, "nope"); err != nil || found {
+		t.Fatalf("unknown hash: found=%v err=%v, want false nil", found, err)
+	}
+
+	first := time.Now().Add(time.Hour).Truncate(time.Second)
+	if ok, err := c.AddNewRelease(ctx, &storage.CheckLogEntry{URLHash: "h1", ItemName: "Show"}, first); err != nil || !ok {
+		t.Fatalf("add new: ok=%v err=%v", ok, err)
+	}
+	info, found, err := c.ReleaseInfo(ctx, "h1")
+	if err != nil || !found {
+		t.Fatalf("new row: found=%v err=%v, want true nil", found, err)
+	}
+	if info.Name != "Show" || info.Status != "new" || info.CheckedAt != nil || info.AddedAt == nil {
+		t.Fatalf("new row = %+v, want Show/new, CheckedAt nil, AddedAt set", info)
+	}
+	if info.RecheckAt == nil || !info.RecheckAt.Equal(first) {
+		t.Fatalf("new row RecheckAt = %v, want %v", info.RecheckAt, first)
+	}
+
+	recheck := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	if err = c.AddItem(ctx, &storage.Item{URLHash: "h2", Name: "Old", RecheckAt: &recheck}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.AddCheckLog(ctx, &storage.CheckLogEntry{URLHash: "h2", ItemName: "New", Status: "error", Error: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	info, found, err = c.ReleaseInfo(ctx, "h2")
+	if err != nil || !found {
+		t.Fatalf("checked row: found=%v err=%v, want true nil", found, err)
+	}
+	if info.Name != "New" || info.HistoryName != "Old" || info.Status != "error" || info.Error != "boom" {
+		t.Fatalf("checked row = %+v, want New/Old/error/boom", info)
+	}
+	if info.CheckedAt == nil || info.AddedAt != nil {
+		t.Fatalf("checked row CheckedAt=%v AddedAt=%v, want set and nil", info.CheckedAt, info.AddedAt)
+	}
+	if info.RecheckAt == nil || !info.RecheckAt.Equal(recheck) {
+		t.Fatalf("checked row RecheckAt = %v, want %v", info.RecheckAt, recheck)
+	}
+}

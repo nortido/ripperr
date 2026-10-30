@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -272,6 +273,10 @@ func (c *Client) UpdateNewCategories(ctx context.Context, cats map[string]string
 // у строки без истории категорию помнит опрос, история появится только после удачной проверки
 const categoryExpr = `CASE WHEN h.url_hash IS NULL THEN COALESCE(c.new_category, '') ELSE COALESCE(h.category_name, '') END`
 
+// у строки new без истории checked_at это время первой проверки: наружу она идет как recheck_at
+const isNew = `(h.url_hash IS NULL AND c.status = 'new')`
+const recheckExpr = `CASE WHEN ` + isNew + ` THEN c.checked_at ELSE h.recheck_at END`
+
 func checkLogFilterClause(f storage.CheckLogFilter) (join, clause string, args []any) {
 	join = ` LEFT JOIN history h ON h.url_hash = c.url_hash`
 	if f.IgnoredOnly {
@@ -317,9 +322,6 @@ func (c *Client) ListCheckLog(ctx context.Context, f storage.CheckLogFilter) ([]
 	from := `check_log c`
 	join, clause, args := checkLogFilterClause(f)
 	countQ := "SELECT COUNT(*) FROM " + from + join
-	// у строки new без истории checked_at это время первой проверки: наружу она идет как recheck_at
-	const isNew = `(h.url_hash IS NULL AND c.status = 'new')`
-	const recheckExpr = `CASE WHEN ` + isNew + ` THEN c.checked_at ELSE h.recheck_at END`
 	listQ := `SELECT c.id, CASE WHEN ` + isNew + ` THEN 0 ELSE c.checked_at END, c.url_hash, c.item_name, c.item_url, c.tracker_type_id, c.status, c.error, c.error_streak,
 	          ` + categoryExpr + `, ` + recheckExpr + `, COALESCE(h.force_check, 0)
 	          FROM ` + from + join
@@ -687,4 +689,23 @@ func (c *Client) RecentReleaseTimes(ctx context.Context, urlHash string, since t
 		out = append(out, time.Unix(v, 0))
 	}
 	return out, rows.Err()
+}
+
+func (c *Client) ReleaseInfo(ctx context.Context, urlHash string) (storage.ReleaseInfo, bool, error) {
+	var info storage.ReleaseInfo
+	var checkedAt, recheckAt, addedAt sql.NullInt64
+	err := c.db.QueryRowContext(ctx,
+		`SELECT c.item_name, COALESCE(h.item_name, ''), c.status, c.error, CASE WHEN `+isNew+` THEN NULL ELSE c.checked_at END, `+recheckExpr+`, c.appeared_at
+		 FROM check_log c LEFT JOIN history h ON h.url_hash = c.url_hash WHERE c.url_hash = ?`, urlHash).
+		Scan(&info.Name, &info.HistoryName, &info.Status, &info.Error, &checkedAt, &recheckAt, &addedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storage.ReleaseInfo{}, false, nil
+	}
+	if err != nil {
+		return storage.ReleaseInfo{}, false, err
+	}
+	info.CheckedAt = timeFromNull(checkedAt)
+	info.RecheckAt = timeFromNull(recheckAt)
+	info.AddedAt = timeFromNull(addedAt)
+	return info, true, nil
 }
