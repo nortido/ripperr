@@ -125,8 +125,10 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 		Transport: helper.DirectTransport(),
 	}, &proxyModel.Config{
 		Flaresolverr: proxyModel.ItemConfig{
-			URL:        cfg.Flaresolverr.Host,
-			MaxTimeout: cfg.Flaresolverr.MaxTimeout,
+			URL:         cfg.Flaresolverr.Host,
+			MaxTimeout:  cfg.Flaresolverr.MaxTimeout,
+			CaptureHost: cfg.Flaresolverr.CaptureHost,
+			CapturePort: cfg.Flaresolverr.CapturePort,
 		},
 	})
 

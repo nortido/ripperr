@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
+	"sync"
 	"time"
 
 	"ripperr/internal/config"
@@ -28,6 +30,8 @@ var (
 )
 
 var loginTransport = helper.ProxyTransport
+
+var loginTLSDoer func(tlsclient.Config) (helper.HTTPDoer, error)
 
 type loginDB interface {
 	GetTracker(ctx context.Context, trackerID int) (*trackerModel.Tracker, error)
@@ -87,8 +91,10 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		Transport: helper.DirectTransport(),
 	}, &proxyModel.Config{
 		Flaresolverr: proxyModel.ItemConfig{
-			URL:        cfg.Flaresolverr.Host,
-			MaxTimeout: cfg.Flaresolverr.MaxTimeout,
+			URL:         cfg.Flaresolverr.Host,
+			MaxTimeout:  cfg.Flaresolverr.MaxTimeout,
+			CaptureHost: cfg.Flaresolverr.CaptureHost,
+			CapturePort: cfg.Flaresolverr.CapturePort,
 		},
 	})
 
@@ -107,7 +113,7 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		MaxFailures: cfg.Runner.CBRetries,
 		Timeout:     time.Duration(cfg.Runner.CBMinutesToRetry) * time.Minute,
 	})
-	var opts []client.Option
+	opts := []client.Option{client.WithTLSSession(client.NewTLSSession(loginTLSDoer))}
 	if p, ok := tr.(client.FlareSessionProvider); ok && p.FlareSession() != "" {
 		suffix := make([]byte, 4)
 		if _, err = rand.Read(suffix); err != nil {
@@ -115,7 +121,7 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		}
 		id := p.FlareSession() + "-test-" + hex.EncodeToString(suffix)
 		opts = append(opts, client.WithFlareSession(id))
-		if tr.GetProxyType() == proxyModel.TypeFlare {
+		if pt := tr.GetProxyType(); pt == proxyModel.TypeFlare || pt == proxyModel.TypeTLS {
 			// ctx вызывающего мог истечь, а тестовый браузер во FlareSolverr должен закрыться
 			defer func() {
 				dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
@@ -124,6 +130,7 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 			}()
 		}
 	}
+	seedCloudflareClearance(cj, tr.GetHost())
 	tc := client.New(hc, downloadHC, tr, px, cb, opts...)
 
 	attrs, err := db.GetTracker(ctx, tid)
@@ -160,4 +167,35 @@ func buildHandlerRegistry(conf trackerModel.TrackerConfig) map[int]client.ITrack
 		handlerRegistry[d.ID] = d.New(t)
 	}
 	return handlerRegistry
+}
+
+var (
+	liveJarMu sync.Mutex
+	liveJar   http.CookieJar
+)
+
+func setLiveJar(j http.CookieJar) {
+	liveJarMu.Lock()
+	defer liveJarMu.Unlock()
+	liveJar = j
+}
+
+func seedCloudflareClearance(dst http.CookieJar, host string) {
+	liveJarMu.Lock()
+	src := liveJar
+	liveJarMu.Unlock()
+	u, err := url.Parse(host + "/")
+	if src == nil || err != nil {
+		return
+	}
+	// только допуск Cloudflare: вход тест обязан пройти сам, по логину и паролю
+	var cf []*http.Cookie
+	for _, c := range src.Cookies(u) {
+		if c.Name == "cf_clearance" {
+			cf = append(cf, &http.Cookie{Name: c.Name, Value: c.Value, Path: "/"})
+		}
+	}
+	if len(cf) > 0 {
+		dst.SetCookies(u, cf)
+	}
 }

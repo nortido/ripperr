@@ -866,7 +866,8 @@
 
 /* круг из точек крутится шагами по точке, плавное вращение его размывает */
 .btn-action-more.is-spinning [data-icon="loader"] svg,
-#dash-add-btn.is-spinning [data-icon="loader"] svg {
+#dash-add-btn.is-spinning [data-icon="loader"] svg,
+.btn-test.is-spinning [data-icon="loader"] svg {
   animation-duration: 0.9s;
   animation-timing-function: steps(8);
 }

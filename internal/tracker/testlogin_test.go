@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"ripperr/internal/config"
 	"ripperr/internal/helper"
+	"ripperr/internal/helper/tlsclient"
 	proxyModel "ripperr/internal/model/proxy"
 	trackerModel "ripperr/internal/model/tracker"
 	"ripperr/internal/tracker/client"
@@ -162,19 +164,43 @@ type flarePayload struct {
 	Session string `json:"session"`
 }
 
-func TestTestLoginUsesOwnFlareSession(t *testing.T) {
-	var (
-		mu       sync.Mutex
-		payloads []flarePayload
-	)
+type loginPageDoer struct {
+	mu      sync.Mutex
+	urls    []string
+	cookies []string
+}
+
+func (d *loginPageDoer) Do(req *http.Request) (*http.Response, error) {
+	d.mu.Lock()
+	d.urls = append(d.urls, req.URL.String())
+	d.cookies = append(d.cookies, req.Header.Get("Cookie"))
+	d.mu.Unlock()
+	res := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("<html>ok</html>")), Request: req}
+	res.Header.Add("Set-Cookie", "bb_session=0-1-abc; Path=/")
+	return res, nil
+}
+
+type offlineLogin struct {
+	mu       sync.Mutex
+	payloads []flarePayload
+	pages    *loginPageDoer
+}
+
+func runOfflineRutrackerLogin(t *testing.T) *offlineLogin {
+	t.Helper()
+	o := &offlineLogin{pages: &loginPageDoer{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			_, _ = io.WriteString(w, `{"msg":"FlareSolverr is ready!","userAgent":"ua"}`)
+			return
+		}
 		var p flarePayload
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			t.Errorf("decode payload: %v", err)
 		}
-		mu.Lock()
-		payloads = append(payloads, p)
-		mu.Unlock()
+		o.mu.Lock()
+		o.payloads = append(o.payloads, p)
+		o.mu.Unlock()
 		if p.Cmd == "sessions.destroy" {
 			_, _ = io.WriteString(w, `{"status":"ok"}`)
 			return
@@ -182,6 +208,8 @@ func TestTestLoginUsesOwnFlareSession(t *testing.T) {
 		_, _ = io.WriteString(w, `{"status":"ok","solution":{"status":200,"response":"<html>ok</html>","userAgent":"ua"}}`)
 	}))
 	t.Cleanup(srv.Close)
+	loginTLSDoer = func(tlsclient.Config) (helper.HTTPDoer, error) { return o.pages, nil }
+	t.Cleanup(func() { loginTLSDoer = nil })
 
 	cfg := config.App{
 		Runner:       config.Runner{TLSProfile: "chrome_131"},
@@ -198,32 +226,59 @@ func TestTestLoginUsesOwnFlareSession(t *testing.T) {
 	if err := TestLogin(context.Background(), cfg, nopLoginDB{}, "rutracker", nil); err != nil {
 		t.Fatalf("TestLogin: %v", err)
 	}
+	return o
+}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(payloads) < 2 {
-		t.Fatalf("payloads = %+v", payloads)
+func TestTestLoginUsesOwnFlareSession(t *testing.T) {
+	o := runOfflineRutrackerLogin(t)
+	o.pages.mu.Lock()
+	if len(o.pages.urls) == 0 {
+		t.Fatal("login page did not go through the direct tls doer")
 	}
-	var requestSession string
-	for _, p := range payloads {
-		if p.Session == "rutracker" {
-			t.Fatalf("live session touched: %+v", p)
+	o.pages.mu.Unlock()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if len(o.payloads) == 0 {
+		t.Fatal("test flare session was not destroyed")
+	}
+	var testSession string
+	for _, p := range o.payloads {
+		if p.Session == "" {
+			continue
 		}
 		if !strings.HasPrefix(p.Session, "rutracker-test-") {
 			t.Fatalf("session = %q, want rutracker-test- prefix: %+v", p.Session, p)
 		}
-		if strings.HasPrefix(p.Cmd, "request.") {
-			if requestSession != "" && requestSession != p.Session {
-				t.Fatalf("request sessions differ: %q and %q", requestSession, p.Session)
-			}
-			requestSession = p.Session
+		testSession = p.Session
+	}
+	last := o.payloads[len(o.payloads)-1]
+	if last.Cmd != "sessions.destroy" || last.Session != testSession {
+		t.Fatalf("last payload = %+v, want destroy of %q", last, testSession)
+	}
+}
+
+func TestTestLoginReusesLiveCloudflareClearance(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse("https://rutracker.org/forum/")
+	jar.SetCookies(u, []*http.Cookie{
+		{Name: "cf_clearance", Value: "live-cf", Path: "/"},
+		{Name: "bb_session", Value: "live-session", Path: "/"},
+	})
+	setLiveJar(jar)
+	t.Cleanup(func() { setLiveJar(nil) })
+
+	o := runOfflineRutrackerLogin(t)
+	o.pages.mu.Lock()
+	defer o.pages.mu.Unlock()
+	if len(o.pages.cookies) == 0 || !strings.Contains(o.pages.cookies[0], "cf_clearance=live-cf") {
+		t.Fatalf("first request cookies = %q, want live cf_clearance", o.pages.cookies)
+	}
+	for _, c := range o.pages.cookies {
+		if strings.Contains(c, "live-session") {
+			t.Fatalf("live login cookie leaked into the test: %q", c)
 		}
-	}
-	if requestSession == "" {
-		t.Fatalf("no request.* payload: %+v", payloads)
-	}
-	last := payloads[len(payloads)-1]
-	if last.Cmd != "sessions.destroy" || last.Session != requestSession {
-		t.Fatalf("last payload = %+v, want destroy of %q", last, requestSession)
 	}
 }

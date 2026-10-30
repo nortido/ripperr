@@ -68,7 +68,7 @@ export function trackerConfigFromApi(tracker) {
     enabled: !!tracker.enabled,
     domain: tracker.domain || '',
     hour_limit: tracker.hour_limit || 0,
-    proxy_type: tracker.proxy_type || 0,
+    proxy_type: tracker.proxy_type === 2 ? 1 : tracker.proxy_type || 0,
     login_url: tracker.login_url || '',
     download_url: tracker.download_url || '',
     credentials: tracker.credentials || '',
@@ -151,7 +151,7 @@ function trackerFormHtml(tracker, key, pub, mirrors) {
 
   const mirrorsRow = html`<div class="form-group form-group-full"><label class="form-label" for="tr-mirrors-${key}">${t('trackers.mirrors')}</label><div class="chip-input tr-mirrors"><div class="chip-input-chips"></div><input type="text" id="tr-mirrors-${key}" class="chip-input-field" autocomplete="off" name="${randomFieldName('tr-mirror')}" placeholder="${t('trackers.mirrorsPlaceholder')}"></div></div>`;
 
-  const limits = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-hour-limit-${key}">${t('trackers.hourLimit')}</label><input type="number" id="tr-hour-limit-${key}" class="input tr-hour-limit" min="1" value="${tracker.hour_limit}"></div><div class="form-group"><label class="form-label" for="tr-proxy-type-${key}">${t('trackers.proxy')}</label><select id="tr-proxy-type-${key}" class="select tr-proxy-type"><option value="0"${tracker.proxy_type === 0 ? ' selected' : ''}>${t('trackers.proxyDirect')}</option><option value="1"${tracker.proxy_type === 1 ? ' selected' : ''}>${t('trackers.proxyFlare')}</option></select></div>`);
+  const limits = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-hour-limit-${key}">${t('trackers.hourLimit')}</label><input type="number" id="tr-hour-limit-${key}" class="input tr-hour-limit" min="1" value="${tracker.hour_limit}"></div><div class="form-group"><label class="form-label" for="tr-proxy-type-${key}">${t('trackers.proxy')}</label><select id="tr-proxy-type-${key}" class="select tr-proxy-type"><option value="0"${tracker.proxy_type === 0 ? ' selected' : ''}>${t('trackers.proxyDirect')}</option><option value="1"${tracker.proxy_type === 1 || tracker.proxy_type === 2 ? ' selected' : ''}>${t('trackers.proxyFlare')}</option></select></div>`);
 
   const access = trackerRow(html`<div class="form-group"><label class="form-label" for="tr-publicity-${key}">${t('trackers.publicity')}</label><select id="tr-publicity-${key}" class="select tr-publicity"><option value="public"${pub === 'public' ? ' selected' : ''}>${t('trackers.public')}</option><option value="private"${pub === 'private' ? ' selected' : ''}>${t('trackers.private')}</option></select></div>${trackerFieldHtml(key, 'login-url', t('trackers.loginUrl'), tracker.login_url, 'login-url', 'tr-login-fields')}`, 'tracker-advanced');
 
@@ -266,7 +266,7 @@ function updateRowBadge(key) {
   badge.hidden = !ms.pending;
 }
 
-const PROXY_LABEL_KEYS = { 1: 'trackers.proxyFlare' };
+const PROXY_LABEL_KEYS = { 1: 'trackers.proxyFlare', 2: 'trackers.proxyFlare' };
 
 function proxyChipHtml(tracker) {
   const key = PROXY_LABEL_KEYS[tracker.proxy_type];
@@ -337,7 +337,7 @@ export function trackerTestTimeoutMs(item) {
     if (sel) proxyType = parseInt(sel.value, 10) || 0;
     else if (item._trackerSaved) proxyType = item._trackerSaved.proxy_type || 0;
   }
-  if (proxyType !== 1) return 30000;
+  if (proxyType !== 1 && proxyType !== 2) return 30000;
   const flareMs = integrationsCache && integrationsCache.flaresolverr &&
     integrationsCache.flaresolverr.timeout_ms;
   return flareMs > 0 ? flareMs : 30000;

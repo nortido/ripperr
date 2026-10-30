@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"ripperr/internal/helper/tlsclient"
 	"ripperr/internal/model/proxy"
 	fmapper "ripperr/internal/proxy/mapper/flaresolverr"
 )
@@ -18,6 +19,8 @@ type client struct {
 	hc   *http.Client
 	conf *proxy.Config
 	fl   *fmapper.Client
+
+	probe func(context.Context, tlsclient.Config, string) error
 }
 
 func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.ProxyType) (res *http.Response, err error) {
@@ -52,8 +55,9 @@ func (f *client) Send(r *http.Request, opts *proxy.Options, proxyType proxy.Prox
 
 func New(hc *http.Client, conf *proxy.Config) (sw IClient) {
 	px := &client{
-		hc:   hc,
-		conf: conf,
+		hc:    hc,
+		conf:  conf,
+		probe: tlsclient.Probe,
 	}
 	px.fl = fmapper.New(hc, &fmapper.Config{
 		Host:       conf.Flaresolverr.URL,

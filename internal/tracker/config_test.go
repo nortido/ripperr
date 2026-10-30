@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"ripperr/internal/config"
+	proxyModel "ripperr/internal/model/proxy"
 	"ripperr/internal/settings"
 	"ripperr/internal/tracker/registry"
 )
@@ -67,5 +68,13 @@ func TestTestLoginAttrsExpandsPlaceholders(t *testing.T) {
 	attrs := testLoginAttrs(cfg, "kinozal", 2, nil)
 	if want := "username=va+sya&password=SEC-p%26q&to=%2F"; attrs.Credentials != want {
 		t.Fatalf("credentials = %q, want %q", attrs.Credentials, want)
+	}
+}
+
+func TestTrackerFromItemFlareUsesChromeFingerprint(t *testing.T) {
+	for in, want := range map[int]proxyModel.ProxyType{0: proxyModel.TypeNone, 1: proxyModel.TypeTLS, 2: proxyModel.TypeTLS} {
+		if got := trackerFromItem(config.TrackerItem{ProxyType: in}).ProxyType; got != want {
+			t.Errorf("proxy_type %d: got %d, want %d", in, got, want)
+		}
 	}
 }

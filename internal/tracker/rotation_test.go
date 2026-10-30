@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"ripperr/internal/helper"
+	proxyModel "ripperr/internal/model/proxy"
 	trackerModel "ripperr/internal/model/tracker"
 	"ripperr/internal/tracker/client"
 	"ripperr/internal/tracker/client/rutor"
@@ -332,5 +333,45 @@ func TestTTLRebuildKeepsStickyMirror(t *testing.T) {
 	}
 	if e.domain() != "rutor.info" {
 		t.Fatalf("dead sticky must fall back to selection: domain = %q", e.domain())
+	}
+}
+
+func tlsRotationEnv(t *testing.T) *rotationEnv {
+	t.Helper()
+	e := newRotationEnv(t, rotationOpts{mirrors: []string{"rutor.is"}, maxFailures: 1})
+	e.s.handlerRegistry[RutorID] = rutor.New(trackerModel.Tracker{
+		Name:      "rutor",
+		Domain:    "rutor.info",
+		Publicity: trackerModel.PublicityPublic,
+		Enabled:   true,
+		Mirrors:   []string{"rutor.is"},
+		ProxyType: proxyModel.TypeTLS,
+	})
+	return e
+}
+
+func TestTLSFlareOnlyNetworkErrorIsNotMirrorFailure(t *testing.T) {
+	e := tlsRotationEnv(t)
+	netErr := &url.Error{Op: "Get", URL: "https://rutor.info", Err: errors.New("dial tcp: refused")}
+	ct := &CachedTracker{IClient: encodedClient{typedClient{pt: proxyModel.TypeTLS}, true}}
+
+	if e.s.noteFailure(context.Background(), RutorID, ct, netErr) {
+		t.Fatal("flare-only network error must not count as a mirror failure")
+	}
+	if len(e.s.rot.fails[RutorID]) != 0 {
+		t.Fatalf("fails = %v", e.s.rot.fails)
+	}
+}
+
+func TestTLSDirectNetworkErrorCountsAsMirrorFailure(t *testing.T) {
+	e := tlsRotationEnv(t)
+	netErr := &url.Error{Op: "Get", URL: "https://rutor.info", Err: errors.New("dial tcp: refused")}
+	ct := &CachedTracker{IClient: encodedClient{typedClient{pt: proxyModel.TypeTLS}, false}}
+
+	if !e.s.noteFailure(context.Background(), RutorID, ct, netErr) {
+		t.Fatal("direct TLS network error must count as a mirror failure")
+	}
+	if got := len(e.s.rot.fails[RutorID]); got != 1 {
+		t.Fatalf("fails = %d, want 1", got)
 	}
 }

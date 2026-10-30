@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"ripperr/internal/config"
 	"ripperr/internal/helper/formcreds"
@@ -621,4 +622,14 @@ func withTrackerEnabled(patch json.RawMessage) (json.RawMessage, error) {
 	}
 	body["enabled"] = json.RawMessage("true")
 	return json.Marshal(body)
+}
+
+func trackerTestTimeout(cfg config.App, proxyType int) time.Duration {
+	timeout := 30 * time.Second
+	if proxyType == 1 || proxyType == 2 {
+		if d := time.Duration(cfg.Flaresolverr.MaxTimeout) * time.Millisecond; d > 0 {
+			timeout = d
+		}
+	}
+	return timeout
 }

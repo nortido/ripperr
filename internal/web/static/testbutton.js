@@ -31,7 +31,7 @@ export function paintTestButton(btn, key, idleTitle, missing) {
   let title = idleTitle;
   let disabled = false;
   if (isRunning) {
-    name = 'refresh';
+    name = 'loader';
     title = t('trackers.testStop');
   } else if (result) {
     name = result.ok ? 'check' : 'xCircle';

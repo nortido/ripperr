@@ -59,6 +59,7 @@ type client struct {
 	cookies    []*http.Cookie
 	// своя сессия вместо имени трекера: проверка в настройках не трогает боевую
 	flareSession string
+	tls          *TLSSession
 }
 
 type cookieEnhancer interface {
@@ -85,6 +86,9 @@ type loginAuthValidator interface {
 }
 
 func (c *client) flareSessionID() (string, bool) {
+	if c.GetProxyType() == proxyModel.TypeTLS && c.effectiveProxyType() != proxyModel.TypeFlare {
+		return "", false
+	}
 	p, ok := c.ITracker.(FlareSessionProvider)
 	if !ok {
 		return "", false
@@ -115,6 +119,13 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 		creds        string
 		savedCookies []*http.Cookie
 	)
+	c.header = c.Headers()
+	c.setDefaultHeaders()
+	if c.GetProxyType() == proxyModel.TypeTLS {
+		if err = c.applyTLSIdentity(ctx); err != nil {
+			return
+		}
+	}
 	if payload.Exists {
 		c.setCookies(helper.CloneCookies(payload.Cookies))
 		creds = payload.Credentials
@@ -131,8 +142,6 @@ func (c *client) InitClient(ctx context.Context, payload *tracker.Tracker, force
 			c.setCookies(nil)
 		}
 	}
-	c.header = c.Headers()
-	c.setDefaultHeaders()
 
 	if c.GetPublicity() == tracker.PublicityPublic || payload.Publicity == tracker.PublicityPublic {
 		return
@@ -285,7 +294,7 @@ func (c *client) flarePageURL() string {
 }
 
 func (c *client) syncFlarePageCookies(ctx context.Context) {
-	if c.GetProxyType() != proxyModel.TypeFlare {
+	if c.effectiveProxyType() != proxyModel.TypeFlare {
 		return
 	}
 	if _, ok := c.flareSessionID(); !ok {
@@ -302,7 +311,7 @@ func (c *client) syncFlarePageCookies(ctx context.Context) {
 }
 
 func (c *client) preflightFlareLogin(ctx context.Context) (err error) {
-	if c.GetProxyType() != proxyModel.TypeFlare || len(c.cookieSnapshot()) > 0 {
+	if c.effectiveProxyType() != proxyModel.TypeFlare || len(c.cookieSnapshot()) > 0 {
 		return nil
 	}
 	if _, ok := c.flareSessionID(); ok {
@@ -331,6 +340,11 @@ func (c *client) applyDownloadHeaders(req *http.Request) {
 	src := c.header
 	if src == nil {
 		return
+	}
+	if c.directTLS() {
+		if set := c.tls.headerSet(); len(set) > 0 {
+			src = &set
+		}
 	}
 	for _, key := range []string{
 		"User-Agent",
@@ -467,7 +481,7 @@ func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxyModel
 	if download && c.downloadHC != nil {
 		doer = c.downloadHC
 	}
-	proxyType := c.GetProxyType()
+	proxyType := c.effectiveProxyType()
 	if download {
 		proxyType = proxyModel.TypeNone
 	}
@@ -476,6 +490,8 @@ func (c *client) doHttp(ctx context.Context, req *http.Request, opts *proxyModel
 		res, err = doer.Do(req)
 	case proxyModel.TypeFlare:
 		res, err = c.sendViaFlare(ctx, req, opts, proxyType)
+	case proxyModel.TypeTLS:
+		res, err = c.sendTLS(ctx, req)
 	default:
 		err = fmt.Errorf("proxy is not set: %d", proxyType)
 	}
@@ -607,6 +623,9 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, t ITracker, px proxy.IClie
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	if c.tls == nil {
+		c.tls = NewTLSSession(nil)
 	}
 	return c
 }

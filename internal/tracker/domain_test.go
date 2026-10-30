@@ -205,6 +205,12 @@ func TestDomainProbeKeepsFlareTrackerOffTrackerProxy(t *testing.T) {
 	if rt.hits != 1 {
 		t.Fatalf("проба flare-трекера ушла транспортом трекера, hits=%d", rt.hits)
 	}
+
+	tls := &stubTracker{Tracker: trackerModel.Tracker{ProxyType: proxyModel.TypeTLS}}
+	_ = probe(tls)(context.Background(), "mirror.invalid")
+	if rt.hits != 1 {
+		t.Fatalf("проба tls-трекера ушла транспортом трекера, hits=%d", rt.hits)
+	}
 }
 
 type suffixTracker struct {

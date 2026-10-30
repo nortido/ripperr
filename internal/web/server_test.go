@@ -3145,3 +3145,17 @@ func TestRedownloadDownloadStationReturns501(t *testing.T) {
 		t.Fatalf("error = %q, want %q", errResp["error"], downloadstation.ErrRedownloadUnsupported.Error())
 	}
 }
+
+func TestTrackerTestTimeoutTLS(t *testing.T) {
+	cfg := testEffective()
+	cfg.Flaresolverr.MaxTimeout = 90000
+	for pt, want := range map[int]time.Duration{0: 30 * time.Second, 1: 90 * time.Second, 2: 90 * time.Second} {
+		if got := trackerTestTimeout(cfg, pt); got != want {
+			t.Errorf("proxy_type %d: timeout = %v, want %v", pt, got, want)
+		}
+	}
+	cfg.Flaresolverr.MaxTimeout = 0
+	if got := trackerTestTimeout(cfg, 2); got != 30*time.Second {
+		t.Errorf("zero max timeout: %v", got)
+	}
+}

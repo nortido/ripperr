@@ -6,8 +6,9 @@ require (
 	github.com/anacrolix/log v0.17.1-0.20251118025802-918f1157b7bb
 	github.com/anacrolix/torrent v1.61.0
 	github.com/autobrr/go-qbittorrent v1.15.0
-	github.com/bogdanfinn/fhttp v0.6.8
-	github.com/bogdanfinn/tls-client v1.15.1
+	github.com/bogdanfinn/fhttp v0.6.9
+	github.com/bogdanfinn/tls-client v1.16.0
+	github.com/bogdanfinn/utls v1.7.8-barnius
 	github.com/joho/godotenv v1.5.1
 	github.com/sethvargo/go-envconfig v1.3.0
 	golang.org/x/crypto v0.49.0
@@ -44,11 +45,11 @@ require (
 	github.com/bdandy/go-socks4 v1.2.3 // indirect
 	github.com/benbjohnson/immutable v0.4.1-0.20221220213129-8932b999621d // indirect
 	github.com/bits-and-blooms/bitset v1.2.2 // indirect
-	github.com/bogdanfinn/quic-go-utls v1.0.9-utls // indirect
-	github.com/bogdanfinn/utls v1.7.7-barnius // indirect
-	github.com/bogdanfinn/websocket v1.5.5-barnius // indirect
+	github.com/bogdanfinn/quic-go-utls v1.0.10-utls // indirect
+	github.com/bogdanfinn/websocket v1.5.6-barnius // indirect
 	github.com/bradfitz/iter v0.0.0-20191230175014-e8f45d346db8 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
+	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/edsrzf/mmap-go v1.1.0 // indirect

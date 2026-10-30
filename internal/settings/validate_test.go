@@ -307,3 +307,16 @@ func TestSchedulePatchPartialBlockStillRequiresFields(t *testing.T) {
 		t.Error("partial schedule block must stay an error")
 	}
 }
+
+func TestValidateTrackerPatchProxyType(t *testing.T) {
+	for _, v := range []int{0, 1, 2} {
+		if err := ValidateTrackerPatch(trackerItemOverlay{ProxyType: &v}); err != nil {
+			t.Errorf("proxy_type %d: %v", v, err)
+		}
+	}
+	three := 3
+	err := ValidateTrackerPatch(trackerItemOverlay{ProxyType: &three})
+	if err == nil || !strings.Contains(err.Error(), "proxy_type must be 0, 1 or 2") {
+		t.Errorf("proxy_type 3: err = %v", err)
+	}
+}

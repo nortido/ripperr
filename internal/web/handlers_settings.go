@@ -326,26 +326,56 @@ func (s *Server) handleTestTracker(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Config = patched
 	}
-	timeout := 30 * time.Second
-	if effectiveTrackerProxyType(cfg, key, req.Config) == 1 {
-		timeout = time.Duration(cfg.Flaresolverr.MaxTimeout) * time.Millisecond
-		if timeout <= 0 {
-			timeout = 30 * time.Second
-		}
-	}
+	timeout := trackerTestTimeout(cfg, effectiveTrackerProxyType(cfg, key, req.Config))
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
-	err := trackerPkg.TestLogin(ctx, cfg, s.db, key, req.Config)
-	if errors.Is(err, trackerPkg.ErrUnknownTracker) {
-		writeError(w, http.StatusNotFound, "unknown tracker key")
-		return
+	done := make(chan error, 1)
+	go func() { done <- trackerPkg.TestLogin(ctx, cfg, s.db, key, req.Config) }()
+	respondTrackerTest(w, r, key, done)
+}
+
+var testKeepalive = 15 * time.Second
+
+func respondTrackerTest(w http.ResponseWriter, r *http.Request, key string, done <-chan error) {
+	tick := time.NewTicker(testKeepalive)
+	defer tick.Stop()
+	rc := http.NewResponseController(w)
+	streaming := false
+	var err error
+wait:
+	for {
+		select {
+		case err = <-done:
+			break wait
+		case <-tick.C:
+			// прокси перед UI (KeenDNS и подобные) рвут ответ после 60 с тишины, а решение
+			// Cloudflare идет дольше. Пробелы перед JSON парсер пропускает
+			if !streaming {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				streaming = true
+			}
+			_, _ = w.Write([]byte(" "))
+			_ = rc.Flush()
+		}
 	}
-	if err != nil {
+	resp := testResultResp{OK: true}
+	switch {
+	case errors.Is(err, trackerPkg.ErrUnknownTracker):
+		if !streaming {
+			writeError(w, http.StatusNotFound, "unknown tracker key")
+			return
+		}
+		resp = testResultResp{OK: false, Error: "unknown tracker key"}
+	case err != nil:
 		logTestFailure(r, "tracker test failed: "+key, err)
-		writeJSON(w, http.StatusOK, testResultResp{OK: false, Error: err.Error()})
+		resp = testResultResp{OK: false, Error: err.Error()}
+	}
+	if streaming {
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
-	writeJSON(w, http.StatusOK, testResultResp{OK: true})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handlePutTrackersOrder(w http.ResponseWriter, r *http.Request) {

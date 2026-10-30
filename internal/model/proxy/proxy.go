@@ -5,6 +5,7 @@ import "net/http"
 const (
 	TypeNone = iota
 	TypeFlare
+	TypeTLS
 )
 
 type ProxyType uint8
@@ -14,8 +15,10 @@ type Config struct {
 }
 
 type ItemConfig struct {
-	URL        string
-	MaxTimeout int
+	URL         string
+	MaxTimeout  int
+	CaptureHost string
+	CapturePort int
 }
 
 type Options struct {

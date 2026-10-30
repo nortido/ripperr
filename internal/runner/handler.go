@@ -1134,12 +1134,13 @@ func (h *handler) checkPage(ctx context.Context, ttid int, tc client.IClient, e 
 		cur        *time.Time
 		b          *bytes.Buffer
 		downloadID string
-		encoded    = tc.GetProxyType() != proxy.TypeNone
 	)
 	start := time.Now()
 	if b, err = h.getPage(ctx, ttid, e.URL); err != nil {
 		return
 	}
+	// сама выдача страницы может перевести общую TLS-сессию в flare-only
+	encoded := bodyEncoded(tc)
 	pick := tc.PickTorrent(b, encoded, trackerModel.Held{
 		URL: e.URL, TopicID: e.TopicID, Stored: e.Update, Hash: e.Hash, Name: e.Name, Timestamp: e.Timestamp, Siblings: h.siblingHashes(e),
 	})
@@ -1421,4 +1422,11 @@ func (h *handler) saveServerErrs(ctx context.Context) {
 	if err := h.state.SaveServerErrors(ctx, time.Now(), h.storage.SaveSetting); err != nil {
 		logger.Warn(fmt.Sprintf("server error marks: save: %v", err))
 	}
+}
+
+func bodyEncoded(tc client.IClient) bool {
+	if e, ok := tc.(interface{ EncodedBody() bool }); ok {
+		return e.EncodedBody()
+	}
+	return tc.GetProxyType() == proxy.TypeFlare
 }

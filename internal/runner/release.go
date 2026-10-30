@@ -10,7 +10,6 @@ import (
 
 	"ripperr/internal/helper/torrentmeta"
 	"ripperr/internal/model"
-	"ripperr/internal/model/proxy"
 	trackerModel "ripperr/internal/model/tracker"
 	storagePkg "ripperr/internal/storage"
 	"ripperr/internal/system/logger"
@@ -193,7 +192,7 @@ func (h *handler) fetchTopicTorrent(ctx context.Context, ttid int, tc client.ICl
 	if err != nil {
 		return nil, fmt.Errorf("topic page: %w", err)
 	}
-	encoded := tc.GetProxyType() != proxy.TypeNone
+	encoded := bodyEncoded(tc)
 	// Miss тут не ошибка: торрент еще ничем не занят, берем то, что нашлось
 	id := tc.PickTorrent(page, encoded, trackerModel.Held{URL: link}).DownloadID
 	if id == "" {

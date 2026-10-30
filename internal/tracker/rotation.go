@@ -145,9 +145,17 @@ func (s *service) failWindow(ttid int) time.Duration {
 	return w
 }
 
-func (s *service) noteFailure(ctx context.Context, ttid int, err error) bool {
+func (s *service) noteFailure(ctx context.Context, ttid int, ct *CachedTracker, err error) bool {
 	tr, ok := s.handlerRegistry[ttid]
-	if !ok || !mirrorFailure(ctx, err, tr.GetProxyType() == proxyModel.TypeFlare) {
+	if !ok {
+		return false
+	}
+	flare := tr.GetProxyType() == proxyModel.TypeFlare
+	if ct != nil && ct.IClient != nil {
+		// proxy_type 2 в flare-only отдает страницы через Flare, тип трекера этого не показывает
+		flare = ct.EncodedBody()
+	}
+	if !mirrorFailure(ctx, err, flare) {
 		return false
 	}
 	now := s.rot.clock()
@@ -179,7 +187,7 @@ func (s *service) afterPage(ctx context.Context, ttid int, ct *CachedTracker, li
 		s.noteSuccess(ttid)
 		return buf, nil
 	}
-	if !s.noteFailure(ctx, ttid, err) {
+	if !s.noteFailure(ctx, ttid, ct, err) {
 		return buf, err
 	}
 	next, ok, pauseErr := s.rotate(ctx, ttid, ct)
@@ -193,7 +201,7 @@ func (s *service) afterPage(ctx context.Context, ttid int, ct *CachedTracker, li
 	if err == nil {
 		s.noteSuccess(ttid)
 	} else {
-		s.noteFailure(ctx, ttid, err)
+		s.noteFailure(ctx, ttid, next, err)
 	}
 	return buf, err
 }

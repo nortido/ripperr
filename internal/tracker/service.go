@@ -13,6 +13,7 @@ import (
 	"ripperr/internal/helper"
 	"ripperr/internal/helper/breakeralerts"
 	"ripperr/internal/helper/tlsclient"
+	proxyModel "ripperr/internal/model/proxy"
 	"ripperr/internal/model/tracker"
 	"ripperr/internal/proxy"
 	"ripperr/internal/system/logger"
@@ -70,6 +71,13 @@ type CachedTracker struct {
 	Created time.Time
 }
 
+func (c *CachedTracker) EncodedBody() bool {
+	if e, ok := c.IClient.(interface{ EncodedBody() bool }); ok {
+		return e.EncodedBody()
+	}
+	return c.GetProxyType() == proxyModel.TypeFlare
+}
+
 type service struct {
 	px                 proxy.IClient
 	db                 db
@@ -89,6 +97,7 @@ type service struct {
 	domainAlive        domainProbe
 	adopted            map[string]string
 	rot                mirrorRotation
+	tlsSessions        map[int]*client.TLSSession
 }
 
 func (s *service) loginClock() *loginTimes {
@@ -437,7 +446,7 @@ func (s *service) cache(ctx context.Context, tid int, forceLogin bool) (err erro
 		logger.Info(fmt.Sprintf("tracker %s: using mirror %s", tr.GetName(), active))
 		tr = withActiveDomain(tr, active)
 	}
-	tc = client.New(s.hc, s.downloadHC, tr, s.px, s.newBreaker(tr.GetName()))
+	tc = client.New(s.hc, s.downloadHC, tr, s.px, s.newBreaker(tr.GetName()), client.WithTLSSession(s.tlsSession(tid)))
 	if err = s.store(ctx, tid, tc, forceLogin); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -531,6 +540,10 @@ func (s *service) liveCookies(tid int, tc client.IClient, fallback []*http.Cooki
 }
 
 func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, cbCfg *helper.CircuitBreakerConfig, conf tracker.TrackerConfig, alerts *breakeralerts.Registry) *service {
+	// проверка входа берет отсюда cf_clearance, иначе каждый тест заново ждет решение Flare
+	if hc != nil {
+		setLiveJar(hc.Jar)
+	}
 	return &service{
 		hc:                 hc,
 		downloadHC:         downloadHC,
@@ -545,6 +558,20 @@ func New(hc *http.Client, downloadHC helper.HTTPDoer, px proxy.IClient, db db, c
 		staleUseCounts:     make(map[int]int),
 		domainAlive:        domainProbeWith(hc),
 	}
+}
+
+func (s *service) tlsSession(tid int) *client.TLSSession {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+	if s.tlsSessions == nil {
+		s.tlsSessions = make(map[int]*client.TLSSession)
+	}
+	sess, ok := s.tlsSessions[tid]
+	if !ok {
+		sess = client.NewTLSSession(nil)
+		s.tlsSessions[tid] = sess
+	}
+	return sess
 }
 
 func (s *service) newBreaker(name string) *helper.CircuitBreaker {

@@ -85,12 +85,12 @@ func redirectHost(base string, resp *http.Response) string {
 
 func HostChecker(hc *http.Client) func(ctx context.Context, host string, proxyType int) (alive bool, location string) {
 	proxied := hostCheckWith(hc)
-	// flare-трекер ходит через FlareSolverr: пробу шлем напрямую, через прокси домен казался бы живым
+	// flare- и tls-трекеры ходят в обход прокси трекера: пробу шлем напрямую, через прокси домен казался бы живым
 	direct := *hc
 	direct.Transport = helper.DirectTransport()
 	viaFlare := hostCheckWith(&direct)
 	return func(ctx context.Context, host string, proxyType int) (bool, string) {
-		if proxyModel.ProxyType(proxyType) == proxyModel.TypeFlare {
+		if pt := proxyModel.ProxyType(proxyType); pt == proxyModel.TypeFlare || pt == proxyModel.TypeTLS {
 			return viaFlare(ctx, host)
 		}
 		return proxied(ctx, host)

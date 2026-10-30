@@ -170,8 +170,10 @@ type MirrorSource struct {
 }
 
 type Flaresolverr struct {
-	Host       string `env:"FLARE_URL, default=localhost:8191/v1"`
-	MaxTimeout int    `env:"FLARE_TIMEOUT, default=300000"`
+	Host        string `env:"FLARE_URL, default=localhost:8191/v1"`
+	MaxTimeout  int    `env:"FLARE_TIMEOUT, default=300000"`
+	CaptureHost string `env:"TLS_CAPTURE_HOST, default="`
+	CapturePort int    `env:"TLS_CAPTURE_PORT, default=0"`
 }
 
 type Storage struct {

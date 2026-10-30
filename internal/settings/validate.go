@@ -191,8 +191,8 @@ func TrackerPatchFromJSON(raw json.RawMessage) (trackerItemOverlay, error) {
 }
 
 func ValidateTrackerPatch(o trackerItemOverlay) error {
-	if o.ProxyType != nil && *o.ProxyType != 0 && *o.ProxyType != 1 {
-		return fmt.Errorf("proxy_type must be 0 or 1")
+	if o.ProxyType != nil && *o.ProxyType != 0 && *o.ProxyType != 1 && *o.ProxyType != 2 {
+		return fmt.Errorf("proxy_type must be 0, 1 or 2")
 	}
 	if o.HourLimit != nil && *o.HourLimit < 1 {
 		return fmt.Errorf("hour_limit must be >= 1")
