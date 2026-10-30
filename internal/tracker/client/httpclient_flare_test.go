@@ -51,6 +51,19 @@ func TestAbsorbFlareCookies(t *testing.T) {
 	}
 }
 
+func TestAbsorbFlareCookiesPrefersIssuedOverEchoed(t *testing.T) {
+	tr := &tracker.Tracker{Name: "kinozal", Domain: "kinozal.me"}
+	c := &client{ITracker: tr, cookies: []*http.Cookie{{Name: "cf_clearance", Value: "old"}, {Name: "uid", Value: "1"}}}
+	res := &http.Response{Header: http.Header{}}
+	res.Header.Add("Set-Cookie", "cf_clearance=new; Domain=.kinozal.me")
+	res.Header.Add("Set-Cookie", "uid=1")
+	res.Header.Add("Set-Cookie", "cf_clearance=old")
+	c.absorbFlareCookies(res)
+	if got := helper.CookiesString(c.cookies); got != "cf_clearance=new; uid=1" {
+		t.Fatalf("cookie string = %q", got)
+	}
+}
+
 func TestFlareOptionsOmitsEmptyCookiesWithoutSession(t *testing.T) {
 	c := &client{ITracker: &tracker.Tracker{ProxyType: proxyModel.TypeFlare}}
 	opts := c.flareOptions(nil, false)

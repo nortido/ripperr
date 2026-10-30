@@ -168,6 +168,7 @@ type loginPageDoer struct {
 	mu      sync.Mutex
 	urls    []string
 	cookies []string
+	setCF   string
 }
 
 func (d *loginPageDoer) Do(req *http.Request) (*http.Response, error) {
@@ -177,6 +178,9 @@ func (d *loginPageDoer) Do(req *http.Request) (*http.Response, error) {
 	d.mu.Unlock()
 	res := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("<html>ok</html>")), Request: req}
 	res.Header.Add("Set-Cookie", "bb_session=0-1-abc; Path=/")
+	if d.setCF != "" {
+		res.Header.Add("Set-Cookie", "cf_clearance="+d.setCF+"; Path=/")
+	}
 	return res, nil
 }
 
@@ -188,7 +192,12 @@ type offlineLogin struct {
 
 func runOfflineRutrackerLogin(t *testing.T) *offlineLogin {
 	t.Helper()
-	o := &offlineLogin{pages: &loginPageDoer{}}
+	return runOfflineRutrackerLoginWith(t, &loginPageDoer{})
+}
+
+func runOfflineRutrackerLoginWith(t *testing.T, pages *loginPageDoer) *offlineLogin {
+	t.Helper()
+	o := &offlineLogin{pages: pages}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			_, _ = io.WriteString(w, `{"msg":"FlareSolverr is ready!","userAgent":"ua"}`)
@@ -280,5 +289,28 @@ func TestTestLoginReusesLiveCloudflareClearance(t *testing.T) {
 		if strings.Contains(c, "live-session") {
 			t.Fatalf("live login cookie leaked into the test: %q", c)
 		}
+	}
+}
+
+func TestTestLoginSharesFreshClearanceWithLiveJar(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse("https://rutracker.org/forum/")
+	jar.SetCookies(u, []*http.Cookie{
+		{Name: "cf_clearance", Value: "stale-cf", Path: "/"},
+		{Name: "bb_session", Value: "live-session", Path: "/"},
+	})
+	setLiveJar(jar)
+	t.Cleanup(func() { setLiveJar(nil) })
+
+	runOfflineRutrackerLoginWith(t, &loginPageDoer{setCF: "fresh-cf"})
+	got := helper.CookiesString(jar.Cookies(u))
+	if !strings.Contains(got, "cf_clearance=fresh-cf") || strings.Contains(got, "stale-cf") {
+		t.Fatalf("live jar = %q, want fresh cf_clearance from the test", got)
+	}
+	if !strings.Contains(got, "bb_session=live-session") {
+		t.Fatalf("live login cookie replaced by the test: %q", got)
 	}
 }

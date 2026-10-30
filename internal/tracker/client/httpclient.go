@@ -608,9 +608,33 @@ func (c *client) absorbFlareCookies(res *http.Response) {
 	if res == nil {
 		return
 	}
-	if fresh := res.Cookies(); len(fresh) > 0 {
+	if fresh := dropEchoedDuplicates(c.cookieSnapshot(), res.Cookies()); len(fresh) > 0 {
 		c.mergeCookies(fresh)
 	}
+}
+
+func dropEchoedDuplicates(sent, fresh []*http.Cookie) []*http.Cookie {
+	// переданная во Flare кука становится host-only, а сайт выдает новую на .домен:
+	// Flare возвращает обе, и при слиянии по имени победила бы старая
+	old := make(map[string]string, len(sent))
+	for _, c := range sent {
+		if c != nil {
+			old[c.Name] = c.Value
+		}
+	}
+	left := make(map[string]int, len(fresh))
+	for _, c := range fresh {
+		left[c.Name]++
+	}
+	out := make([]*http.Cookie, 0, len(fresh))
+	for _, c := range fresh {
+		if prev, ok := old[c.Name]; ok && prev == c.Value && left[c.Name] > 1 {
+			left[c.Name]--
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func New(hc *http.Client, downloadHC helper.HTTPDoer, t ITracker, px proxy.IClient, cb *helper.CircuitBreaker, opts ...Option) IClient {

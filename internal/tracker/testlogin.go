@@ -131,6 +131,8 @@ func TestLogin(ctx context.Context, cfg config.App, db loginDB, key string, conf
 		}
 	}
 	seedCloudflareClearance(cj, tr.GetHost())
+	// решение Flare длится до полутора минут: свежий допуск нужен рабочему клиенту и следующему тесту
+	defer shareCloudflareClearance(cj, tr.GetHost())
 	tc := client.New(hc, downloadHC, tr, px, cb, opts...)
 
 	attrs, err := db.GetTracker(ctx, tid)
@@ -184,8 +186,19 @@ func seedCloudflareClearance(dst http.CookieJar, host string) {
 	liveJarMu.Lock()
 	src := liveJar
 	liveJarMu.Unlock()
+	copyCloudflareClearance(src, dst, host)
+}
+
+func shareCloudflareClearance(src http.CookieJar, host string) {
+	liveJarMu.Lock()
+	dst := liveJar
+	liveJarMu.Unlock()
+	copyCloudflareClearance(src, dst, host)
+}
+
+func copyCloudflareClearance(src, dst http.CookieJar, host string) {
 	u, err := url.Parse(host + "/")
-	if src == nil || err != nil {
+	if src == nil || dst == nil || err != nil {
 		return
 	}
 	// только допуск Cloudflare: вход тест обязан пройти сам, по логину и паролю

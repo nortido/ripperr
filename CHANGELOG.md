@@ -2,6 +2,12 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.8.1] - 2026-10-30
+
+### Fixed
+- Trackers in FlareSolverr mode, such as Kinozal, no longer fail with "cloudflare challenge after flaresolverr solve". After a solve Ripperr kept the old cf_clearance cookie it had sent to FlareSolverr and dropped the new one from the site.
+- A second tracker test in a row no longer waits for FlareSolverr. The test passes its new cf_clearance to the running tracker, and the next test and check reuse it.
+
 ## [2.8.0] - 2026-10-30
 
 ### Added
