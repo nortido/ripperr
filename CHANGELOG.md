@@ -2,6 +2,21 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.8.0] - 2026-10-30
+
+### Added
+- `TLS_CAPTURE_HOST` and `TLS_CAPTURE_PORT` set the address FlareSolverr uses to reach Ripperr when Ripperr reads the browser fingerprint. By default it is the container address and a random port.
+
+### Changed
+- Trackers in FlareSolverr mode load pages directly with a Chrome TLS fingerprint and the same headers as the FlareSolverr browser. FlareSolverr is called only when Cloudflare shows a check, and its cf_clearance cookie is reused for the next pages. A page now takes about a second instead of several seconds.
+- Direct page requests use the download proxy, the same exit as direct mode.
+- If the FlareSolverr fingerprint can not be matched, pages go through FlareSolverr as before.
+- The tracker test reuses the Cloudflare clearance of the running tracker and skips a new FlareSolverr solve when it can.
+- The test button spinner is a ring of dots, like the other buttons.
+
+### Fixed
+- A long tracker test no longer fails with HTTP 504 behind a reverse proxy that cuts requests after 60 seconds, such as KeenDNS. Ripperr keeps the response alive while the test runs.
+
 ## [2.7.3] - 2026-10-29
 
 ### Added

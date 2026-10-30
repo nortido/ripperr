@@ -3,7 +3,7 @@
 # 📽️ Ripperr 📽️
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
-![Release](https://img.shields.io/badge/release-v2.7.3-2f9e44)
+![Release](https://img.shields.io/badge/release-v2.8.0-2f9e44)
 
 ![Backend](https://img.shields.io/badge/backend-Go%201.25-00ADD8?logo=go&logoColor=white)
 ![Frontend](https://img.shields.io/badge/frontend-vanilla%20JS-F7DF1E?logo=javascript&logoColor=black)
