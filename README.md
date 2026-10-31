@@ -67,7 +67,9 @@ downloads the new version in full and keeps old files).
 
 - Notifications to Telegram, email, Pushover, a webhook or browser push.
 - Checks follow the age of a release: fresh ones often, old ones rarely. Broken topics go to ignore.
-- Dry run: a full pass that shows what would change and changes nothing.
+- `SAFE_MODE=true` starts Ripperr with live trackers and clients and changes nothing: checks do not
+  run, torrents stay as they are, notifications and the Telegram bot are off. Only in this mode the
+  logs page has a dry run, a check of up to 30 releases with a report in the log.
 - Force a check of one release or all of them from the dashboard.
 - Logins and tokens are stored encrypted. Prometheus metrics, `/healthz` and `/readyz`.
 - English and Russian UI.
@@ -81,8 +83,7 @@ docker run -d --name ripperr -p 6410:6410 -v ./config:/config nortido/ripperr
 ```
 
 Open `http://<host>:6410` and create the account. This works only from the local network, so do it
-before you open the port. Then connect the torrent client, add trackers, pick categories or tags
-and start with a dry run.
+before you open the port. Then connect the torrent client, add trackers and pick categories or tags.
 
 Back up `secrets.key` together with `ripperr.db` from the config folder. Without the key Ripperr
 cannot read the saved passwords.
