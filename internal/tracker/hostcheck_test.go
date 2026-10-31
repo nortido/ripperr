@@ -54,7 +54,7 @@ func TestHostCheckerLocation(t *testing.T) {
 	}
 }
 
-func TestHostCheckerFlareDirect(t *testing.T) {
+func TestHostCheckerUsesTrackerClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("<title>mirror</title>"))
 	}))
@@ -66,14 +66,12 @@ func TestHostCheckerFlareDirect(t *testing.T) {
 	rt := &redirectTransport{host: target.Host}
 	check := HostChecker(&http.Client{Transport: rt})
 
-	if alive, _ := check(context.Background(), "mirror.example", int(proxyModel.TypeNone)); !alive {
-		t.Fatal("want host alive")
-	}
-	if rt.hits != 1 {
-		t.Fatalf("обычный трекер должен проверяться клиентом трекера, hits=%d", rt.hits)
-	}
-	_, _ = check(context.Background(), "mirror.invalid", int(proxyModel.TypeFlare))
-	if rt.hits != 1 {
-		t.Fatalf("проверка flare-трекера ушла транспортом трекера, hits=%d", rt.hits)
+	for i, pt := range []proxyModel.ProxyType{proxyModel.TypeNone, proxyModel.TypeFlare, proxyModel.TypeTLS} {
+		if alive, _ := check(context.Background(), "mirror.example", int(pt)); !alive {
+			t.Fatalf("режим %d: хост должен быть живым", pt)
+		}
+		if rt.hits != i+1 {
+			t.Fatalf("режим %d должен проверяться клиентом трекера, hits=%d", pt, rt.hits)
+		}
 	}
 }

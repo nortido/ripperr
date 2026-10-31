@@ -2,6 +2,11 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.9.1] - 2026-10-31
+
+### Fixed
+- Working mirrors of trackers in FlareSolverr mode are no longer marked dead. The mirror check went straight from the server, while the pages of these trackers use the download proxy, so a domain blocked on the server looked dead and Ripperr suggested removing it.
+
 ## [2.9.0] - 2026-10-31
 
 ### Added

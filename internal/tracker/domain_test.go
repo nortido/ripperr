@@ -179,7 +179,7 @@ func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-func TestDomainProbeKeepsFlareTrackerOffTrackerProxy(t *testing.T) {
+func TestDomainProbeUsesTrackerClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("<title>mirror</title>"))
 	}))
@@ -191,25 +191,14 @@ func TestDomainProbeKeepsFlareTrackerOffTrackerProxy(t *testing.T) {
 	rt := &redirectTransport{host: target.Host}
 	probe := domainProbeWith(&http.Client{Transport: rt})
 
-	plain := &stubTracker{Tracker: trackerModel.Tracker{ProxyType: proxyModel.TypeNone}}
-	if !probe(plain)(context.Background(), "mirror.example") {
-		t.Fatal("want domain alive")
-	}
-	if rt.hits != 1 {
-		t.Fatalf("обычный трекер должен пробоваться клиентом трекера, hits=%d", rt.hits)
-	}
-
-	// у flare-трекера свой выход в сеть, проба через прокси трекера соврала бы
-	flare := &stubTracker{Tracker: trackerModel.Tracker{ProxyType: proxyModel.TypeFlare}}
-	_ = probe(flare)(context.Background(), "mirror.invalid")
-	if rt.hits != 1 {
-		t.Fatalf("проба flare-трекера ушла транспортом трекера, hits=%d", rt.hits)
-	}
-
-	tls := &stubTracker{Tracker: trackerModel.Tracker{ProxyType: proxyModel.TypeTLS}}
-	_ = probe(tls)(context.Background(), "mirror.invalid")
-	if rt.hits != 1 {
-		t.Fatalf("проба tls-трекера ушла транспортом трекера, hits=%d", rt.hits)
+	for i, pt := range []proxyModel.ProxyType{proxyModel.TypeNone, proxyModel.TypeFlare, proxyModel.TypeTLS} {
+		tr := &stubTracker{Tracker: trackerModel.Tracker{ProxyType: pt}}
+		if !probe(tr)(context.Background(), "mirror.example") {
+			t.Fatalf("режим %d: домен должен быть живым", pt)
+		}
+		if rt.hits != i+1 {
+			t.Fatalf("режим %d должен пробоваться клиентом трекера, hits=%d", pt, rt.hits)
+		}
 	}
 }
 

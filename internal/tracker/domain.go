@@ -11,8 +11,6 @@ import (
 	"time"
 	"unicode"
 
-	"ripperr/internal/helper"
-	proxyModel "ripperr/internal/model/proxy"
 	trackerModel "ripperr/internal/model/tracker"
 	"ripperr/internal/tracker/client"
 )
@@ -84,16 +82,11 @@ func redirectHost(base string, resp *http.Response) string {
 }
 
 func HostChecker(hc *http.Client) func(ctx context.Context, host string, proxyType int) (alive bool, location string) {
-	proxied := hostCheckWith(hc)
-	// flare- и tls-трекеры ходят в обход прокси трекера: пробу шлем напрямую, через прокси домен казался бы живым
-	direct := *hc
-	direct.Transport = helper.DirectTransport()
-	viaFlare := hostCheckWith(&direct)
-	return func(ctx context.Context, host string, proxyType int) (bool, string) {
-		if pt := proxyModel.ProxyType(proxyType); pt == proxyModel.TypeFlare || pt == proxyModel.TypeTLS {
-			return viaFlare(ctx, host)
-		}
-		return proxied(ctx, host)
+	// режим не важен: страницы всех режимов идут через прокси загрузок, напрямую домен
+	// может быть закрыт, и рабочее зеркало считалось бы мертвым
+	check := hostCheckWith(hc)
+	return func(ctx context.Context, host string, _ int) (bool, string) {
+		return check(ctx, host)
 	}
 }
 
