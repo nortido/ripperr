@@ -18,6 +18,7 @@ import (
 	"unicode/utf16"
 
 	"ripperr/internal/metrics"
+	"ripperr/internal/model/storage"
 	"ripperr/internal/system/logger"
 )
 
@@ -1297,5 +1298,40 @@ func TestNoSpacePushText(t *testing.T) {
 func TestNoSpaceDefault(t *testing.T) {
 	if !KnownEvent("no_space") || !slices.Contains(DefaultEvents(), KindNoSpace) || !wants(nil, KindNoSpace) {
 		t.Fatal("no_space must be known and on by default")
+	}
+}
+
+func TestNotifySilentSendsNothing(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+	}))
+	defer srv.Close()
+	rec := &fakeRecorder{got: make(chan storage.EventEntry, 1)}
+	n := New(Config{Enabled: true, WebhookURL: srv.URL, Silent: true}, "").WithEvents(rec)
+	n.Notify(UpdatedEvent("Some.Release", "https://example.com/t1", ""))
+	select {
+	case <-rec.got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event not recorded")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("webhook hits = %d, want 0", got)
+	}
+}
+
+func TestSendSilentStillSendsManualTest(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+	}))
+	defer srv.Close()
+	n := New(Config{Enabled: true, WebhookURL: srv.URL, Silent: true}, "")
+	if err := n.Send(context.Background(), Event{Kind: KindUpdated, Text: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("webhook hits = %d, want 1", got)
 	}
 }

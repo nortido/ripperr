@@ -53,7 +53,7 @@ type tgCallback struct {
 }
 
 func (n *Notifier) RunTelegramButtons(ctx context.Context) {
-	if !n.cfg.Enabled || n.cfg.TelegramDisabled || !n.telegramReady() || n.mutes == nil {
+	if n.cfg.Silent || !n.cfg.Enabled || n.cfg.TelegramDisabled || !n.telegramReady() || n.mutes == nil {
 		return
 	}
 	hc := &http.Client{

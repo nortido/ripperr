@@ -241,7 +241,10 @@ func Run(ctx context.Context, cfg config.App, db *storage.Service, handlerCfg mo
 
 	bhDone := make(chan struct{})
 	go func() {
-		mc.SweepBlackhole(ctx)
+		// обход блэкхола возвращает торренты в клиент
+		if !cfg.SafeMode {
+			mc.SweepBlackhole(ctx)
+		}
 		close(bhDone)
 	}()
 

@@ -579,11 +579,12 @@ type addCall struct {
 
 type addTracker struct {
 	fakeTracker
-	hosts   map[string]int
-	client  *addClient
-	torrent []byte
-	dlErr   error
-	calls   []addCall
+	hosts       map[string]int
+	client      *addClient
+	torrent     []byte
+	dlErr       error
+	calls       []addCall
+	clientCalls int
 }
 
 func (t *addTracker) GetID(link string) int {
@@ -595,6 +596,7 @@ func (t *addTracker) GetID(link string) int {
 }
 
 func (t *addTracker) GetCachedClient(context.Context, int) (client.IClient, error) {
+	t.clientCalls++
 	return t.client, nil
 }
 
@@ -921,5 +923,46 @@ func TestSaveHistorySkipsRemoved(t *testing.T) {
 	}
 	if len(store.saved) != 0 {
 		t.Fatalf("saved %+v, want no row for a removed torrent", store.saved)
+	}
+}
+
+func TestSafeModeAddReleaseRefused(t *testing.T) {
+	h, tr, mgr, store := newAddHandler(t)
+	h.config.SafeMode = true
+	_, err := h.addRelease(context.Background(), AddRequest{URL: addTopic, Category: "tv"})
+	if !errors.Is(err, ErrSafeMode) {
+		t.Fatalf("error %v, want ErrSafeMode", err)
+	}
+	if tr.clientCalls != 0 || len(tr.calls) != 0 || len(mgr.added) != 0 || mgr.listCalls != 0 {
+		t.Fatalf("client calls %d tracker calls %+v added %d lists %d, want none", tr.clientCalls, tr.calls, len(mgr.added), mgr.listCalls)
+	}
+	if len(store.unignored) != 0 || len(store.streakReset) != 0 || len(store.newAdds) != 0 {
+		t.Fatalf("storage touched: %v %v %d", store.unignored, store.streakReset, len(store.newAdds))
+	}
+}
+
+func TestSafeModeAddReleaseUnknownTrackerFirst(t *testing.T) {
+	h, _, _, _ := newAddHandler(t)
+	h.config.SafeMode = true
+	_, err := h.addRelease(context.Background(), AddRequest{URL: "https://nope.example/t/1", Category: "tv"})
+	if !errors.Is(err, ErrUnknownTracker) {
+		t.Fatalf("error %v, want ErrUnknownTracker", err)
+	}
+	_, err = h.addRelease(context.Background(), AddRequest{URL: addTopic, Category: "movies"})
+	if !errors.Is(err, ErrNotWatched) {
+		t.Fatalf("error %v, want ErrNotWatched", err)
+	}
+}
+
+func TestSafeModeRemoveReleaseRefused(t *testing.T) {
+	mgr := &releaseManager{lists: [][]*model.Entry{{relEntry("x", relURL, "/data/tv", "Show")}}}
+	h, store, _ := newRemoveHandler(mgr)
+	h.config.SafeMode = true
+	err := h.removeRelease(context.Background(), RemoveRequest{URLHash: storagePkg.URLHash(relURL), Torrents: 1})
+	if !errors.Is(err, ErrSafeMode) {
+		t.Fatalf("error %v, want ErrSafeMode", err)
+	}
+	if len(mgr.removed) != 0 || mgr.listCalls != 0 || len(store.deleted) != 0 || len(store.unignored) != 0 || h.state.Removed("x") {
+		t.Fatalf("removed %v lists %d deleted %v unignored %v, want nothing", mgr.removed, mgr.listCalls, store.deleted, store.unignored)
 	}
 }

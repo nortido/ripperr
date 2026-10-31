@@ -2,6 +2,21 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.9.0] - 2026-10-31
+
+### Added
+- A click on a release status icon opens its update history: tracker update dates plus updates and failed checks from the last 30 days. It is a centered dialog on desktop and a bottom sheet on phones.
+- `SAFE_MODE=true` starts Ripperr with live trackers and clients without changing anything. Checks do not run, torrents are not added, replaced or removed, the Telegram bot is off and no notifications go out. The manual notification test still sends a message. A label next to the logo shows the mode.
+
+### Changed
+- The Dry run button on the logs page works only in `SAFE_MODE`. In normal mode it is hidden and the API refuses the run.
+- The release status icon on phones is a wider pill, easier to tap.
+
+### Fixed
+- At exactly 900 px wide the page now uses the full mobile layout. Before it mixed the mobile header with the desktop layout.
+- The Add button copy in the phone top bar now spins while a release is added.
+- The next run shows "tomorrow" correctly in time zones where the clock change skips midnight.
+
 ## [2.8.1] - 2026-10-30
 
 ### Fixed

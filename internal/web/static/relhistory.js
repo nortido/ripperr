@@ -6,16 +6,9 @@ import { formatDate, formatTableTime, html, statusMeta } from './util.js';
 let openSeq = 0;
 let teardown = null;
 
-function formatDelay(releasedAt, at) {
-  const minutes = Math.max(0, Math.round((new Date(at) - new Date(releasedAt)) / 60000));
-  if (minutes < 60) return t('relhist.durM', { m: minutes });
-  if (minutes < 1440) return t('relhist.durHM', { h: Math.floor(minutes / 60), m: minutes % 60 });
-  return t('relhist.durDH', { d: Math.floor(minutes / 1440), h: Math.floor((minutes % 1440) / 60) });
-}
-
 function entryView(e) {
   if (e.kind === 'updated') {
-    const sub = e.released_at ? t('relhist.updatedSub', { time: formatTableTime(e.released_at), delay: formatDelay(e.released_at, e.at) }) : '';
+    const sub = e.released_at ? t('relhist.updatedSub', { time: formatTableTime(e.released_at) }) : '';
     return { status: 'updated', title: t('relhist.updated'), sub: sub, full: '' };
   }
   if (e.kind === 'tracker') {

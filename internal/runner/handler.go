@@ -433,6 +433,10 @@ type pushPass struct {
 }
 
 func (h *handler) push(ctx context.Context, dry bool, forced map[string]struct{}) (err error) {
+	if h.config.SafeMode && !dry {
+		logger.Info("safe mode: check skipped")
+		return nil
+	}
 	// прогон из-за hour_limit длится часами, все его записи должны вернуться в тот же слот
 	slot := h.passSlot(time.Now())
 	h.state.Begin(h.gen)

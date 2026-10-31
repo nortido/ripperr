@@ -385,3 +385,22 @@ func TestTelegramMuteButtonKeptOnOtherErrors(t *testing.T) {
 		t.Error("button hidden by a non-409 error")
 	}
 }
+
+func TestRunTelegramButtonsSilent(t *testing.T) {
+	bot := newTgBot(t)
+	m, _ := newMemMutes()
+	n := New(Config{TelegramToken: botToken, TelegramChatID: "42", Enabled: true, Silent: true}, "").WithTelegramMutes(m)
+	done := make(chan struct{})
+	go func() {
+		n.RunTelegramButtons(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunTelegramButtons did not return in safe mode")
+	}
+	if p, _, _ := bot.snapshot(); p != 0 {
+		t.Fatalf("getUpdates hits = %d, want 0", p)
+	}
+}

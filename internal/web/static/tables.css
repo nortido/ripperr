@@ -103,7 +103,8 @@
 }
 
 .table-dash-releases .release-foot,
-.table-dash-releases .release-meta {
+.table-dash-releases .release-meta,
+.table-dash-releases .release-tail-status {
   display: none;
 }
 

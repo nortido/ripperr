@@ -303,24 +303,24 @@ function plannedCheckSpanHtml(short, full, ignored) {
 }
 
 export function releaseTimeCellHtml(item) {
-  const meta = releaseMetaHtml(item);
   const ignored = isUrlIgnored(item.url_hash || '');
   if (historyState.sort === 'recheck') {
     const recheckShort = item.recheck_at ? formatTableTime(item.recheck_at) : '';
     const recheckFull = item.recheck_at ? formatDateTime(item.recheck_at) : '';
-    return html`<td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}">${planRecheckSpanHtml(recheckShort, recheckFull, ignored)}${meta}</td>`;
+    return html`<td class="plan-recheck-cell" data-recheck-short="${recheckShort}" data-recheck-full="${recheckFull}">${releaseTailHtml(item, planRecheckSpanHtml(recheckShort, recheckFull, ignored))}</td>`;
   }
   if (!item.checked_at && item.recheck_at) {
     const plannedShort = formatTableTime(item.recheck_at);
     const plannedFull = formatDateTime(item.recheck_at);
-    return html`<td class="col-time" data-recheck-short="${plannedShort}" data-recheck-full="${plannedFull}">${plannedCheckSpanHtml(plannedShort, plannedFull, ignored)}${meta}</td>`;
+    return html`<td class="col-time" data-recheck-short="${plannedShort}" data-recheck-full="${plannedFull}">${releaseTailHtml(item, plannedCheckSpanHtml(plannedShort, plannedFull, ignored))}</td>`;
   }
   if (!item.checked_at) {
-    return html`<td class="col-time">${dateStubHtml('col-time-text')}${meta}</td>`;
+    return html`<td class="col-time">${releaseTailHtml(item, dateStubHtml('col-time-text'))}</td>`;
   }
   const timeShort = formatTableTime(item.checked_at);
   const timeFull = formatDateTime(item.checked_at);
-  return html`<td class="col-time"><span class="col-time-text" title="${timeFull}">${timeShort}</span>${meta}</td>`;
+  const timeHtml = html`<span class="col-time-text" title="${timeFull}">${timeShort}</span>`;
+  return html`<td class="col-time">${releaseTailHtml(item, timeHtml)}</td>`;
 }
 
 function categoryBadgeHtml(item) {
@@ -328,9 +328,14 @@ function categoryBadgeHtml(item) {
   return category ? categoryChipHtml(category, item.category_color) : '';
 }
 
+function releaseTailHtml(item, timeHtml) {
+  // статус еще раз рядом с датой: на мобильном они уходят под чипы одним блоком,
+  // а отдельные ячейки таблицы так не перенести
+  return html`<span class="release-tail"><span class="release-tail-status">${statusIcon(item.status, item.error_streak)}</span>${timeHtml}</span>${releaseMetaHtml(item)}`;
+}
+
 function releaseMetaHtml(item) {
-  // чипы еще раз рядом с датой: на мобильном колонка трекера скрыта, и внизу
-  // карточки они встают в ряд с датой, не разрывая название
+  // чипы еще раз рядом с датой: на мобильном колонка трекера скрыта
   return html`<span class="release-meta">${trackerBadgeHtml(item.tracker_name)}${categoryBadgeHtml(item)}</span>`;
 }
 

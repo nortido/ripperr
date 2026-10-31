@@ -169,6 +169,10 @@ func writeReleaseCode(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, releaseErrResp{Error: msg, Code: code})
 }
 
+func writeSafeMode(w http.ResponseWriter, msg string) {
+	writeReleaseCode(w, http.StatusConflict, "safe_mode", msg)
+}
+
 func writeReleaseError(w http.ResponseWriter, err error) {
 	var (
 		status int
@@ -187,6 +191,8 @@ func writeReleaseError(w http.ResponseWriter, err error) {
 		status, code = http.StatusUnprocessableEntity, "no_torrent"
 	case errors.Is(err, model.ErrAlreadyAdded):
 		status, code = http.StatusConflict, "already_added"
+	case errors.Is(err, runner.ErrSafeMode):
+		status, code = http.StatusConflict, "safe_mode"
 	case errors.Is(err, runner.ErrReleaseBusy):
 		status, code = http.StatusConflict, "torrent_busy"
 	case errors.Is(err, model.ErrReplacePending):

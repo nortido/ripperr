@@ -4,6 +4,7 @@ import { fetchJSON, showToast } from './api.js';
 import { activeErrorPopover, bindPageSizeSelect, buildPageSizeSelect, buildSegmentControl, closePopovers, initSegmentControls, paginationButtons, updateSegmentThumb } from './components.js';
 import { bindHistFilterSelect, buildHistFilters, openHistFilterSelect } from './histfilter.js';
 import { hydrateIcons } from './icons.js';
+import { applySafeMode } from './layout.js';
 import { refreshLogs } from './logs.js';
 import { bindMobileNameSearch, bindNameFilter, buildMobileNameSearchSlot, buildNameColumnHeader, openNameFilterWrap } from './namefilter.js';
 import { bindOnboardingCard, maybeStartDashboardTour, onboardingCardHtml, refreshOnboarding } from './onboarding.js';
@@ -202,6 +203,7 @@ export async function pollDashboardStatus() {
     if (status.running) setRunPending(false);
     setStopPending(!!status.stopping);
     dashboardDryRun = !!status.dry_run;
+    applySafeMode(!!status.safe_mode);
     dashboardQueuedTotal = status.queued_total || 0;
     setCheckProgress(status.checking, status.queued);
     applyRunStatus(effectiveRunning(status.running));
@@ -228,8 +230,14 @@ export async function triggerRunCheck() {
     if (res.status === 202) {
       updateRunStatusUI(true);
     } else if (res.status === 409) {
-      showToast((data && data.error) || t('dash.checkAlreadyRunning'), 'info');
-      updateRunStatusUI(true);
+      if (data && data.code === 'safe_mode') {
+        setRunPending(false);
+        updateRunStatusUI(prevRunning);
+        showToast(t('safe.checksOff'), 'info');
+      } else {
+        showToast((data && data.error) || t('dash.checkAlreadyRunning'), 'info');
+        updateRunStatusUI(true);
+      }
     } else {
       setRunPending(false);
       updateRunStatusUI(prevRunning);
@@ -598,6 +606,7 @@ export async function updateDryRunButtonState() {
     const status = await fetchJSON('/api/status');
     const busy = !!(status.running || status.stopping);
     btn.disabled = busy;
+    btn.classList.toggle('hidden', !status.safe_mode);
     btn.title = busy ? t('logs.dryRunBusy') : t('logs.dryRunHint');
   } catch (_) { /* кнопка останется как была */ }
 }

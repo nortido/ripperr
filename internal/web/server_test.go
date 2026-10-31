@@ -935,7 +935,7 @@ func TestPostRunAlreadyQueued(t *testing.T) {
 
 func TestPostRunDry(t *testing.T) {
 	state := runner.NewState()
-	srv := New(&fakeStore{}, func() {}, testEffective, ":0", state, nil)
+	srv := New(&fakeStore{}, func() {}, safeEffective, ":0", state, nil)
 
 	body := []byte(`{"dry":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/run", bytes.NewReader(body))

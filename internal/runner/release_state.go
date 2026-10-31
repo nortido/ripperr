@@ -13,6 +13,7 @@ var (
 	ErrNoTorrent       = errors.New("no torrent or magnet link on the topic page")
 	ErrReleaseBusy     = errors.New("torrent is being updated by a check, try again later")
 	ErrTorrentsChanged = errors.New("torrents of this release changed in the client")
+	ErrSafeMode        = errors.New("safe mode: torrent client changes are off")
 )
 
 type AddRequest struct {

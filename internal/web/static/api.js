@@ -58,10 +58,11 @@ export async function fetchJSON(url, options = {}) {
     }
   }
   if (!res.ok) {
-    const msg = data && data.error ? data.error : 'HTTP ' + res.status;
+    const code = data && data.code;
+    const msg = code === 'safe_mode' ? t('safe.actionOff') : (data && data.error ? data.error : 'HTTP ' + res.status);
     const err = new Error(msg);
     err.status = res.status;
-    err.code = data && data.code;
+    err.code = code;
     throw err;
   }
   return data;

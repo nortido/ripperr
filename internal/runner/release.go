@@ -107,6 +107,9 @@ func (h *handler) removalInfo(ctx context.Context, urlHash string) (RemovalInfo,
 }
 
 func (h *handler) removeRelease(ctx context.Context, req RemoveRequest) error {
+	if h.config.SafeMode {
+		return ErrSafeMode
+	}
 	targets, _, adoptErr, err := h.releaseTorrents(ctx, req.URLHash)
 	if err != nil {
 		return err
@@ -232,6 +235,9 @@ func (h *handler) addRelease(ctx context.Context, req AddRequest) (AddResult, er
 	}
 	if !h.addWatched(req) {
 		return AddResult{}, ErrNotWatched
+	}
+	if h.config.SafeMode {
+		return AddResult{}, ErrSafeMode
 	}
 	tc, err := h.trackerService.GetCachedClient(ctx, ttid)
 	if err != nil {

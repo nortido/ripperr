@@ -18,6 +18,7 @@ type App struct {
 	Web          Web
 	Notify       Notifications
 	Metrics      Metrics
+	SafeMode     bool `env:"SAFE_MODE, default=false"`
 }
 
 func (a App) BlackholeDirPath() string {

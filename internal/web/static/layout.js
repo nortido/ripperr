@@ -258,6 +258,13 @@ function syncCompactHeader() {
   root.classList.toggle('header-compact', p >= 1);
 }
 
+export function applySafeMode(on) {
+  document.querySelectorAll('.safe-mode-badge').forEach(function (el) {
+    el.classList.toggle('hidden', !on);
+    el.title = t('safe.badgeHint');
+  });
+}
+
 function initMobileHeaderActions() {
   // копии кнопок, а не сами узлы: виды перерисовывают шапку через innerHTML
   const bar = document.getElementById('mobile-header-actions');

@@ -206,4 +206,7 @@ type Notifications struct {
 	Language         string
 
 	Events []string
+
+	// тот же SAFE_MODE, что у App.SafeMode: Notify.Silent берется из env без доп. проводки в main
+	Silent bool `env:"SAFE_MODE, default=false"`
 }

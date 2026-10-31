@@ -54,6 +54,7 @@ type statusResp struct {
 	NextRuns    []string    `json:"next_runs"`
 	Running     bool        `json:"running"`
 	DryRun      bool        `json:"dry_run"`
+	SafeMode    bool        `json:"safe_mode"`
 	Stopping    bool        `json:"stopping"`
 	Checking    []string    `json:"checking"`
 	Queued      []string    `json:"queued"`

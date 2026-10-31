@@ -41,6 +41,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		NextRuns:    strSlots,
 		Running:     s.runnerState != nil && s.runnerState.Running(),
 		DryRun:      s.runnerState != nil && s.runnerState.DryRunning(),
+		SafeMode:    cfg.SafeMode,
 		Stopping:    s.runnerState != nil && s.runnerState.Stopping(),
 		Checking:    emptyIfNil(s.runnerState.CheckingItems()),
 		Queued:      emptyIfNil(queued),
@@ -115,6 +116,15 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	if s.runnerState.WaitingSettings() {
 		writeError(w, http.StatusServiceUnavailable, "stored settings are unreadable, check not started")
+		return
+	}
+
+	if cfg := s.effective(); cfg.SafeMode != req.Dry {
+		if req.Dry {
+			writeReleaseCode(w, http.StatusConflict, "dry_run_off", "dry run works only in safe mode")
+		} else {
+			writeSafeMode(w, "checks are off in safe mode")
+		}
 		return
 	}
 

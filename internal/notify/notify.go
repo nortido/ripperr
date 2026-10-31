@@ -87,6 +87,8 @@ type Config struct {
 	Language         string
 
 	Events []string
+
+	Silent bool
 }
 
 type Event struct {
@@ -604,6 +606,9 @@ func (n *Notifier) Notify(ev Event) {
 	}
 	// пишем до проверки wants: выключенные уведомления и отсутствие каналов не должны терять историю
 	n.record(ev)
+	if n.cfg.Silent {
+		return
+	}
 	if !n.wants() {
 		return
 	}

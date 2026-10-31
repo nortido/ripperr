@@ -1,7 +1,8 @@
+import { fetchJSON } from './api.js';
 import { bindLogout, loadAuthState } from './auth.js';
 import { initGlobalDismiss } from './components.js';
 import { hydrateIcons } from './icons.js';
-import { initAdvanced, initLayout, syncThemeColor } from './layout.js';
+import { applySafeMode, initAdvanced, initLayout, syncThemeColor } from './layout.js';
 import { initRouter, parseHash, showView } from './router.js';
 import { historyState } from './state.js';
 import { loadStoredPageSize } from './util.js';
@@ -19,4 +20,8 @@ const initialView = parseHash();
 historyState.limit = loadStoredPageSize(10);
 showView(initialView, false);
 bindLogout();
-loadAuthState();
+loadAuthState().then(function () {
+  return fetchJSON('/api/status');
+}).then(function (status) {
+  applySafeMode(!!status.safe_mode);
+}).catch(function () { /* без статуса бейдж остается скрытым */ });

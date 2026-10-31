@@ -304,6 +304,7 @@
 .table-dash-releases tr.release-row-absent .col-tracker,
 .table-dash-releases tr.release-row-absent .col-category,
 .table-dash-releases tr.release-row-absent .col-status,
+.table-dash-releases tr.release-row-absent .release-tail-status,
 .table-dash-releases tr.release-row-absent .col-time-text,
 .table-dash-releases tr.release-row-absent .plan-recheck-text {
   opacity: 0.55;

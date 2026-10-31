@@ -256,3 +256,22 @@ func TestProcessDownloadStationEnv(t *testing.T) {
 		t.Fatalf("env = %+v, want nas:5000 / u / secret", cfg.Manager.DownloadStation)
 	}
 }
+
+func TestSafeModeEnv(t *testing.T) {
+	process := func(env map[string]string) App {
+		cfg := DefaultApp()
+		if err := envconfig.ProcessWith(context.Background(), &envconfig.Config{
+			Target:   &cfg,
+			Lookuper: envconfig.MapLookuper(env),
+		}); err != nil {
+			t.Fatalf("ProcessWith: %v", err)
+		}
+		return cfg
+	}
+	if cfg := process(map[string]string{"SAFE_MODE": "true"}); !cfg.SafeMode || !cfg.Notify.Silent {
+		t.Fatalf("SafeMode/Silent = %v/%v, want true/true", cfg.SafeMode, cfg.Notify.Silent)
+	}
+	if cfg := process(map[string]string{}); cfg.SafeMode || cfg.Notify.Silent {
+		t.Fatalf("SafeMode/Silent = %v/%v, want false/false", cfg.SafeMode, cfg.Notify.Silent)
+	}
+}

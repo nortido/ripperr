@@ -6,7 +6,8 @@ html.mobile-layout textarea {
 }
 
 html.mobile-layout .table-dash-releases .col-tracker,
-html.mobile-layout .table-dash-releases .col-category {
+html.mobile-layout .table-dash-releases .col-category,
+html.mobile-layout .table-dash-releases td.col-status {
   display: none;
 }
 
@@ -17,14 +18,13 @@ html.mobile-layout .table-dash-releases thead {
 html.mobile-layout .table-dash-releases tbody tr {
   display: grid;
   gap: 4px 8px;
-  padding: 12px 14px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border-subtle);
   height: auto;
-  grid-template-columns: auto minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content;
   grid-template-areas:
-    "name name name"
-    "meta meta actions"
-    "status time actions";
+    "name name"
+    "line actions";
   align-items: center;
 }
 
@@ -74,7 +74,6 @@ html.mobile-layout .table-dash-releases .release-foot {
 }
 
 html.mobile-layout .table-dash-releases .release-meta {
-  grid-area: meta;
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -88,39 +87,55 @@ html.mobile-layout .table-dash-releases .release-meta .tracker-badge {
   max-width: none;
 }
 
-/* видна одна из двух ячеек, ее выбирает сортировка */
+/* видна одна из двух ячеек, ее выбирает сортировка. Статус с датой идут за чипами
+   и уходят на следующую строку вместе, когда места не хватает */
 html.mobile-layout .table-dash-releases .col-time,
 html.mobile-layout .table-dash-releases .plan-recheck-cell {
-  display: contents;
+  grid-area: line;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  text-align: left;
   font-size: 13px;
   color: var(--text-muted);
 }
 
+html.mobile-layout .table-dash-releases .release-tail {
+  order: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+html.mobile-layout .table-dash-releases .release-tail-status {
+  display: block;
+  flex: none;
+}
+
 html.mobile-layout .table-dash-releases .col-time-text,
 html.mobile-layout .table-dash-releases .plan-recheck-text {
-  grid-area: time;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-html.mobile-layout .table-dash-releases .col-status {
-  grid-area: status;
-  width: auto;
-  max-width: none;
-  padding: 0;
-  height: auto;
-  border: none;
-  text-align: center;
-  align-self: center;
-  justify-self: start;
-}
-
+/* капсула выше пилюли статуса: без этого она распирала бы ряд с чипами в одну строку */
 html.mobile-layout .table-dash-releases .col-actions {
   grid-area: actions;
   width: auto;
   max-width: none;
+  margin-block: -3px;
   padding: 0;
   height: auto;
   border: none;
@@ -215,6 +230,10 @@ html.mobile-layout .page-size-select {
   }
 
   .mobile-header.has-actions .mobile-header-brand-text {
+    display: none;
+  }
+
+  .mobile-header.has-actions .safe-mode-badge {
     display: none;
   }
 
@@ -696,13 +715,13 @@ html.mobile-layout .status-icon svg {
 }
 
 /* шире под палец, иконка в строке релиза открывает историю */
-html.mobile-layout .table-dash-releases .col-status .status-icon {
+html.mobile-layout .table-dash-releases .release-tail-status .status-icon {
   width: 40px;
   height: 26px;
   border-radius: 13px;
 }
 
-html.mobile-layout .table-dash-releases .col-status .status-icon svg {
+html.mobile-layout .table-dash-releases .release-tail-status .status-icon svg {
   width: 15px;
   height: 15px;
 }

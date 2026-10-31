@@ -260,6 +260,7 @@ type fakeManager struct {
 	partialList     bool
 	getEntriesCalls int
 	attached        []string
+	submitCalls     int
 }
 
 func (f *fakeManager) GetEntries(_ context.Context, _ model.FilterOptions) ([]*model.Entry, error) {
@@ -278,6 +279,7 @@ func (f *fakeManager) GetEntries(_ context.Context, _ model.FilterOptions) ([]*m
 }
 
 func (f *fakeManager) Submit(context.Context, *bytes.Buffer, model.ManagerAddFileOptions) error {
+	f.submitCalls++
 	return nil
 }
 
@@ -967,6 +969,70 @@ func TestRunPushesSavedForceChecksOnStart(t *testing.T) {
 	case <-pushDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("saved force_check not pushed after start")
+	}
+}
+
+func TestSafeModeSkipsSavedForceChecks(t *testing.T) {
+	const url = "https://example.com/t/1"
+	h, pushDone := newForceRestartHandler(map[string]*runnerModel.HistoryItem{
+		url: {URLHash: storagePkg.URLHash(url), URL: url, ForceCheck: true},
+	})
+	h.config.SafeMode = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.Run(ctx)
+	select {
+	case <-pushDone:
+		t.Fatal("saved force_check pushed in safe mode")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestSafeModeSkipsImmediateAndRunNow(t *testing.T) {
+	h, pushDone := newForceRestartHandler(nil)
+	h.config.Immediate = true
+	h.config.SafeMode = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.Run(ctx)
+	time.Sleep(50 * time.Millisecond)
+	h.state.RequestRun()
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case <-pushDone:
+			t.Fatal("pass started in safe mode")
+		case <-deadline:
+			return
+		case <-time.After(5 * time.Millisecond):
+			if h.state.Running() {
+				t.Fatal("state running in safe mode")
+			}
+		}
+	}
+}
+
+func TestSafeModeDryRunStillRuns(t *testing.T) {
+	h, pushDone := newForceRestartHandler(nil)
+	h.config.SafeMode = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.Run(ctx)
+	time.Sleep(50 * time.Millisecond)
+	if !h.state.RequestDryRun() {
+		t.Fatal("dry run not queued")
+	}
+	select {
+	case <-pushDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dry run did not start in safe mode")
+	}
+	for deadline := time.Now().Add(2 * time.Second); h.state.Running() && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	mgr := h.manager.(*countingManager)
+	if mgr.submitCalls != 0 || len(mgr.attached) != 0 {
+		t.Fatalf("dry run wrote: submit %d, attached %v", mgr.submitCalls, mgr.attached)
 	}
 }
 

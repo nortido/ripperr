@@ -15,4 +15,5 @@ type HandlerConfig struct {
 	Immediate            bool
 	ErrorStreakThreshold int
 	MagnetTimeout        int64 // сколько секунд ждать метаданные магнета, см. runner.handler.buildTorrentFromMagnet
+	SafeMode             bool
 }

@@ -61,6 +61,9 @@ func main() {
 	}
 	baseCfg.Runner.WatchTags = settings.WatchTagsFromEnv(baseCfg.Runner.WatchTag)
 	logger.SetLevel(baseCfg.Log.Level)
+	if baseCfg.SafeMode {
+		logger.Warn("SAFE_MODE is on: no checks, no torrent changes in the client, no notifications; dry run allowed")
+	}
 
 	dbConn, err := connectDB(ctx, baseCfg)
 	if err != nil {
@@ -187,6 +190,7 @@ func main() {
 			Immediate:            first && cfg.Runner.RunOnStart,
 			ErrorStreakThreshold: cfg.Runner.ErrorStreakThreshold,
 			MagnetTimeout:        cfg.Runner.MagnetTimeout,
+			SafeMode:             cfg.SafeMode,
 		}
 
 		done := make(chan struct{})

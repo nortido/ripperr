@@ -170,6 +170,10 @@ func (s *Server) handlePlanForce(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Force && s.effective().SafeMode {
+		writeSafeMode(w, "checks are off in safe mode")
+		return
+	}
 	ok, err := s.db.SetForceCheck(r.Context(), hash, req.Force)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -216,6 +220,10 @@ func (s *Server) handlePlanForceAll(w http.ResponseWriter, r *http.Request) {
 		if req.Force != nil {
 			force = *req.Force
 		}
+	}
+	if force && s.effective().SafeMode {
+		writeSafeMode(w, "checks are off in safe mode")
+		return
 	}
 	hashes, n, err := s.db.ForceCheckAll(r.Context(), force, s.checkLogFilterFromQuery(r))
 	if err != nil {
@@ -264,6 +272,11 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 	urlHash := r.PathValue("hash")
 	if urlHash == "" {
 		writeError(w, http.StatusBadRequest, "hash required")
+		return
+	}
+
+	if cfg.SafeMode {
+		writeSafeMode(w, "torrent changes are off in safe mode")
 		return
 	}
 
