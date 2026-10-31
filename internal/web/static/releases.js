@@ -116,7 +116,7 @@ export function syncPlanForceLocal(items) {
 export function moreButtonHtml(hash, absent) {
   const btnTitle = t('dash.more');
   const absentAttr = absent ? html` data-absent="1"` : '';
-  return html`<button type="button" class="btn btn-icon-only btn-more btn-action-more" title="${btnTitle}" aria-label="${btnTitle}" aria-haspopup="menu" aria-expanded="false" data-hash="${hash}"${absentAttr}><span data-icon="moreVertical"></span></button>`;
+  return html`<button type="button" class="btn btn-sm btn-icon btn-more btn-action-more" title="${btnTitle}" aria-label="${btnTitle}" aria-haspopup="menu" aria-expanded="false" data-hash="${hash}"${absentAttr}><span data-icon="moreVertical"></span></button>`;
 }
 
 function setMoreIcon(btn, name) {
@@ -238,13 +238,13 @@ async function removeRelease(hash, name) {
 
 export function planForceButtonHtml(hash, forced) {
   const btnTitle = forced ? t('dash.forceCancel') : t('dash.forceCheck');
-  const btnCls = 'btn btn-icon-only btn-plan-force btn-action-force' + (forced ? ' is-active' : '');
+  const btnCls = 'btn btn-sm btn-icon btn-plan-force btn-action-force' + (forced ? ' is-active' : '');
   return html`<button type="button" class="${btnCls}" title="${btnTitle}" aria-label="${btnTitle}" aria-pressed="${forced ? 'true' : 'false'}" data-hash="${hash}" data-force="${forced ? '1' : '0'}">${forceButtonIconsHtml(forced)}</button>`;
 }
 
 export function updatePlanForceButton(btn, hash, forced) {
   btn.disabled = false;
-  btn.className = 'btn btn-icon-only btn-plan-force btn-action-force' + (forced ? ' is-active' : '');
+  btn.className = 'btn btn-sm btn-icon btn-plan-force btn-action-force' + (forced ? ' is-active' : '');
   const btnTitle = forced ? t('dash.forceCancel') : t('dash.forceCheck');
   btn.setAttribute('title', btnTitle);
   btn.setAttribute('aria-label', btnTitle);
@@ -346,8 +346,8 @@ export function buildReleaseRows(histItems) {
     const ignored = isUrlIgnored(urlHash);
     const forced = planItemForced(item);
     const btnCls = ignored
-      ? 'btn btn-icon-only btn-unignore btn-ignore-item btn-action-ignore'
-      : 'btn btn-icon-only btn-ignore btn-ignore-item btn-action-ignore';
+      ? 'btn btn-sm btn-icon btn-unignore btn-ignore-item btn-action-ignore'
+      : 'btn btn-sm btn-icon btn-ignore btn-ignore-item btn-action-ignore';
     const btnTitle = ignored ? t('dash.fromIgnore') : t('dash.toIgnore');
     let rowClsValue = '';
     if (forced) rowClsValue = 'plan-row-force';

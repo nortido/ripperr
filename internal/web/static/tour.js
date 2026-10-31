@@ -14,7 +14,7 @@ export function startTour(steps, opts) {
 
   const layer = document.createElement('div');
   layer.className = 'tour-layer';
-  layer.innerHTML = html`<div class="tour-catcher"></div><div class="tour-spot"></div><div class="tour-pop" role="dialog" aria-modal="true" aria-labelledby="tour-title" aria-describedby="tour-text"><button type="button" class="btn btn-ghost btn-icon-only tour-close" aria-label="${t('tour.close')}" title="${t('tour.close')}"><span data-icon="x"></span></button><div class="tour-title" id="tour-title"></div><div class="tour-text" id="tour-text"></div><div class="tour-foot"><span class="tour-count"></span><button type="button" class="btn btn-primary tour-next"></button></div></div>`.toString();
+  layer.innerHTML = html`<div class="tour-catcher"></div><div class="tour-spot"></div><div class="tour-pop" role="dialog" aria-modal="true" aria-labelledby="tour-title" aria-describedby="tour-text"><button type="button" class="btn btn-ghost btn-sm btn-icon tour-close" aria-label="${t('tour.close')}" title="${t('tour.close')}"><span data-icon="x"></span></button><div class="tour-title" id="tour-title"></div><div class="tour-text" id="tour-text"></div><div class="tour-foot"><span class="tour-count"></span><button type="button" class="btn btn-primary tour-next"></button></div></div>`.toString();
   hydrateIcons(layer);
 
   const catcher = layer.querySelector('.tour-catcher');

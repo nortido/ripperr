@@ -4,7 +4,7 @@ import { loadDashboard, reloadDashboardTable } from './dashboard.js';
 import { icon } from './icons.js';
 import { syncDashboardFilterHash } from './router.js';
 import { historyState, isMobileStackedLayout, overlayBridge } from './state.js';
-import { html } from './util.js';
+import { html, statusMeta } from './util.js';
 
 export let openHistFilterSelect = null;
 
@@ -157,11 +157,11 @@ async function ensureHistFilterExtras(wrap) {
 export function getHistFilterOptions() {
   return [
     { v: '', icon: null, label: t('common.all'), activeClass: 'active-neutral' },
-    { v: 'new', icon: 'plus', label: t('dash.filter.new'), activeClass: 'active-info' },
-    { v: 'updated', icon: 'check', label: t('dash.filter.updated'), activeClass: 'active-success' },
-    { v: 'unchanged', icon: 'minus', label: t('dash.filter.unchanged'), activeClass: 'active-muted' },
-    { v: 'unknown', icon: 'help', label: t('dash.filter.unknown'), activeClass: 'active-warning' },
-    { v: 'error', icon: 'xCircle', label: t('dash.filter.error'), activeClass: 'active-danger' },
+    { v: 'new', icon: statusMeta('new').iconName, label: t('dash.filter.new'), activeClass: 'active-info' },
+    { v: 'updated', icon: statusMeta('updated').iconName, label: t('status.updated'), activeClass: 'active-success' },
+    { v: 'unchanged', icon: statusMeta('unchanged').iconName, label: t('status.unchanged'), activeClass: 'active-muted' },
+    { v: 'unknown', icon: statusMeta('unknown').iconName, label: t('status.unknown'), activeClass: 'active-warning' },
+    { v: 'error', icon: statusMeta('error').iconName, label: t('dash.filter.error'), activeClass: 'active-danger' },
     { v: 'broken', icon: 'warning', label: t('dash.filter.broken'), activeClass: 'active-broken' },
     { v: 'ignored', icon: 'eyeClosed', label: t('dash.inIgnore'), activeClass: 'active-neutral', isIgnored: true },
   ];

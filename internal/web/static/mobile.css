@@ -230,7 +230,7 @@ html.mobile-layout .page-size-select {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--overlay-scrim);
     z-index: 180;
     opacity: 0;
     pointer-events: none;
@@ -693,6 +693,18 @@ html.mobile-layout .status-icon {
 html.mobile-layout .status-icon svg {
   width: 14px;
   height: 14px;
+}
+
+/* шире под палец, иконка в строке релиза открывает историю */
+html.mobile-layout .table-dash-releases .col-status .status-icon {
+  width: 40px;
+  height: 26px;
+  border-radius: 13px;
+}
+
+html.mobile-layout .table-dash-releases .col-status .status-icon svg {
+  width: 15px;
+  height: 15px;
 }
 
 html.mobile-layout .table-dash-releases .tracker-badge {

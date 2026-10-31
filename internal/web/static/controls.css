@@ -113,7 +113,7 @@
   }
 }
 
-.btn-refresh.is-spinning svg {
+.btn.is-spinning svg {
   animation: refresh-spin 0.8s linear infinite;
 }
 
@@ -133,15 +133,15 @@
   }
 }
 
-.btn-icon-only {
-  min-width: var(--btn-h-sm);
-  min-height: var(--btn-h-sm);
-  padding: 0;
+.btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
-.btn-icon-only svg {
-  width: var(--btn-icon-sm);
-  height: var(--btn-icon-sm);
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    background: var(--danger-bg);
+  }
 }
 
 /* колонки 1fr растут до самой широкой кнопки, все кнопки одной ширины */
@@ -193,10 +193,6 @@
   flex-shrink: 0;
 }
 
-.btn-test.is-spinning svg {
-  animation: refresh-spin 0.8s linear infinite;
-}
-
 .btn-test-ok {
   color: var(--success);
   border-color: var(--success);
@@ -210,14 +206,14 @@
 }
 
 /* рядом с кнопкой Сохранить: квадрат той же высоты */
-.btn-group > .btn-test.btn-icon-only,
-.modal-foot > .btn-test.btn-icon-only {
+.btn-group > .btn-test.btn-icon,
+.modal-foot > .btn-test.btn-icon {
   min-width: var(--btn-h-md);
   min-height: var(--btn-h-md);
 }
 
-.btn-group > .btn-test.btn-icon-only svg,
-.modal-foot > .btn-test.btn-icon-only svg {
+.btn-group > .btn-test.btn-icon svg,
+.modal-foot > .btn-test.btn-icon svg {
   width: var(--btn-icon-md);
   height: var(--btn-icon-md);
 }
@@ -649,12 +645,6 @@
   color: var(--danger);
 }
 
-.log-empty {
-  color: var(--text-empty);
-  padding: 24px 0;
-  text-align: center;
-}
-
 .event-line {
   display: flex;
   flex-wrap: wrap;
@@ -867,15 +857,8 @@
   background: var(--tint-violet);
 }
 
-.btn-action-more.is-spinning svg,
-#dash-add-btn.is-spinning svg {
-  animation: refresh-spin 0.8s linear infinite;
-}
-
 /* круг из точек крутится шагами по точке, плавное вращение его размывает */
-.btn-action-more.is-spinning [data-icon="loader"] svg,
-#dash-add-btn.is-spinning [data-icon="loader"] svg,
-.btn-test.is-spinning [data-icon="loader"] svg {
+.btn.is-spinning [data-icon="loader"] svg {
   animation-duration: 0.9s;
   animation-timing-function: steps(8);
 }
@@ -892,10 +875,7 @@
 /* спиннер оставляем: без вращения не видно, что запрос идет, и кнопка кажется
    зависшей. Только замедляем. Пульсация строки просто декор, ее снимаем */
 @media (prefers-reduced-motion: reduce) {
-  .btn-refresh.is-spinning svg,
-  .btn-test.is-spinning svg,
-  .btn-action-more.is-spinning svg,
-  #dash-add-btn.is-spinning svg,
+  .btn.is-spinning svg,
   .btn.is-saving::after {
     animation-duration: 2.4s;
   }
@@ -1173,38 +1153,9 @@ html:not(.mobile-layout) .notify-events.open-up .notify-events-panel {
   margin-top: 12px;
 }
 
-.notify-events-backdrop {
-  display: none;
-}
-
-/* шторка у нижнего края, как у панели фильтра истории */
 html.mobile-layout .notify-events-panel {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: auto;
-  bottom: 0;
-  z-index: 400;
-  width: auto;
-  max-height: 80vh;
   overflow-y: auto;
   padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-  border: none;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-}
-
-html.mobile-layout .notify-events.open .notify-events-backdrop,
-html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
-  display: block;
-  position: fixed;
-  inset: 0;
-  z-index: 399;
-  background: rgba(0, 0, 0, 0.5);
-  transition: opacity 0.13s cubic-bezier(0.4, 0, 1, 1);
-}
-
-html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
-  opacity: 0;
 }
 
 .form-group {
@@ -1475,12 +1426,21 @@ html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
    контролов, а на темной карточке горел белым квадратом. Заодно видно, что он
    применяется сразу, без «Сохранить» */
 .form-switch {
+  --switch-row-h: var(--btn-h-xs);
+  --hint-size: 22px;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: var(--btn-h-xs);
+  min-height: var(--switch-row-h);
   cursor: pointer;
   font-size: 15px;
+}
+
+/* поля добивают одну строку подписи до высоты ряда, тогда верх span совпадает с верхом ряда
+   при любом числе строк, и (i) с постоянным отступом стоит на первой строке */
+.form-switch > span:not(.sr-only) {
+  line-height: 1.55;
+  padding-block: calc((var(--switch-row-h) - 1.55em) / 2);
 }
 
 /* бегунок рисуем фоном: input это replaced element, Firefox не дает ему
@@ -1931,18 +1891,6 @@ html.mobile-layout #password-card .form-row {
   margin-left: -4px;
 }
 
-/* поля добивают одну строку подписи до высоты ряда, тогда верх span совпадает с верхом ряда
-   при любом числе строк, и (i) с постоянным отступом стоит на первой строке */
-.form-switch {
-  --switch-row-h: var(--btn-h-xs);
-  --hint-size: 22px;
-}
-
-.form-switch > span:not(.sr-only) {
-  line-height: 1.55;
-  padding-block: calc((var(--switch-row-h) - 1.55em) / 2);
-}
-
 .form-submit-row > .hint-toggle {
   flex: none;
   align-self: center;
@@ -1988,14 +1936,6 @@ html.mobile-layout .page-header-actions.form-submit-row > .hint-toggle {
 
 .btn-remove-tracker {
   margin-right: auto;
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
-@media (hover: hover) {
-  .btn-remove-tracker:hover:not(:disabled) {
-    background: var(--danger-bg);
-  }
 }
 
 .btn-remove-tracker svg {
@@ -2120,12 +2060,10 @@ html.mobile-layout .page-header-actions.form-submit-row > .hint-toggle {
 
 .form-group-switch-end .form-switch {
   --switch-row-h: var(--btn-h-md);
-  min-height: var(--btn-h-md);
 }
 
 .tr-use-mirrors-group .form-switch {
   --switch-row-h: var(--btn-h-md);
-  min-height: var(--btn-h-md);
 }
 
 /* перенос в подписи задан в тексте перевода */

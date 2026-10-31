@@ -392,7 +392,7 @@ async function saveIntegrations() {
 }
 
 function testButtonHtml(kind) {
-  return html`<button type="button" class="btn btn-ghost btn-icon-only btn-test btn-test-int" data-kind="${kind}" data-key="int:${kind}"><span data-icon="activity"></span></button>`;
+  return html`<button type="button" class="btn btn-ghost btn-sm btn-icon btn-test btn-test-int" data-kind="${kind}" data-key="int:${kind}"><span data-icon="activity"></span></button>`;
 }
 
 function testLineHtml(kind) {

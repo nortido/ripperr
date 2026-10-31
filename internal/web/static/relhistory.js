@@ -1,7 +1,7 @@
 import { fetchJSON, showToast } from './api.js';
 import { activeErrorPopover, closePopovers, setActivePopover } from './components.js';
 import { hydrateIcons, icon } from './icons.js';
-import { formatTableTime, html, statusMeta } from './util.js';
+import { formatDate, formatTableTime, html, statusMeta } from './util.js';
 
 let openSeq = 0;
 let teardown = null;
@@ -16,22 +16,23 @@ function formatDelay(releasedAt, at) {
 function entryView(e) {
   if (e.kind === 'updated') {
     const sub = e.released_at ? t('relhist.updatedSub', { time: formatTableTime(e.released_at), delay: formatDelay(e.released_at, e.at) }) : '';
-    return { cls: 'status-icon-success', icon: 'check', title: t('relhist.updated'), sub: sub, full: '' };
+    return { status: 'updated', title: t('relhist.updated'), sub: sub, full: '' };
   }
   if (e.kind === 'tracker') {
-    return { cls: 'status-icon-success', icon: 'check', title: t('relhist.tracker'), sub: '', full: '' };
+    return { status: 'updated', title: t('relhist.tracker'), sub: '', full: '' };
   }
   if (e.kind === 'check_failed') {
-    return { cls: 'status-icon-danger', icon: 'xCircle', title: t('relhist.failed'), sub: e.text || '', full: e.text || '' };
+    return { status: 'error', title: t('relhist.failed'), sub: e.text || '', full: e.text || '' };
   }
-  const sub = e.released_at ? t('relhist.addedSub', { date: new Date(e.released_at).toLocaleDateString(localeTag()) }) : '';
-  return { cls: 'status-icon-info', icon: 'plus', title: t('relhist.added'), sub: sub, full: '' };
+  const sub = e.released_at ? t('relhist.addedSub', { date: formatDate(e.released_at) }) : '';
+  return { status: 'new', title: t('relhist.added'), sub: sub, full: '' };
 }
 
 function rowHtml(e) {
   const v = entryView(e);
+  const m = statusMeta(v.status);
   const sub = v.sub ? html`<span class="relhist-sub" title="${v.full}">${v.sub}</span>` : '';
-  return html`<li class="relhist-row"><span class="status-icon ${v.cls}">${icon(v.icon)}</span><span class="relhist-text"><span class="relhist-row-title">${v.title}</span>${sub}</span><span class="relhist-time">${formatTableTime(e.at)}</span></li>`;
+  return html`<li class="relhist-row"><span class="${m.cls}">${icon(m.iconName)}</span><span class="relhist-text"><span class="relhist-row-title">${v.title}</span>${sub}</span><span class="relhist-time">${formatTableTime(e.at)}</span></li>`;
 }
 
 function footerText(d) {
@@ -62,7 +63,7 @@ function showDialog(badge, d) {
   wrap.className = 'modal-overlay relhist-overlay';
   wrap.hintOwner = badge;
   const count = d.update_count > 0 ? html`<span class="relhist-count">${t('relhist.count', { n: d.update_count, days: d.period_days })}</span>` : '';
-  wrap.innerHTML = String(html`<div class="modal relhist-modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><div class="relhist-headtext"><h2 class="modal-title" id="${titleId}">${t('relhist.title')}</h2><div class="relhist-name" title="${d.name}">${d.name}</div></div>${count}<button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body">${panelHtml(d)}</div></div>`);
+  wrap.innerHTML = String(html`<div class="modal relhist-modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><div class="relhist-headtext"><h2 class="modal-title" id="${titleId}">${t('relhist.title')}</h2><div class="relhist-name" title="${d.name}">${d.name}</div></div>${count}<button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body">${panelHtml(d)}</div></div>`);
   const box = wrap.querySelector('.relhist-modal');
 
   // как в confirm.js: inert ставим только там, где его еще не было, и снимаем только свой

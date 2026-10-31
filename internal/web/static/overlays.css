@@ -312,6 +312,50 @@ body:has(.offline-banner.visible) .content {
   box-shadow: var(--shadow-dropdown);
 }
 
+/* на мобильных это нижняя шторка у вьюпорта. positionHistFilterPanel() тут
+   не ставит инлайновый max-height, так что предел только 80vh */
+html.mobile-layout .hist-filter-panel,
+html.mobile-layout .notify-events-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  z-index: 400;
+  width: auto;
+  max-height: 80vh;
+  border: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.hist-filter-backdrop,
+.notify-events-backdrop {
+  display: none;
+}
+
+/* тап по затемнению закрывает шторку, обработчик в bindHistFilterSelect */
+html.mobile-layout .hist-filter-select.open .hist-filter-backdrop,
+html.mobile-layout .hist-filter-select.is-closing .hist-filter-backdrop,
+html.mobile-layout .notify-events.open .notify-events-backdrop,
+html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 399;
+  background: var(--overlay-scrim);
+  transition: opacity 0.13s cubic-bezier(0.4, 0, 1, 1);
+}
+
+html.mobile-layout .hist-filter-select.open .hist-filter-backdrop,
+html.mobile-layout .notify-events.open .notify-events-backdrop {
+  opacity: 1;
+}
+
+html.mobile-layout .hist-filter-select.is-closing .hist-filter-backdrop,
+html.mobile-layout .notify-events.is-closing .notify-events-backdrop {
+  opacity: 0;
+}
+
 .error-popover {
   position: absolute;
   z-index: 1500;
@@ -484,7 +528,7 @@ html.mobile-layout .notify-events.is-closing .notify-events-panel {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
 }
 
 .modal {
@@ -585,17 +629,6 @@ html.mobile-layout .modal-overlay.is-closing:not(.confirm-overlay) > .modal {
   overflow-y: auto;
   overflow-wrap: anywhere;
   line-height: 1.5;
-}
-
-.confirm-modal .btn-danger {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
-@media (hover: hover) {
-  .confirm-modal .btn-danger:hover:not(:disabled) {
-    background: var(--danger-bg);
-  }
 }
 
 /* перебивает полноэкранный диалог из mobile.css: подтверждение остается карточкой по центру */

@@ -74,16 +74,20 @@ export function layoutWidth() {
   return document.documentElement.clientWidth || window.innerWidth;
 }
 
+function isMobileLayoutWidth(w) {
+  return w > 0 && w <= MOBILE_LAYOUT_MAX;
+}
+
 export const SIDEBAR_WIDE_MIN = 1200;
 export let sidebarOverlayOpen = false;
 
 export function isSidebarOverlayWidth() {
   const w = layoutWidth();
-  return w >= 901 && w < SIDEBAR_WIDE_MIN;
+  return w > MOBILE_LAYOUT_MAX && w < SIDEBAR_WIDE_MIN;
 }
 
 export function effectiveSidebarCollapsed() {
-  if (layoutWidth() <= 900) return false;
+  if (layoutWidth() <= MOBILE_LAYOUT_MAX) return false;
   if (layoutWidth() < SIDEBAR_WIDE_MIN) return true;
   const pref = loadSidebarCollapsedPref();
   return pref !== null ? pref : false;
@@ -151,7 +155,7 @@ export function refreshSidebarLayout() {
 
 function toggleSidebar() {
   const w = layoutWidth();
-  if (w <= 900) return;
+  if (w <= MOBILE_LAYOUT_MAX) return;
   if (w < SIDEBAR_WIDE_MIN) {
     if (sidebarOverlayOpen) closeSidebarOverlay();
     else openSidebarOverlay();
@@ -186,7 +190,7 @@ export function applyMobileLayout() {
   const app = document.querySelector('.app');
   if (!app) return;
   const w = layoutWidth();
-  const mobile = w > 0 && w < MOBILE_LAYOUT_MAX;
+  const mobile = isMobileLayoutWidth(w);
   const layoutChanged = mobile !== layoutWasMobile;
   if (mobile) {
     const scale = Math.min(w / PAGE_SCALE_BASE, MOBILE_PAGE_SCALE);
@@ -209,7 +213,7 @@ export function applyMobileLayout() {
 
 export function syncSidebarToWidth() {
   // в кадре resize, не через rAF: иначе панель сначала мелькнет развернутой
-  const mobile = layoutWidth() > 0 && layoutWidth() < MOBILE_LAYOUT_MAX;
+  const mobile = isMobileLayoutWidth(layoutWidth());
   const sidebar = mobile !== layoutWasMobile ? document.getElementById('sidebar') : null;
   if (sidebar) sidebar.classList.add('no-anim');
   refreshSidebarLayout();
@@ -328,7 +332,7 @@ export function initLayout() {
   syncCompactHeader();
   window.addEventListener('scroll', syncCompactHeader, { passive: true });
   initMobileHeaderActions();
-  layoutWasMobile = layoutWidth() > 0 && layoutWidth() < MOBILE_LAYOUT_MAX;
+  layoutWasMobile = isMobileLayoutWidth(layoutWidth());
   applyMobileLayout();
   window.addEventListener('resize', function () {
     syncSidebarToWidth();

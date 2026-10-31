@@ -27,7 +27,7 @@ export function bindDeleteCascade(el) {
 
     const filesOn = delOn && deleteFilesEnabled.checked;
     if (deleteFilesGroup) {
-      deleteFilesGroup.style.display = filesOn ? '' : 'none';
+      deleteFilesGroup.classList.toggle('hidden', !filesOn);
     }
   }
 

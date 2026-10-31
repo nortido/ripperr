@@ -73,14 +73,25 @@ export function visibleAlerts(alerts) {
   });
 }
 
-export function formatTableTime(iso) {
-  if (!iso) return t('common.emDash');
-  const d = new Date(iso);
+// округляем: из-за перехода на летнее время сутки бывают 23 или 25 часов
+function dayDelta(d) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const time = d.toLocaleTimeString(localeTag(), { hour: '2-digit', minute: '2-digit' });
-  if (day.getTime() === today.getTime()) return time;
+  return Math.round((day - today) / 86400000);
+}
+
+const TIME_WITH_SECONDS = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
+
+export function formatDate(iso) {
+  return new Date(iso).toLocaleDateString(localeTag());
+}
+
+export function formatTableTime(iso) {
+  if (!iso) return t('common.emDash');
+  const d = new Date(iso);
+  const time = formatRunSlotTime(iso);
+  if (dayDelta(d) === 0) return time;
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return dd + '.' + mm + ' ' + time;
@@ -91,9 +102,7 @@ export function formatLogTime(iso) {
   // лимит в 200 строк захватывает несколько суток, без даты 00:15 после 23:28 не прочесть
   const d = new Date(iso);
   const tag = localeTag();
-  return d.toLocaleDateString(tag, { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString(tag, {
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
+  return d.toLocaleDateString(tag, { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString(tag, TIME_WITH_SECONDS);
 }
 
 export function trackerDisplayDomain(tracker) {
@@ -204,27 +213,18 @@ export function formatRunSlotTime(iso) {
 
 export function formatRunSlot(iso) {
   const d = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const slotDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const delta = dayDelta(d);
   const time = formatRunSlotTime(iso);
-  if (slotDay.getTime() === today.getTime()) return time;
-  if (slotDay.getTime() === tomorrow.getTime()) return t('dash.tomorrow', { time: time });
+  if (delta === 0) return time;
+  if (delta === 1) return t('dash.tomorrow', { time: time });
   return d.toLocaleString(localeTag(), {
     day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   });
 }
 
 export function formatThenSlot(iso) {
-  const d = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const slotDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  if (slotDay.getTime() === today.getTime() || slotDay.getTime() === tomorrow.getTime()) return formatRunSlotTime(iso);
+  const delta = dayDelta(new Date(iso));
+  if (delta === 0 || delta === 1) return formatRunSlotTime(iso);
   return formatRunSlot(iso);
 }
 
@@ -322,7 +322,7 @@ export function statusMeta(status) {
 export function statusIcon(status, streak) {
   const m = statusMeta(status);
   const badge = streak > 1
-    ? html`<span class="streak-badge" title="${t('dash.streakTitle').replace('{n}', String(streak))}">${streak}</span>`
+    ? html`<span class="streak-badge" title="${t('dash.streakTitle', { n: streak })}">${streak}</span>`
     : '';
   return html`<span class="${m.cls} status-history-badge" role="button" tabindex="0" aria-haspopup="dialog" title="${m.label}" aria-label="${m.label}">${icon(m.iconName)}</span>${badge}`;
 }
@@ -364,8 +364,6 @@ export function timezoneOptions(timezones, selected) {
 export function updateRefreshedAt(id, key) {
   const el = document.getElementById(id);
   if (!el) return;
-  const time = new Date().toLocaleTimeString(localeTag(), {
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
+  const time = new Date().toLocaleTimeString(localeTag(), TIME_WITH_SECONDS);
   el.textContent = t(key, { time: time });
 }

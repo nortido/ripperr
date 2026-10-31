@@ -252,7 +252,7 @@ function trackerMirrorState(tr) {
 
 function rowBadgeTitle(ms) {
   if (ms.paused) return t('trackers.pausedBadge');
-  return ms.main.length + ms.remove.length > 0 ? t('trackers.suggestBadge') : t('trackers.mirrorsPendingBadge');
+  return t('trackers.mirrorsPendingBadge');
 }
 
 function updateRowBadge(key) {
@@ -285,7 +285,7 @@ export function trackerItemHtml(tracker) {
   const domain = trackerDisplayDomain(tracker);
   const ms = trackerMirrorState(tracker);
   const badge = html`<span class="tracker-row-badge${ms.paused ? ' tracker-row-badge-paused' : ''}" role="img" title="${rowBadgeTitle(ms)}" aria-label="${rowBadgeTitle(ms)}"${ms.pending ? '' : ' hidden'}></span>`;
-  return html`<div class="tracker-item${disabledCls}" data-key="${key}"><div class="tracker-row" role="button" tabindex="0" aria-haspopup="dialog" title="${t('trackers.openSettings')}" aria-label="${name}: ${t('trackers.openSettings')}"><span class="tracker-drag-handle" data-icon="grip" aria-hidden="true" title="${t('trackers.dragHandle')}"></span><label class="form-switch tracker-row-toggle" title="${t('trackers.enabled')}"><input class="tr-enabled" type="checkbox" name="enabled-${key}"${tracker.enabled ? ' checked' : ''}><span class="sr-only">${t('trackers.enabled')}</span></label><div class="tracker-row-main"><span class="tracker-row-name">${name}</span><span class="tracker-row-domain"${domain ? '' : ' hidden'}>${domain}</span></div><span class="tracker-row-proxy">${proxyChipHtml(tracker)}</span><span class="tracker-row-limit">${hourLimitText(tracker)}</span>${badge}<button type="button" class="btn btn-ghost btn-icon-only btn-test btn-test-tracker" data-key="${key}" title="${t('trackers.test')}" aria-label="${t('trackers.test')}"><span data-icon="activity"></span></button></div></div>`;
+  return html`<div class="tracker-item${disabledCls}" data-key="${key}"><div class="tracker-row" role="button" tabindex="0" aria-haspopup="dialog" title="${t('trackers.openSettings')}" aria-label="${name}: ${t('trackers.openSettings')}"><span class="tracker-drag-handle" data-icon="grip" aria-hidden="true" title="${t('trackers.dragHandle')}"></span><label class="form-switch tracker-row-toggle" title="${t('trackers.enabled')}"><input class="tr-enabled" type="checkbox" name="enabled-${key}"${tracker.enabled ? ' checked' : ''}><span class="sr-only">${t('trackers.enabled')}</span></label><div class="tracker-row-main"><span class="tracker-row-name">${name}</span><span class="tracker-row-domain"${domain ? '' : ' hidden'}>${domain}</span></div><span class="tracker-row-proxy">${proxyChipHtml(tracker)}</span><span class="tracker-row-limit">${hourLimitText(tracker)}</span>${badge}<button type="button" class="btn btn-ghost btn-sm btn-icon btn-test btn-test-tracker" data-key="${key}" title="${t('trackers.test')}" aria-label="${t('trackers.test')}"><span data-icon="activity"></span></button></div></div>`;
 }
 
 export function setTrackerItemEnabled(item, enabled) {
@@ -629,7 +629,7 @@ function renderMirrorSuggestions(d) {
     items.push(acts);
     const dis = d.mirrorBusy.has(busyKey) ? ' disabled' : '';
     const btns = acts.map(function (a, j) {
-      return html`<button type="button" class="btn btn-ghost btn-icon-only" data-i="${i}" data-j="${j}" title="${a.label}" aria-label="${a.label}"${dis}>${icon(a.icon)}</button>`;
+      return html`<button type="button" class="btn btn-ghost btn-sm btn-icon" data-i="${i}" data-j="${j}" title="${a.label}" aria-label="${a.label}"${dis}>${icon(a.icon)}</button>`;
     });
     const tag = reason ? html`<span class="tr-suggestion-reason">${reason}</span>` : '';
     rows.push(html`<div class="tr-suggestion"><span class="tr-suggestion-text">${text}${tag}</span><span class="tr-suggestion-actions">${btns}</span></div>`);
@@ -814,7 +814,7 @@ function selectAddType(d, tp) {
   paintTrackerTest(tp.key);
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'btn btn-ghost btn-icon-only btn-test btn-test-tracker';
+  btn.className = 'btn btn-ghost btn-sm btn-icon btn-test btn-test-tracker';
   btn.setAttribute('data-key', tp.key);
   d.saveBtn.before(btn);
   d.testBtn = btn;
@@ -832,7 +832,7 @@ function openAddTrackerDialog() {
   });
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${t('trackers.add')}</h2><button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body"><div class="form-group"><label class="form-label" for="tr-add-type">${t('trackers.addType')}</label><select id="tr-add-type" class="select tr-add-type"><option value="" disabled selected>${t('trackers.addTypePlaceholder')}</option>${options}</select></div><div class="tracker-add-form"></div></div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-primary btn-save-tracker" disabled>${t('trackers.addConfirm')}</button></div></div>`;
+  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${t('trackers.add')}</h2><button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body"><div class="form-group"><label class="form-label" for="tr-add-type">${t('trackers.addType')}</label><select id="tr-add-type" class="select tr-add-type"><option value="" disabled selected>${t('trackers.addTypePlaceholder')}</option>${options}</select></div><div class="tracker-add-form"></div></div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-primary btn-save-tracker" disabled>${t('trackers.addConfirm')}</button></div></div>`;
   const root = overlay.querySelector('.modal');
   root._addMode = true;
   const saveBtn = root.querySelector('.btn-save-tracker');
@@ -874,7 +874,7 @@ function openTrackerDialog(key) {
   const titleId = 'tracker-dialog-title';
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${tracker.name || key}</h2><button type="button" class="btn btn-ghost btn-icon-only modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body">${trackerFormHtml(tracker, key, tracker.publicity || 'public', tracker.mirrors || [])}</div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-ghost btn-remove-tracker"><span data-icon="trash"></span><span>${t('trackers.remove')}</span></button><button type="button" class="btn btn-ghost btn-icon-only btn-test btn-test-tracker" data-key="${key}"></button><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div>`;
+  overlay.innerHTML = html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1"><div class="modal-head"><h2 class="modal-title" id="${titleId}">${tracker.name || key}</h2><button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" title="${t('common.close')}" aria-label="${t('common.close')}"><span data-icon="x"></span></button></div><div class="modal-body">${trackerFormHtml(tracker, key, tracker.publicity || 'public', tracker.mirrors || [])}</div><p class="test-result modal-test-result" role="status" hidden></p><div class="modal-foot"><button type="button" class="btn btn-ghost btn-danger btn-remove-tracker"><span data-icon="trash"></span><span>${t('trackers.remove')}</span></button><button type="button" class="btn btn-ghost btn-sm btn-icon btn-test btn-test-tracker" data-key="${key}"></button><button type="button" class="btn btn-primary btn-save-tracker">${t('common.save')}</button></div></div>`;
   const root = overlay.querySelector('.modal');
   const saved = item._trackerSaved;
   // снимок должен совпасть с выбором trackerDomainChoice, с которого стартует форма, иначе диалог сразу "грязный"

@@ -110,7 +110,7 @@ function render() {
   const rows = st.devices.map(function (d) {
     const label = d.label || t('integrations.notifyBrowserUnknown');
     const here = d.id === st.thisId ? html` <span class="notify-device-here">${t('integrations.notifyBrowserThis')}</span>` : '';
-    return html`<li class="notify-device"><div class="notify-device-info"><span class="notify-device-name">${label}${here}</span><span class="notify-device-date">${formatDateTime(new Date(d.created_at * 1000).toISOString())}</span></div><button type="button" class="btn btn-ghost btn-icon-only notify-device-del" data-id="${d.id}" title="${t('common.remove')}" aria-label="${t('integrations.notifyBrowserRemove', { name: label })}"><span data-icon="trash"></span></button></li>`;
+    return html`<li class="notify-device"><div class="notify-device-info"><span class="notify-device-name">${label}${here}</span><span class="notify-device-date">${formatDateTime(new Date(d.created_at * 1000).toISOString())}</span></div><button type="button" class="btn btn-ghost btn-sm btn-icon notify-device-del" data-id="${d.id}" title="${t('common.remove')}" aria-label="${t('integrations.notifyBrowserRemove', { name: label })}"><span data-icon="trash"></span></button></li>`;
   });
   const list = st.devices.length
     ? html`<ul class="notify-devices">${rows}</ul>`

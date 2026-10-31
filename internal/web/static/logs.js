@@ -121,7 +121,7 @@ export function renderEventsFeed(el, data) {
   }
   if (!logsState.eventsLoaded) return;
   if (!logsState.events.length) {
-    feed.innerHTML = html`<div class="log-empty">${t('events.empty')}</div>`;
+    feed.innerHTML = html`<div class="empty-state">${t('events.empty')}</div>`;
     return;
   }
   const scroll = feed.scrollTop;
@@ -209,7 +209,7 @@ export async function refreshEvents(manual, loud) {
     // loud: ошибку первой загрузки показываем, фоновый опрос молчит
     if (loud && fetchGen === logsFetchGen) {
       const feed = el.querySelector('.events-feed');
-      if (feed && !logsState.eventsLoaded) feed.innerHTML = html`<div class="log-empty">${err.message}</div>`;
+      if (feed && !logsState.eventsLoaded) feed.innerHTML = html`<div class="empty-state">${err.message}</div>`;
       showToast(err.message, 'error');
     }
   } finally {
@@ -250,7 +250,7 @@ export function renderLogsFeed(el, data) {
   const items = visibleLogItems();
   if (!items.length) {
     const key = logsState.items.length ? 'logs.emptyFiltered' : 'logs.empty';
-    feed.innerHTML = html`<div class="log-empty">${t(key)}</div>`;
+    feed.innerHTML = html`<div class="empty-state">${t(key)}</div>`;
     return;
   }
   let parts = '';

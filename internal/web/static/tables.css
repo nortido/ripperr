@@ -280,9 +280,17 @@ html.mobile-layout .time-planned svg {
   white-space: nowrap;
 }
 
+.empty-state,
 .table-empty td {
   text-align: center;
   color: var(--text-empty);
+}
+
+.empty-state {
+  padding: 24px 0;
+}
+
+.table-empty td {
   padding: 32px 20px;
 }
 
