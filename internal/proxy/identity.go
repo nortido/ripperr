@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -40,6 +39,11 @@ func (f *client) ChromeIdentity(ctx context.Context) (tlscapture.Identity, error
 	ua, err := f.flareUserAgent(ctx)
 	if err != nil {
 		return tlscapture.Identity{}, err
+	}
+	// своего отпечатка для такого браузера нет, страницы идут через решатель
+	if _, ok := tlsclient.ChromeMajor(ua); !ok {
+		logger.Info(fmt.Sprintf("solver reports no chrome user agent (%q), pages go through it", ua))
+		return tlscapture.Identity{UserAgent: ua, Mode: tlscapture.ModeFlare}, nil
 	}
 	key := f.conf.Flaresolverr.URL + "\x00" + ua
 	if id, ok := cachedIdentity(key); ok {
@@ -153,17 +157,15 @@ func (f *client) flareUserAgent(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
+	if res.StatusCode >= http.StatusInternalServerError {
 		return "", fmt.Errorf("flaresolverr status %d", res.StatusCode)
 	}
 	var body struct {
 		UserAgent string `json:"userAgent"`
 	}
-	if err = json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return "", err
-	}
-	if body.UserAgent == "" {
-		return "", errors.New("flaresolverr returned no userAgent")
+	// корень не входит в API решателя: другой ответ значит только, что браузер он не назвал
+	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&body) != nil {
+		return "", nil
 	}
 	return body.UserAgent, nil
 }

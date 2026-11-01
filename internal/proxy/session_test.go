@@ -209,3 +209,17 @@ func TestSessionGateMapStaysBounded(t *testing.T) {
 		t.Fatalf("gate map holds %d entries after all unlocks", len(g.m))
 	}
 }
+
+func TestDestroyFlareSessionMissingIsNotAnError(t *testing.T) {
+	for _, msg := range []string{"The session doesn't exist.", "Session not found; create a new session"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "error", "message": msg})
+		}))
+		px := New(srv.Client(), &proxy.Config{Flaresolverr: proxy.ItemConfig{URL: srv.URL}}).(*client)
+		err := px.DestroyFlareSession(context.Background(), "gone")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("%q: %v", msg, err)
+		}
+	}
+}

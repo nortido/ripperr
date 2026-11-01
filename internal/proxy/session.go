@@ -115,7 +115,7 @@ func (f *client) DestroyFlareSession(ctx context.Context, sessionID string) (err
 		return
 	}
 	if body.Status != "ok" {
-		if strings.Contains(body.Message, "doesn't exist") {
+		if m := strings.ToLower(body.Message); strings.Contains(m, "doesn't exist") || strings.Contains(m, "not found") {
 			return
 		}
 		err = fmt.Errorf("flaresolverr sessions.destroy: %s", body.Message)

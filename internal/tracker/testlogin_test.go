@@ -200,7 +200,7 @@ func runOfflineRutrackerLoginWith(t *testing.T, pages *loginPageDoer) *offlineLo
 	o := &offlineLogin{pages: pages}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			_, _ = io.WriteString(w, `{"msg":"FlareSolverr is ready!","userAgent":"ua"}`)
+			_, _ = io.WriteString(w, `{"msg":"FlareSolverr is ready!","userAgent":"Mozilla/5.0 Chrome/146.0.0.0 Safari/537.36"}`)
 			return
 		}
 		var p flarePayload

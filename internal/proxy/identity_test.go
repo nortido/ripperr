@@ -32,12 +32,13 @@ var browserOrder = []string{
 }
 
 type identityFlare struct {
-	mu      sync.Mutex
-	ua      string
-	gets    int
-	rootErr bool
-	getErr  bool
-	browser tls_client.HttpClient
+	mu       sync.Mutex
+	ua       string
+	gets     int
+	rootErr  bool
+	rootCode int
+	getErr   bool
+	browser  tls_client.HttpClient
 }
 
 func (s *identityFlare) setUA(ua string) {
@@ -55,11 +56,15 @@ func (s *identityFlare) count() int {
 func (s *identityFlare) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	s.mu.Lock()
-	ua, rootErr, getErr := s.ua, s.rootErr, s.getErr
+	ua, rootErr, rootCode, getErr := s.ua, s.rootErr, s.rootCode, s.getErr
 	s.mu.Unlock()
 	if r.Method == http.MethodGet {
 		if rootErr {
 			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if rootCode != 0 {
+			w.WriteHeader(rootCode)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"userAgent": ua})
@@ -271,5 +276,33 @@ func TestReceiverOptions(t *testing.T) {
 	}
 	if got.ListenAddr != "127.0.0.1:0" || got.AdvertiseHost != "127.0.0.1" {
 		t.Fatalf("auto: %+v", got)
+	}
+}
+
+func TestChromeIdentityWithoutChromeUAGoesThroughSolver(t *testing.T) {
+	const firefox = "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
+	cases := map[string]struct {
+		ua       string
+		rootCode int
+	}{
+		"no user agent":     {},
+		"firefox":           {ua: firefox},
+		"no status on root": {rootCode: http.StatusNotFound},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, px := newIdentityProxy(t, tc.ua)
+			s.rootCode = tc.rootCode
+			id, err := px.ChromeIdentity(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if id.Mode != tlscapture.ModeFlare {
+				t.Fatalf("mode %d, want flare", id.Mode)
+			}
+			if n := s.count(); n != 0 {
+				t.Fatalf("request.get count %d, want no capture", n)
+			}
+		})
 	}
 }

@@ -2,6 +2,14 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.9.2] - 2026-11-01
+
+### Changed
+- Tracker pages go through the solver when it does not report a Chrome user agent. Solvers with a FlareSolverr-compatible API, such as Trawl, now work.
+
+### Fixed
+- Ripperr no longer logs a warning when it resets a solver session that is already gone and the solver words this error differently from FlareSolverr.
+
 ## [2.9.1] - 2026-10-31
 
 ### Fixed
