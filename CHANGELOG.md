@@ -2,6 +2,11 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.9.3] - 2026-11-01
+
+### Fixed
+- An old cf_clearance cookie no longer breaks pages that go through a solver. Trawl reported this as `datacenter-ip-blocked`. When the solver returns an error for a request with this cookie, Ripperr deletes the cookie and repeats the request once.
+
 ## [2.9.2] - 2026-11-01
 
 ### Changed

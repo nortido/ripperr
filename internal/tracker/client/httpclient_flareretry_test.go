@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -241,5 +242,75 @@ func TestSendViaFlareRespectsCanceledContext(t *testing.T) {
 	}
 	if destroyCalls != 0 {
 		t.Fatalf("session destroy calls = %d, want 0", destroyCalls)
+	}
+}
+
+func newClearanceRejectingServer(t *testing.T, payloads *[][]string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Cmd     string `json:"cmd"`
+			Cookies []struct {
+				Name string `json:"name"`
+			} `json:"cookies"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Cmd == "sessions.destroy" {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		names := make([]string, 0, len(body.Cookies))
+		for _, c := range body.Cookies {
+			names = append(names, c.Name)
+		}
+		*payloads = append(*payloads, names)
+		if slices.Contains(names, "cf_clearance") {
+			_, _ = w.Write([]byte(`{"status":"error","message":"any solver wording"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"ok","solution":{"status":200,"response":"<html>ok</html>","cookies":[{"name":"cf_clearance","value":"fresh"}],"userAgent":"test-agent"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestSendViaFlareDropsRejectedClearanceAndRetries(t *testing.T) {
+	var payloads [][]string
+	c := newFlareClient(t, newClearanceRejectingServer(t, &payloads).URL, "")
+	c.setCookies([]*http.Cookie{{Name: "bb_session", Value: "s"}, {Name: "cf_clearance", Value: "stale"}})
+
+	res, err := c.GetResponse(context.Background(), "https://example.com/topic/1", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = res.Body.Close()
+	if len(payloads) != 2 {
+		t.Fatalf("solver calls = %d, want 2", len(payloads))
+	}
+	if !slices.Equal(payloads[1], []string{"bb_session"}) {
+		t.Fatalf("retry cookies = %v, want only bb_session", payloads[1])
+	}
+	for _, ck := range c.cookieSnapshot() {
+		if ck.Name == "cf_clearance" && ck.Value != "fresh" {
+			t.Fatalf("cf_clearance = %q, want the fresh one", ck.Value)
+		}
+	}
+}
+
+func TestSendViaFlareWithoutClearanceDoesNotRetry(t *testing.T) {
+	var destroyCalls, requestCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&requestCalls, 1)
+		_, _ = w.Write([]byte(`{"status":"error","message":"any solver wording"}`))
+	}))
+	defer server.Close()
+	c := newFlareClient(t, server.URL, "session-1")
+	c.setCookies([]*http.Cookie{{Name: "bb_session", Value: "s"}})
+
+	if _, err := c.GetResponse(context.Background(), "https://example.com/topic/1", false); err == nil {
+		t.Fatal("expected error")
+	}
+	if requestCalls != 1 || destroyCalls != 0 {
+		t.Fatalf("calls = %d, destroys = %d, want one call and no reset", requestCalls, destroyCalls)
 	}
 }

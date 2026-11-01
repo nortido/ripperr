@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -510,15 +511,19 @@ func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *prox
 		c.absorbFlareCookies(res)
 		return
 	}
-	if !isFlareChallengeSolveFailure(err) {
+	if ctx.Err() != nil {
 		return
+	}
+	// устаревший cf_clearance решатель считает непройденной проверкой, и текст ошибки у
+	// каждого свой, поэтому смотрим на саму куку
+	retryOpts, dropped := opts, false
+	if !helper.IsFlareTimeout(err) {
+		retryOpts, dropped = c.dropClearance(opts)
 	}
 	sessionID, hasSession := c.flareSessionID()
-	if !hasSession || sessionID == "" {
-		// сессии не было вовсе, повторять с чистого листа нечего
-		return
-	}
-	if ctx.Err() != nil {
+	hasSession = hasSession && sessionID != ""
+	if !dropped && (!isFlareChallengeSolveFailure(err) || !hasSession) {
+		// без сессии повторять с чистого листа нечего
 		return
 	}
 	if req.Body != nil {
@@ -533,13 +538,31 @@ func (c *client) sendViaFlare(ctx context.Context, req *http.Request, opts *prox
 		req.Body = body
 	}
 	logger.Warn(fmt.Sprintf("%s: flare challenge solve failed, resetting session and retrying request once: %s", c.GetName(), err))
-	c.resetFlareSession(ctx)
-	res, err = c.px.Send(req, opts, proxyType)
+	if hasSession {
+		c.resetFlareSession(ctx)
+	}
+	res, err = c.px.Send(req, retryOpts, proxyType)
 	if err != nil {
 		return
 	}
 	c.absorbFlareCookies(res)
 	return
+}
+
+func isClearance(ck *http.Cookie) bool {
+	return ck != nil && ck.Name == "cf_clearance"
+}
+
+func (c *client) dropClearance(opts *proxyModel.Options) (*proxyModel.Options, bool) {
+	if opts == nil || !slices.ContainsFunc(opts.Cookies, isClearance) {
+		return opts, false
+	}
+	retry := *opts
+	retry.Cookies = slices.DeleteFunc(slices.Clone(opts.Cookies), isClearance)
+	c.cm.Lock()
+	c.cookies = slices.DeleteFunc(slices.Clone(c.cookies), isClearance)
+	c.cm.Unlock()
+	return &retry, true
 }
 
 func isFlareChallengeSolveFailure(err error) bool {
