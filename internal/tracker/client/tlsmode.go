@@ -25,7 +25,7 @@ var chromeHeaderOrder = []string{
 }
 
 type chromeIdentifier interface {
-	ChromeIdentity(ctx context.Context) (tlscapture.Identity, error)
+	ChromeIdentity(ctx context.Context, hint string) (tlscapture.Identity, error)
 }
 
 func mergeHeaderOrder(captured, typical []string) []string {
@@ -64,9 +64,9 @@ func (c *client) EncodedBody() bool {
 
 func (c *client) applyTLSIdentity(ctx context.Context) error {
 	ua := c.header.Get("User-Agent")
-	id := tlscapture.Identity{UserAgent: ua, Profile: tlsclient.ChromeProfile(ua)}
+	id := tlscapture.Identity{UserAgent: ua, Profile: tlsclient.Profile(ua)}
 	if p, ok := c.px.(chromeIdentifier); ok {
-		got, err := p.ChromeIdentity(ctx)
+		got, err := p.ChromeIdentity(ctx, c.tls.solverHint())
 		if err != nil {
 			logger.Warn(fmt.Sprintf("%s: chrome identity: %s", c.GetName(), err))
 			// рабочую идентичность общей сессии не меняем на запасную из-за сбоя Flare
@@ -79,7 +79,7 @@ func (c *client) applyTLSIdentity(ctx context.Context) error {
 				id.UserAgent = ua
 			}
 			if id.Profile == "" {
-				id.Profile = tlsclient.ChromeProfile(id.UserAgent)
+				id.Profile = tlsclient.Profile(id.UserAgent)
 			}
 		}
 	}
@@ -129,6 +129,12 @@ func (c *client) sendTLSOnce(ctx context.Context, req *http.Request) (*http.Resp
 		return nil, errors.New("tls session is not ready")
 	}
 	out := req.Clone(ctx)
+	// заголовки личности главнее базовых: хромовые client hints не должны уйти с UA Firefox
+	for _, name := range identityCopied {
+		if headers.Get(name) == "" {
+			out.Header.Del(name)
+		}
+	}
 	for name, vals := range headers {
 		out.Header[name] = slices.Clone(vals)
 	}
@@ -228,6 +234,8 @@ func (c *client) solveChallenge(ctx context.Context, req *http.Request, started 
 	}
 	s.solvedAt = time.Now()
 	ua := fres.Header.Get("User-Agent")
+	// cf_clearance привязан к UA решения, им и ходим дальше
+	s.setSolverHint(ua)
 	logger.Info(fmt.Sprintf("%s: cloudflare challenge solved via flaresolverr", c.GetName()))
 	if ua != "" && ua != s.headerSet().Get("User-Agent") {
 		return c.applyTLSIdentity(ctx)

@@ -89,6 +89,7 @@ type identityProxy struct {
 	destroys int
 	lastOpts *proxyModel.Options
 	lastType proxyModel.ProxyType
+	hints    []string
 }
 
 func (p *identityProxy) Send(r *http.Request, opts *proxyModel.Options, pt proxyModel.ProxyType) (*http.Response, error) {
@@ -107,9 +108,10 @@ func (p *identityProxy) DestroyFlareSession(context.Context, string) error {
 	return nil
 }
 
-func (p *identityProxy) ChromeIdentity(context.Context) (tlscapture.Identity, error) {
+func (p *identityProxy) ChromeIdentity(_ context.Context, hint string) (tlscapture.Identity, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.hints = append(p.hints, hint)
 	i := min(p.calls, len(p.ids)-1)
 	p.calls++
 	return p.ids[i], nil
@@ -122,7 +124,7 @@ func (p *identityProxy) sendCount() int {
 }
 
 func builtinIdentity() tlscapture.Identity {
-	return tlscapture.Identity{UserAgent: uaLinux152, Profile: tlsclient.ChromeProfile(uaLinux152), Mode: tlscapture.ModeBuiltin}
+	return tlscapture.Identity{UserAgent: uaLinux152, Profile: tlsclient.Profile(uaLinux152), Mode: tlscapture.ModeBuiltin}
 }
 
 func capturedFingerprint() *tlscapture.Fingerprint {
@@ -401,7 +403,7 @@ func TestTLSModeNoIdentityProvider(t *testing.T) {
 	if got := h.Get("Sec-Ch-Ua"); !strings.Contains(got, `v="140"`) {
 		t.Fatalf("sec-ch-ua = %q", got)
 	}
-	if want := tlsclient.ChromeProfile(h.Get("User-Agent")); f.configs()[0].Profile != want || want == "" {
+	if want := tlsclient.Profile(h.Get("User-Agent")); f.configs()[0].Profile != want || want == "" {
 		t.Fatalf("profile = %q, want %q", f.configs()[0].Profile, want)
 	}
 	if px.sends != 0 {

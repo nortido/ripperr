@@ -132,11 +132,21 @@ func (c *Client) Do(req *nethttp.Request) (*nethttp.Response, error) {
 	return toNetHTTPResponse(fResp, req), nil
 }
 
-func ChromeProfile(ua string) string {
+func Profile(ua string) string {
+	if major, ok := FirefoxMajor(ua); ok {
+		if p := closestProfile("firefox_", major, true); p != "" {
+			return p
+		}
+	}
+	major, ok := ChromeMajor(ua)
+	return closestProfile("chrome_", major, ok)
+}
+
+func closestProfile(prefix string, uaMajor int, known bool) string {
 	var majors []int
 	byMajor := map[int]string{}
 	for key := range profiles.MappedTLSClients {
-		rest, ok := strings.CutPrefix(key, "chrome_")
+		rest, ok := strings.CutPrefix(key, prefix)
 		if !ok {
 			continue
 		}
@@ -152,7 +162,7 @@ func ChromeProfile(ua string) string {
 	}
 	slices.Sort(majors)
 	want := majors[len(majors)-1]
-	if uaMajor, ok := ChromeMajor(ua); ok {
+	if known {
 		want = majors[0]
 		for _, n := range majors {
 			if n <= uaMajor {
@@ -163,10 +173,23 @@ func ChromeProfile(ua string) string {
 	return byMajor[want]
 }
 
-var chromeMajor = regexp.MustCompile(`Chrome/(\d+)`)
+func KnownBrowser(ua string) bool {
+	_, chrome := ChromeMajor(ua)
+	_, firefox := FirefoxMajor(ua)
+	return chrome || firefox
+}
 
-func ChromeMajor(ua string) (int, bool) {
-	m := chromeMajor.FindStringSubmatch(ua)
+var (
+	chromeMajor  = regexp.MustCompile(`Chrome/(\d+)`)
+	firefoxMajor = regexp.MustCompile(`Firefox/(\d+)`)
+)
+
+func ChromeMajor(ua string) (int, bool) { return uaMajor(chromeMajor, ua) }
+
+func FirefoxMajor(ua string) (int, bool) { return uaMajor(firefoxMajor, ua) }
+
+func uaMajor(re *regexp.Regexp, ua string) (int, bool) {
+	m := re.FindStringSubmatch(ua)
 	if m == nil {
 		return 0, false
 	}

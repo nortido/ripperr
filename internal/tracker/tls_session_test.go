@@ -25,8 +25,8 @@ type identityRecordingProxy struct {
 	recordingProxy
 }
 
-func (p *identityRecordingProxy) ChromeIdentity(context.Context) (tlscapture.Identity, error) {
-	return tlscapture.Identity{UserAgent: uaTLSLinux, Profile: tlsclient.ChromeProfile(uaTLSLinux), Mode: tlscapture.ModeBuiltin}, nil
+func (p *identityRecordingProxy) ChromeIdentity(context.Context, string) (tlscapture.Identity, error) {
+	return tlscapture.Identity{UserAgent: uaTLSLinux, Profile: tlsclient.Profile(uaTLSLinux), Mode: tlscapture.ModeBuiltin}, nil
 }
 
 type countingTLSDoer struct {

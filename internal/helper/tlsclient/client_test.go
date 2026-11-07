@@ -103,17 +103,20 @@ func TestDownloadRedirectPolicy(t *testing.T) {
 	}
 }
 
-func TestChromeProfile(t *testing.T) {
+func TestProfile(t *testing.T) {
 	cases := []struct{ ua, want string }{
 		{"Mozilla/5.0 Chrome/152.0.0.0 Safari/537.36", "chrome_152"},
 		{"Mozilla/5.0 Chrome/151.0.0.0 Safari/537.36", "chrome_150"},
 		{"Mozilla/5.0 Chrome/147.0.0.0 Safari/537.36", "chrome_146"},
 		{"Mozilla/5.0 Chrome/90.0.0.0 Safari/537.36", "chrome_103"},
-		{"Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0", "chrome_152"},
+		{"Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0", "firefox_148"},
+		{"Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0", "firefox_133"},
+		{"Mozilla/5.0 (X11; Linux x86_64; rv:90.0) Gecko/20100101 Firefox/90.0", "firefox_102"},
+		{"curl/8.5.0", "chrome_152"},
 	}
 	for _, tc := range cases {
-		if got := ChromeProfile(tc.ua); got != tc.want {
-			t.Errorf("ChromeProfile(%q) = %q, want %q", tc.ua, got, tc.want)
+		if got := Profile(tc.ua); got != tc.want {
+			t.Errorf("Profile(%q) = %q, want %q", tc.ua, got, tc.want)
 		}
 	}
 }
@@ -260,5 +263,19 @@ func TestHeaderOrder(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "user-agent,accept,cookie" {
 		t.Fatalf("order %v", got)
+	}
+}
+
+func TestKnownBrowser(t *testing.T) {
+	cases := map[string]bool{
+		"Mozilla/5.0 Chrome/146.0.0.0 Safari/537.36":                             true,
+		"Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0": true,
+		"curl/8.5.0": false,
+		"":           false,
+	}
+	for ua, want := range cases {
+		if got := KnownBrowser(ua); got != want {
+			t.Errorf("KnownBrowser(%q) = %v, want %v", ua, got, want)
+		}
 	}
 }

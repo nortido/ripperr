@@ -20,11 +20,11 @@ type flakyIdentityProxy struct {
 	fail atomic.Bool
 }
 
-func (p *flakyIdentityProxy) ChromeIdentity(ctx context.Context) (tlscapture.Identity, error) {
+func (p *flakyIdentityProxy) ChromeIdentity(ctx context.Context, hint string) (tlscapture.Identity, error) {
 	if p.fail.Load() {
 		return tlscapture.Identity{}, errors.New("flaresolverr is down")
 	}
-	return p.identityProxy.ChromeIdentity(ctx)
+	return p.identityProxy.ChromeIdentity(ctx, hint)
 }
 
 func initTLSClient(t *testing.T, px *flakyIdentityProxy, sess *TLSSession) IClient {

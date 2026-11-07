@@ -21,13 +21,14 @@ type doerKey struct {
 }
 
 type TLSSession struct {
-	mu      sync.Mutex
-	newDoer func(tlsclient.Config) (helper.HTTPDoer, error)
-	mode    tlscapture.Mode
-	headers http.Header
-	doer    helper.HTTPDoer
-	key     doerKey
-	applied bool
+	mu       sync.Mutex
+	newDoer  func(tlsclient.Config) (helper.HTTPDoer, error)
+	mode     tlscapture.Mode
+	headers  http.Header
+	doer     helper.HTTPDoer
+	key      doerKey
+	applied  bool
+	solverUA string
 
 	solveMu         sync.Mutex
 	solvedAt        time.Time
@@ -68,11 +69,18 @@ func (s *TLSSession) apply(id tlscapture.Identity, base http.Header, timeout tim
 		Profile:     id.Profile,
 		Direct:      true,
 		NoRedirects: true,
-		HeaderOrder: chromeHeaderOrder,
+	}
+	// порядок заголовков известен только для Chrome, у Firefox его задает захват или клиент
+	_, chrome := tlsclient.ChromeMajor(headers.Get("User-Agent"))
+	if chrome {
+		cfg.HeaderOrder = chromeHeaderOrder
 	}
 	if fp := id.Fingerprint; fp != nil {
 		if len(fp.HeaderOrder) > 0 {
-			cfg.HeaderOrder = mergeHeaderOrder(fp.HeaderOrder, chromeHeaderOrder)
+			cfg.HeaderOrder = fp.HeaderOrder
+			if chrome {
+				cfg.HeaderOrder = mergeHeaderOrder(fp.HeaderOrder, chromeHeaderOrder)
+			}
 		}
 		if id.Mode == tlscapture.ModeCustom {
 			cfg.Fingerprint = fp
@@ -84,6 +92,21 @@ func (s *TLSSession) apply(id tlscapture.Identity, base http.Header, timeout tim
 	}
 	s.mode, s.headers, s.doer, s.key, s.applied = id.Mode, headers, doer, key, true
 	return nil
+}
+
+func (s *TLSSession) solverHint() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.solverUA
+}
+
+func (s *TLSSession) setSolverHint(ua string) {
+	if ua == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.solverUA = ua
 }
 
 func (s *TLSSession) isApplied() bool {
@@ -110,6 +133,8 @@ func (s *TLSSession) headerSet() http.Header {
 	return s.headers.Clone()
 }
 
+const firefoxAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
 var identityCopied = []string{
 	"user-agent", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
 	"accept", "accept-encoding", "accept-language", "upgrade-insecure-requests",
@@ -134,11 +159,21 @@ func identityHeaders(id tlscapture.Identity, base http.Header) http.Header {
 		ua = id.UserAgent
 		out.Set("User-Agent", ua)
 	}
-	if captured["sec-ch-ua"] == "" {
-		out.Del("sec-ch-ua")
-		if major, ok := tlsclient.ChromeMajor(ua); ok {
-			out.Set("sec-ch-ua", fmt.Sprintf(`"Chromium";v="%d", "Not=A?Brand";v="24", "Google Chrome";v="%d"`, major, major))
+	major, chrome := tlsclient.ChromeMajor(ua)
+	if !chrome {
+		// client hints шлет только Chrome, а Accept в базовых заголовках тоже хромовый
+		for _, name := range []string{"sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform"} {
+			if captured[name] == "" {
+				out.Del(name)
+			}
 		}
+		if _, firefox := tlsclient.FirefoxMajor(ua); firefox && captured["accept"] == "" {
+			out.Set("Accept", firefoxAccept)
+		}
+		return out
+	}
+	if captured["sec-ch-ua"] == "" {
+		out.Set("sec-ch-ua", fmt.Sprintf(`"Chromium";v="%d", "Not=A?Brand";v="24", "Google Chrome";v="%d"`, major, major))
 	}
 	if captured["sec-ch-ua-mobile"] == "" {
 		out.Set("sec-ch-ua-mobile", "?0")

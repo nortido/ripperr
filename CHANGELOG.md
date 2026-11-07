@@ -2,6 +2,15 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.9.4] - 2026-11-07
+
+### Changed
+- In TLS fingerprint mode Ripperr now opens tracker pages itself when the solver runs Firefox, as Trawl does. Once the solver passes a Cloudflare check, Ripperr uses the solver's user agent with a matching Firefox TLS profile and calls the solver again only at the next check. Until now every page went through the solver, and Trawl loaded each one in a browser, 10 to 60 seconds per page.
+- When the solver does not name its browser up front, Ripperr uses its own user agent until the first check. Chrome-based FlareSolverr works as before.
+
+### Fixed
+- Requests with a Firefox user agent no longer send Chrome client hints (`sec-ch-ua`) or the Chrome `Accept` header.
+
 ## [2.9.3] - 2026-11-01
 
 ### Fixed

@@ -222,7 +222,7 @@ func TestTLSModeConcurrentChallengesOneSolve(t *testing.T) {
 }
 
 func TestTLSModeSolveNewUAReResolves(t *testing.T) {
-	id153 := tlscapture.Identity{UserAgent: uaLinux153, Profile: tlsclient.ChromeProfile(uaLinux153), Mode: tlscapture.ModeBuiltin}
+	id153 := tlscapture.Identity{UserAgent: uaLinux153, Profile: tlsclient.Profile(uaLinux153), Mode: tlscapture.ModeBuiltin}
 	for _, tc := range []struct {
 		name      string
 		solutionU string

@@ -35,15 +35,28 @@ var (
 	captureGate   = make(chan struct{}, 1)
 )
 
-func (f *client) ChromeIdentity(ctx context.Context) (tlscapture.Identity, error) {
+func (f *client) ChromeIdentity(ctx context.Context, hint string) (tlscapture.Identity, error) {
 	ua, err := f.flareUserAgent(ctx)
 	if err != nil {
 		return tlscapture.Identity{}, err
 	}
+	// не каждый решатель называет браузер в корне, тогда UA виден только в ответе на решение проверки
+	hinted := ua == ""
+	if hinted {
+		ua = hint
+	}
+	if ua == "" {
+		// пока проверки не было, чужой UA не нужен: страницы идут со своим
+		return tlscapture.Identity{Mode: tlscapture.ModeBuiltin}, nil
+	}
 	// своего отпечатка для такого браузера нет, страницы идут через решатель
-	if _, ok := tlsclient.ChromeMajor(ua); !ok {
-		logger.Info(fmt.Sprintf("solver reports no chrome user agent (%q), pages go through it", ua))
+	if !tlsclient.KnownBrowser(ua) {
+		logger.Info(fmt.Sprintf("solver reports no chrome or firefox user agent (%q), pages go through it", ua))
 		return tlscapture.Identity{UserAgent: ua, Mode: tlscapture.ModeFlare}, nil
+	}
+	if hinted {
+		// захват открыл бы новую страницу, и ее UA заменил бы тот, к которому привязан cf_clearance
+		return fallbackIdentity(ua), nil
 	}
 	key := f.conf.Flaresolverr.URL + "\x00" + ua
 	if id, ok := cachedIdentity(key); ok {
@@ -76,7 +89,7 @@ func (f *client) resolveIdentity(ctx context.Context, key, ua string) tlscapture
 	if err != nil {
 		return f.captureFailed(ctx, key, ua, err)
 	}
-	id := tlscapture.Identity{UserAgent: ua, Profile: tlsclient.ChromeProfile(ua), Fingerprint: flareFP}
+	id := tlscapture.Identity{UserAgent: ua, Profile: tlsclient.Profile(ua), Fingerprint: flareFP}
 	if captured := flareFP.Headers["user-agent"]; captured != "" {
 		id.UserAgent = captured
 	}
@@ -182,7 +195,7 @@ func receiverOptions(conf proxy.ItemConfig) (tlscapture.Options, error) {
 }
 
 func fallbackIdentity(ua string) tlscapture.Identity {
-	return tlscapture.Identity{UserAgent: ua, Profile: tlsclient.ChromeProfile(ua), Mode: tlscapture.ModeBuiltin}
+	return tlscapture.Identity{UserAgent: ua, Profile: tlsclient.Profile(ua), Mode: tlscapture.ModeBuiltin}
 }
 
 func ja4Of(fp *tlscapture.Fingerprint) string {

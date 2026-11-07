@@ -136,7 +136,7 @@ func newIdentityProxy(t *testing.T, ua string) (*identityFlare, *client) {
 
 func TestChromeIdentityBuiltinMatch(t *testing.T) {
 	s, px := newIdentityProxy(t, chrome146)
-	id, err := px.ChromeIdentity(context.Background())
+	id, err := px.ChromeIdentity(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,17 +153,17 @@ func TestChromeIdentityBuiltinMatch(t *testing.T) {
 
 func TestChromeIdentityCachedPerUA(t *testing.T) {
 	s, px := newIdentityProxy(t, chrome146)
-	if _, err := px.ChromeIdentity(context.Background()); err != nil {
+	if _, err := px.ChromeIdentity(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := px.ChromeIdentity(context.Background()); err != nil {
+	if _, err := px.ChromeIdentity(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if n := s.count(); n != 1 {
 		t.Fatalf("request.get count %d after second call, want 1", n)
 	}
 	s.setUA(strings.Replace(chrome146, "Chrome/146", "Chrome/145", 1))
-	if _, err := px.ChromeIdentity(context.Background()); err != nil {
+	if _, err := px.ChromeIdentity(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if n := s.count(); n != 2 {
@@ -173,7 +173,7 @@ func TestChromeIdentityCachedPerUA(t *testing.T) {
 
 func TestChromeIdentityCustomWhenBuiltinDiffers(t *testing.T) {
 	_, px := newIdentityProxy(t, chrome103)
-	id, err := px.ChromeIdentity(context.Background())
+	id, err := px.ChromeIdentity(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestChromeIdentityFlareOnly(t *testing.T) {
 		cfg.Fingerprint = nil
 		return tlsclient.Probe(ctx, cfg, target)
 	}
-	id, err := px.ChromeIdentity(context.Background())
+	id, err := px.ChromeIdentity(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,11 +205,11 @@ func TestChromeIdentityCaptureFailureFallsBack(t *testing.T) {
 	s, px := newIdentityProxy(t, chrome146)
 	s.getErr = true
 	for range 2 {
-		id, err := px.ChromeIdentity(context.Background())
+		id, err := px.ChromeIdentity(context.Background(), "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if id.Mode != tlscapture.ModeBuiltin || id.Fingerprint != nil || id.Profile != tlsclient.ChromeProfile(chrome146) {
+		if id.Mode != tlscapture.ModeBuiltin || id.Fingerprint != nil || id.Profile != tlsclient.Profile(chrome146) {
 			t.Fatalf("fallback identity %+v", id)
 		}
 		if id.UserAgent != chrome146 {
@@ -224,7 +224,7 @@ func TestChromeIdentityCaptureFailureFallsBack(t *testing.T) {
 func TestChromeIdentityUAProbeError(t *testing.T) {
 	s, px := newIdentityProxy(t, chrome146)
 	s.rootErr = true
-	if _, err := px.ChromeIdentity(context.Background()); err == nil {
+	if _, err := px.ChromeIdentity(context.Background(), ""); err == nil {
 		t.Fatal("want error when GET / fails")
 	}
 }
@@ -242,7 +242,7 @@ func TestChromeIdentitySlotHeldNoFailureCached(t *testing.T) {
 	t.Cleanup(release)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	id, err := px.ChromeIdentity(ctx)
+	id, err := px.ChromeIdentity(ctx, "")
 	if err == nil && id.Fingerprint != nil {
 		t.Fatalf("unexpected capture while the slot is held: %+v", id)
 	}
@@ -250,7 +250,7 @@ func TestChromeIdentitySlotHeldNoFailureCached(t *testing.T) {
 		t.Fatalf("request.get count %d while the slot is held", n)
 	}
 	release()
-	id, err = px.ChromeIdentity(context.Background())
+	id, err = px.ChromeIdentity(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,21 +279,19 @@ func TestReceiverOptions(t *testing.T) {
 	}
 }
 
-func TestChromeIdentityWithoutChromeUAGoesThroughSolver(t *testing.T) {
-	const firefox = "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
+func TestChromeIdentityUnknownBrowserGoesThroughSolver(t *testing.T) {
 	cases := map[string]struct {
-		ua       string
+		ua, hint string
 		rootCode int
 	}{
-		"no user agent":     {},
-		"firefox":           {ua: firefox},
-		"no status on root": {rootCode: http.StatusNotFound},
+		"unknown browser":         {ua: "curl/8.5.0"},
+		"unknown browser in hint": {hint: "curl/8.5.0", rootCode: http.StatusNotFound},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			s, px := newIdentityProxy(t, tc.ua)
 			s.rootCode = tc.rootCode
-			id, err := px.ChromeIdentity(context.Background())
+			id, err := px.ChromeIdentity(context.Background(), tc.hint)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -305,4 +303,63 @@ func TestChromeIdentityWithoutChromeUAGoesThroughSolver(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChromeIdentityFirefoxUsesFirefoxProfile(t *testing.T) {
+	const firefox = "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
+	s, px := newIdentityProxy(t, firefox)
+	// решатель не открывает страницу захвата с самоподписанным сертификатом, как Trawl
+	s.getErr = true
+	id, err := px.ChromeIdentity(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Mode != tlscapture.ModeBuiltin || id.Profile != "firefox_148" || id.UserAgent != firefox {
+		t.Fatalf("mode %d profile %q ua %q, want builtin firefox_148 with solver UA", id.Mode, id.Profile, id.UserAgent)
+	}
+	if n := s.count(); n != 1 {
+		t.Fatalf("request.get count %d, want one capture attempt", n)
+	}
+}
+
+func TestChromeIdentitySilentRootUsesHint(t *testing.T) {
+	const firefox = "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0"
+	t.Run("hint from solve", func(t *testing.T) {
+		s, px := newIdentityProxy(t, "")
+		s.rootCode, s.getErr = http.StatusNotFound, true
+		id, err := px.ChromeIdentity(context.Background(), firefox)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id.Mode != tlscapture.ModeBuiltin || id.Profile != "firefox_148" || id.UserAgent != firefox {
+			t.Fatalf("mode %d profile %q ua %q, want builtin firefox_148 with hinted UA", id.Mode, id.Profile, id.UserAgent)
+		}
+		if n := s.count(); n != 0 {
+			t.Fatalf("request.get count %d, want no capture: its UA would replace the one cf_clearance is bound to", n)
+		}
+	})
+	t.Run("no hint yet", func(t *testing.T) {
+		s, px := newIdentityProxy(t, "")
+		s.rootCode = http.StatusNotFound
+		id, err := px.ChromeIdentity(context.Background(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id.Mode != tlscapture.ModeBuiltin || id.UserAgent != "" || id.Profile != "" {
+			t.Fatalf("got %+v, want own identity (builtin, empty UA)", id)
+		}
+		if n := s.count(); n != 0 {
+			t.Fatalf("request.get count %d, want no capture", n)
+		}
+	})
+	t.Run("root wins over hint", func(t *testing.T) {
+		_, px := newIdentityProxy(t, chrome146)
+		id, err := px.ChromeIdentity(context.Background(), firefox)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id.Profile != "chrome_146" {
+			t.Fatalf("profile %q, want chrome_146 from root UA", id.Profile)
+		}
+	})
 }
