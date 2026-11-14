@@ -58,6 +58,11 @@ const (
 // не const: notify_test.go укорачивает паузу, чтобы не спать по-настоящему
 var notifyRetryDelay = 30 * time.Second
 
+// fastpic после простоя отвечает 503 или рвет ответ, а со второго-третьего раза отдает картинку
+const posterAttempts = 3
+
+var posterRetryDelay = 2 * time.Second
+
 // эти три адреса не const: notify_test.go подменяет их на httptest
 var telegramAPIURL = "https://api.telegram.org/bot%s/sendMessage"
 
@@ -801,31 +806,48 @@ func (n *Notifier) sendTelegramPhoto(ctx context.Context, ev Event) error {
 }
 
 func (n *Notifier) fetchImage(ctx context.Context, imageURL string) ([]byte, error) {
+	for attempt := 1; ; attempt++ {
+		img, transient, err := n.fetchImageOnce(ctx, imageURL)
+		if err == nil || !transient || attempt == posterAttempts || ctx.Err() != nil {
+			return img, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(posterRetryDelay):
+		}
+	}
+}
+
+func (n *Notifier) fetchImageOnce(ctx context.Context, imageURL string) (_ []byte, transient bool, _ error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	req.Header.Set("User-Agent", posterUserAgent)
 	res, err := n.posterHC.Do(req)
 	if err != nil {
-		return nil, err
+		// повторяем только обрыв соединения: отказ проверки адреса или таймаут повтор не исправит
+		cut := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
+		return nil, cut, err
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: status %d", imageURL, res.StatusCode)
+		transient = res.StatusCode >= http.StatusInternalServerError || res.StatusCode == http.StatusTooManyRequests
+		return nil, transient, fmt.Errorf("%s: status %d", imageURL, res.StatusCode)
 	}
 	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
-		return nil, fmt.Errorf("%s: content-type %q is not an image", imageURL, ct)
+		return nil, false, fmt.Errorf("%s: content-type %q is not an image", imageURL, ct)
 	}
 	// на один больше лимита: так видно, что картинка его превысила, а не легла впритык
 	img, err := io.ReadAll(io.LimitReader(res.Body, maxPhotoBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	if len(img) > maxPhotoBytes {
-		return nil, fmt.Errorf("%s: larger than %d bytes", imageURL, maxPhotoBytes)
+		return nil, false, fmt.Errorf("%s: larger than %d bytes", imageURL, maxPhotoBytes)
 	}
-	return img, nil
+	return img, false, nil
 }
 
 func (n *Notifier) postPhotoUpload(ctx context.Context, img []byte, caption string, kb *tgKeyboard) error {

@@ -2,6 +2,11 @@
 
 All notable changes to Ripperr. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.9.5] - 2026-11-14
+
+### Fixed
+- Telegram notifications keep the poster when the image host fails briefly. Ripperr tries the download up to three times, two seconds apart, if the host answers 5xx or 429 or drops the connection. fastpic does this after it has been idle, and Telegram cannot load fastpic images itself.
+
 ## [2.9.4] - 2026-11-07
 
 ### Changed

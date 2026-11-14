@@ -1335,3 +1335,75 @@ func TestSendSilentStillSendsManualTest(t *testing.T) {
 		t.Fatalf("webhook hits = %d, want 1", got)
 	}
 }
+
+func TestFetchImageRetriesTransientFailures(t *testing.T) {
+	old := posterRetryDelay
+	posterRetryDelay = 0
+	t.Cleanup(func() { posterRetryDelay = old })
+	var calls atomic.Int32
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		switch calls.Add(1) {
+		case 1:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case 2:
+			// оборванный ответ: обещано больше, чем пришло
+			w.Header().Set("Content-Length", "100")
+			_, _ = w.Write([]byte("JPEG"))
+		default:
+			_, _ = w.Write([]byte("JPEGBYTES"))
+		}
+	}))
+	defer img.Close()
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
+	n.posterHC = img.Client()
+	got, err := n.fetchImage(context.Background(), img.URL+"/poster.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "JPEGBYTES" || calls.Load() != 3 {
+		t.Fatalf("got %q after %d calls, want the image on the third", got, calls.Load())
+	}
+}
+
+func TestFetchImageDoesNotRetryClientError(t *testing.T) {
+	old := posterRetryDelay
+	posterRetryDelay = 0
+	t.Cleanup(func() { posterRetryDelay = old })
+	var calls atomic.Int32
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer img.Close()
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
+	n.posterHC = img.Client()
+	if _, err := n.fetchImage(context.Background(), img.URL+"/poster.jpg"); err == nil {
+		t.Fatal("want an error for 404")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d, a missing poster is not retried", calls.Load())
+	}
+}
+
+func TestFetchImageDoesNotRetryRefusedAddress(t *testing.T) {
+	old := posterRetryDelay
+	posterRetryDelay = 0
+	t.Cleanup(func() { posterRetryDelay = old })
+	var calls atomic.Int32
+	n := New(Config{TelegramToken: "tok", TelegramChatID: "42", Enabled: true}, "")
+	n.posterHC = &http.Client{Transport: posterRoundTrip(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return nil, errors.New("poster address 127.0.0.1 is not public")
+	})}
+	if _, err := n.fetchImage(context.Background(), "https://poster.example/p.jpg"); err == nil {
+		t.Fatal("want an error")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d, a refused address is not retried", calls.Load())
+	}
+}
+
+type posterRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f posterRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
